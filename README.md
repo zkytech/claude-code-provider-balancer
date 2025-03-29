@@ -45,6 +45,12 @@ See `config.py` to configure.
 uv run src/main.py
 ```
 
+### Running Claude Code
+
+```bash
+ANTHROPIC_BASE_URL=http://localhost:8082 claude   
+```
+
 ## Usage
 
 The proxy server exposes the following endpoints:
