@@ -24,6 +24,7 @@ Key features:
 
 - Python 3.10+
 - OpenRouter API key
+- [uv](https://github.com/astral-sh/uv)
 
 
 ### Configuration
