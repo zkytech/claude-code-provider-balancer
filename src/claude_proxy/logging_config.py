@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 JSON Lines logging configuration and utilities.
 """
@@ -14,7 +13,6 @@ from rich.syntax import Syntax
 from rich.pretty import pretty_repr
 from .config import settings
 
-# Constants
 SENSITIVE_HEADERS = {
     'authorization', 'api-key', 'x-api-key', 'proxy-authorization', 
     'openrouter-api-key'
@@ -25,18 +23,15 @@ class JSONFormatter(logging.Formatter):
     
     def format(self, record: logging.LogRecord) -> str:
         """Convert log record to JSON string."""
-        # Basic record data
         data = {
             "timestamp": datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
         }
         
-        # Add request_id if present
         if hasattr(record, 'request_id'):
             data['request_id'] = record.request_id
             
-        # Add exception info if present
         if record.exc_info:
             exc_type, exc_value, exc_tb = record.exc_info
             data['error'] = {
@@ -45,47 +40,37 @@ class JSONFormatter(logging.Formatter):
                 'stack_trace': ''.join(traceback.format_exception(exc_type, exc_value, exc_tb))
             }
         
-        # Extract structured data from extra
         if hasattr(record, 'structured_data') and isinstance(record.structured_data, dict):
             data.update(record.structured_data)
         else:
-            # If no structured data, use message as fallback
             data['message'] = record.getMessage()
             
-        # Add any extra fields from record.args
         if record.args and isinstance(record.args, dict):
             data.update(record.args)
             
         return json.dumps(data, ensure_ascii=False)
 
-# Configure root logger for libraries - allow their logs to console
 logging.basicConfig(level="WARNING")
 
-# Create our loggers - don't propagate to root logger to avoid console output
 logger = logging.getLogger("claude_proxy")
 logger.setLevel(settings.log_level)
-logger.propagate = False  # Don't propagate to root logger (prevents console output)
+logger.propagate = False
 
-# Create payload logger
 payload_logger = logging.getLogger("claude_proxy.http")
 payload_logger.setLevel(logging.DEBUG)
-payload_logger.propagate = False  # Don't propagate to root logger
+payload_logger.propagate = False
 
-# Console for startup banner only
 console = Console()
 
 try:
-    # Ensure log directory exists
     log_dir = os.path.dirname(settings.log_file_path)
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
         
-    # Configure JSON file handler
     file_handler = logging.FileHandler(settings.log_file_path, mode='a')
     file_handler.setFormatter(JSONFormatter())
     logger.addHandler(file_handler)
     
-    # Configure payload logger
     if settings.log_file_path:
         payload_dir = os.path.dirname(settings.log_file_path)
         if payload_dir:
@@ -94,13 +79,10 @@ try:
         payload_handler.setFormatter(JSONFormatter())
         payload_logger.addHandler(payload_handler)
     
-    # No stderr handlers for normal operation - all our logs go to files only
     
 except Exception as e:
-    # If file logging fails, set up minimal stderr logging for this critical error only
     print(f"Failed to configure file logging: {e}", file=sys.stderr)
 
-# --- JSON Formatting Helper ---
 def format_for_console(obj):
     """Format object for console display."""
     if obj is None:
@@ -111,13 +93,11 @@ def format_for_console(obj):
         return pretty_repr(obj)
 
 
-# --- Logging Helpers ---
 def log_json_body(title: str, data_obj: Any, request_id: str, color="dim"):
     """Logs a Python object as JSON (DEBUG level only)."""
     if logger.level > logging.DEBUG:
         return
     try:
-        # Structured log entry - log the full, untruncated data to file only
         logger.debug(
             f"JSON payload: {title}",
             extra={
@@ -252,7 +232,6 @@ def log_http_interaction(
         return
     
     try:
-        # Prepare the log entry
         entry = {
             "event": "http_interaction",
             "step": step_name,
@@ -263,7 +242,6 @@ def log_http_interaction(
             "elapsed_ms": elapsed_ms,
         }
 
-        # Handle body based on type - store complete data without truncation
         if isinstance(body, (dict, list)):
             entry["body"] = body
         elif isinstance(body, str):
@@ -273,11 +251,9 @@ def log_http_interaction(
                 entry["body"] = {"_type": "string", "content": body}
         elif isinstance(body, bytes):
             try:
-                # Try to decode as UTF-8 and parse as JSON
                 decoded = body.decode('utf-8')
                 entry["body"] = json.loads(decoded)
             except (UnicodeDecodeError, json.JSONDecodeError):
-                # If that fails, include base64 encoding of bytes
                 import base64
                 entry["body"] = {
                     "_type": "bytes",
@@ -289,7 +265,6 @@ def log_http_interaction(
                 "repr": str(body)
             }
 
-        # Log the entry
         payload_logger.debug(
             "HTTP interaction",
             extra={

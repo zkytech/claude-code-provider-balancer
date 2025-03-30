@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     referrer_url: str = "http://localhost:8082/ClaudeProxy"
     
-    # Other settings with defaults
     app_name: str = "ClaudeProxy"
     app_version: str = "0.1"
     log_level: str = "INFO"

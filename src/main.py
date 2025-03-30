@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Main entry point for running the Claude Proxy application using Uvicorn.
 Displays a startup banner with configuration details.
@@ -13,10 +12,8 @@ from claude_proxy.api import app
 from claude_proxy.logging_config import console, logger
 
 
-# --- Main Execution Block ---
 if __name__ == "__main__":
 
-    # --- Startup Screen using Rich ---
     console.print(
         r"""[bold blue]
            /$$                           /$$
@@ -34,7 +31,6 @@ if __name__ == "__main__":
         justify="left",
     )
 
-    # Create a panel with configuration details
     config_details = Text.assemble(
         ("   Version       : ", "default"),
         (f'v{settings.app_version}', "bold red"),
@@ -61,18 +57,14 @@ if __name__ == "__main__":
     console.print(f"\n\n")
     console.print(Rule(f"Starting uvicorn server...", style="dim blue"))
 
-    # --- Run Uvicorn ---
     try:
         uvicorn.run(
-            # Use "src.main:app" if running with `python -m src.main`
-            # Use "__main__:app" if running with `python src/main.py`
-            # Let's try to detect based on how the script is run, or default to module path
             app="__main__:app" if __package__ is None else "claude_proxy.api:app",
             host=settings.host,
             port=settings.port,
             reload=settings.reload,
-            log_config=None,  # Disable Uvicorn's default logging config
-            access_log=False,  # Disable Uvicorn's access log; rely on our middleware/logging
+            log_config=None,
+            access_log=False,
         )
     except Exception as e:
         logger.critical(f"Failed to start Uvicorn server: {e}", exc_info=True)

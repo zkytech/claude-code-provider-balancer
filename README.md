@@ -2,7 +2,7 @@
 
 A proxy service that allows Anthropic API requests to be routed through OpenRouter (or a preferred URL) to access alternative models.
 
-![Claude Proxy Logo](pic.png)
+![Claude Proxy Logo](docs/cover.png)
 
 ## Overview
 
@@ -12,11 +12,19 @@ Key features:
 
 - FastAPI web server exposing Anthropic-compatible endpoints
 - Format conversion between Anthropic and OpenAI requests/responses
+  (see [mapping](mapping.md) for translation details)
 - Support for both streaming and non-streaming responses
 - Dynamic model selection based on requested Claude model
 - Provider-specific modifications (extensible in order to support edge-cases)
-- Accurate token counting functionality
 - Detailed request/response logging
+
+## Work in progress
+
+- Token counting
+
+## Example
+
+![Claude Proxy Example](docs/example.png)
 
 ## Getting Started
 
@@ -25,7 +33,6 @@ Key features:
 - Python 3.10+
 - OpenRouter API key
 - [uv](https://github.com/astral-sh/uv)
-
 
 ### Configuration
 
@@ -49,7 +56,7 @@ uv run src/main.py
 ### Running Claude Code
 
 ```bash
-ANTHROPIC_BASE_URL=http://localhost:8082 claude   
+ANTHROPIC_BASE_URL=http://localhost:8082 claude
 ```
 
 ## Usage
@@ -63,4 +70,3 @@ The proxy server exposes the following endpoints:
 ## License
 
 [LICENSE](./LICENSE)
-

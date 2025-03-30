@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 FastAPI application definition, endpoints, and request handling logic.
 Orchestrates calls to other components (config, models, conversion, etc.).
@@ -7,20 +6,19 @@ import fastapi
 import json
 import uuid
 import time
-import openai  # For exception types
-from httpx import ReadError, ConnectError, ConnectTimeout
+import openai
+import httpx
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
-# --- Relative Imports for Internal Components ---
 from . import config
 from .config import settings
 from . import models
 from . import conversion
 from . import provider_mods
 from . import token_counter
-from .openrouter_client import client  # Import the initialized client instance
+from .openrouter_client import client
 from .logging_config import (
     logger,
     log_json_body,
@@ -29,35 +27,31 @@ from .logging_config import (
     log_error_simplified,
 )
 
-# --- FastAPI Application Setup ---
 app = fastapi.FastAPI(
     title=settings.app_name,
     description="Routes Anthropic API requests to OpenRouter, selecting models dynamically.",
     version=settings.app_version,
-    docs_url=None,  # Disable default docs
-    redoc_url=None,  # Disable default ReDoc
+    docs_url=None,
+    redoc_url=None,
 )
 
 
-# --- Helper Function for Model Selection ---
 def select_target_model(client_model_name: str, request_id: str) -> str:
     """Selects the target OpenRouter model based on the client's request."""
     client_model_lower = client_model_name.lower()
-    # Prioritize specific keywords for big model
     if (
         "opus" in client_model_lower or "sonnet" in client_model_lower
-    ):  # Add sonnet here too
+    ):
         target_model = settings.big_model_name
         logger.debug(
             f"ID: {request_id} Client model '{client_model_name}' mapped to BIG: {target_model}"
         )
-    elif "haiku" in client_model_lower:  # Specific keyword for small model
+    elif "haiku" in client_model_lower:
         target_model = settings.small_model_name
         logger.debug(
             f"ID: {request_id} Client model '{client_model_name}' mapped to SMALL: {target_model}"
         )
     else:
-        # Default to small model for unrecognized names
         target_model = settings.small_model_name
         logger.warning(
             f"ID: {request_id} Unknown client model '{client_model_name}'. Defaulting to SMALL: {target_model}"
@@ -65,7 +59,6 @@ def select_target_model(client_model_name: str, request_id: str) -> str:
     return target_model
 
 
-# --- API Endpoints ---
 
 
 @app.post("/v1/messages", response_model=None, tags=["API"], status_code=200)
@@ -75,274 +68,123 @@ async def create_message(request: Request):
     Handles conversions, streaming, dynamic model selection, and provider mods.
     Logs requests and errors with traceable IDs.
     """
+    request_id = str(uuid.uuid4()).split("-")[0]
+    request.state.request_id = request_id
     start_time = time.time()
-    request_id = str(uuid.uuid4()).split("-")[0]  # Short UUID for request ID
-    target_model: str | None = None  # Initialize
-    status_code = 500  # Default to internal error
-    detail = "Internal Server Error"
-    exc_info: Exception | None = None  # Store exception for logging
-    usage_info: dict | None = None
-    is_stream = False  # Default to non-streaming
+    is_stream = False
 
-    try:
-        # 1. Parse Request Body & Validate
-        try:
-            body = await request.json()
-            # Validate against the Pydantic model
-            anthropic_request = models.MessagesRequest.model_validate(body)
-            is_stream = (
-                anthropic_request.stream or False
-            )  # Determine stream status early
-            logger.debug(
-                f"ID: {request_id} Request body parsed and validated successfully."
-            )
-        except json.JSONDecodeError as e:
-            status_code, detail, exc_info = 400, f"Invalid JSON format: {e}", e
-            # Log before raising to capture request ID
-            log_error_simplified(
-                request_id, e, status_code, (time.time() - start_time) * 1000, detail
-            )
-            raise HTTPException(status_code=status_code, detail=detail) from e
-        except ValidationError as e:
-            status_code, detail, exc_info = 422, f"Invalid Request Body: {e}", e
-            log_error_simplified(
-                request_id, e, status_code, (time.time() - start_time) * 1000, detail
-            )
-            raise HTTPException(status_code=status_code, detail=detail) from e
-        except Exception as e:  # Catch unexpected parsing errors
-            status_code, detail, exc_info = (
-                400,
-                f"Error processing request body: {e}",
-                e,
-            )
-            log_error_simplified(
-                request_id, e, status_code, (time.time() - start_time) * 1000, detail
-            )
-            raise HTTPException(status_code=status_code, detail=detail) from e
+    body = await request.json()
 
-        # 2. Dynamic Model Selection & Provider Identification
-        target_model = select_target_model(anthropic_request.model, request_id)
-        # Infer provider from model name (e.g., "google/gemini-pro" -> "google")
-        target_provider = (
-            target_model.split("/")[0].lower() if "/" in target_model else "unknown"
-        )
-        logger.debug(
-            f"ID: {request_id} Target provider identified as: {target_provider}"
-        )
+    anthropic_request = models.MessagesRequest.model_validate(body)
+    is_stream = anthropic_request.stream or False
+    logger.debug(f"ID: {request_id} Request body parsed and validated successfully.")
 
-        # Log request start details
-        log_request_start(request_id, anthropic_request.model, target_model, is_stream)
-        log_json_body("Anthropic Request Body", body, request_id, color="cyan")
+    target_model = select_target_model(anthropic_request.model, request_id)
+    target_provider = target_model.split("/")[0].lower() if "/" in target_model else "unknown"
+    logger.debug(f"ID: {request_id} Target provider identified as: {target_provider}")
 
-        # 3. Convert Anthropic Request -> OpenAI Format
-        openai_messages = conversion.convert_anthropic_to_openai_messages(
-            anthropic_request.messages, anthropic_request.system
-        )
-        openai_tools = conversion.convert_anthropic_tools_to_openai(
-            anthropic_request.tools
-        )
-        openai_tool_choice = conversion.convert_anthropic_tool_choice_to_openai(
-            anthropic_request.tool_choice
-        )
+    log_request_start(request_id, anthropic_request.model, target_model, is_stream)
+    log_json_body("Anthropic Request Body", body, request_id, color="cyan")
 
-        # Estimate input tokens *after* conversion
-        estimated_input_tokens = token_counter.count_tokens_for_request(
-            messages=anthropic_request.messages,  # Use original for consistency if needed
-            system=anthropic_request.system,
-            model_name=target_model,  # Use target model for encoding
-        )
-        logger.debug(
-            f"ID: {request_id} Estimated input tokens: {estimated_input_tokens}"
-        )
+    openai_messages = conversion.convert_anthropic_to_openai_messages(
+        anthropic_request.messages, anthropic_request.system
+    )
+    openai_tools = conversion.convert_anthropic_tools_to_openai(
+        anthropic_request.tools
+    )
+    openai_tool_choice = conversion.convert_anthropic_tool_choice_to_openai(
+        anthropic_request.tool_choice
+    )
 
-        # 4. Assemble OpenAI API Parameters
-        openai_params = {
-            "model": target_model,
-            "messages": openai_messages,
-            "max_tokens": anthropic_request.max_tokens,
-            # Include optional parameters only if they are not None
-            **{
-                k: v
-                for k, v in {
-                    "temperature": anthropic_request.temperature,
-                    "top_p": anthropic_request.top_p,
-                    # top_k is ignored by OpenAI but included here if needed elsewhere
-                    # "top_k": anthropic_request.top_k,
-                    "stop": anthropic_request.stop_sequences,
-                    "stream": is_stream,
-                    "tools": openai_tools,
-                    "tool_choice": openai_tool_choice,
-                    # Map metadata.user_id to OpenAI's 'user' parameter
-                    "user": (
-                        str(anthropic_request.metadata.get("user_id"))
-                        if anthropic_request.metadata
-                        else None
-                    ),
-                }.items()
-                if v is not None
-            },
-        }
-        # Clean params again to remove any keys added with None values
-        openai_params = {k: v for k, v in openai_params.items() if v is not None}
+    estimated_input_tokens = 0
+    logger.debug(f"ID: {request_id} Token counting disabled - using 0 tokens")
 
-        # 5. Apply Provider-Specific Modifications
-        modified_openai_params = provider_mods.apply_provider_modifications(
-            openai_params, target_provider
-        )
-        log_json_body(
-            "OpenAI Request Params (Modified)",
-            modified_openai_params,
-            request_id,
-            color="magenta",
-        )
-
-        # 6. Call OpenRouter API (Streaming or Non-Streaming)
-        if is_stream:
-            # --- Streaming Response ---
-            logger.debug(
-                f"ID: {request_id} Initiating streaming request to OpenRouter."
-            )
-            response_generator = await client.chat.completions.create(
-                **modified_openai_params
-            )
-            status_code = 200  # Mark as success for starting the stream
-            # Log stream initiation success *before* returning the response
-            duration_ms = (time.time() - start_time) * 1000
-            log_request_end(
-                request_id,
-                status_code,
-                duration_ms,
-                {
-                    "input_tokens": estimated_input_tokens,
-                    "output_tokens": "Streaming...",
-                },
-            )
-
-            # Return the streaming response using the conversion generator
-            return StreamingResponse(
-                conversion.handle_streaming_response(
-                    response_generator,
-                    anthropic_request.model,  # Pass original model name back
-                    estimated_input_tokens,
-                    request_id,  # Pass request ID for logging within stream handler
+    openai_params = {
+        "model": target_model,
+        "messages": openai_messages,
+        "max_tokens": anthropic_request.max_tokens,
+        **{
+            k: v
+            for k, v in {
+                "temperature": anthropic_request.temperature,
+                "top_p": anthropic_request.top_p,
+                "stop": anthropic_request.stop_sequences,
+                "stream": is_stream,
+                "tools": openai_tools,
+                "tool_choice": openai_tool_choice,
+                "user": (
+                    str(anthropic_request.metadata.get("user_id"))
+                    if anthropic_request.metadata
+                    else None
                 ),
-                media_type="text/event-stream",
-            )
-        else:
-            # --- Non-Streaming Response ---
-            logger.debug(
-                f"ID: {request_id} Sending non-streaming request to OpenRouter."
-            )
-            openai_response = await client.chat.completions.create(
-                **modified_openai_params
-            )
-            log_json_body(
-                "OpenAI Response Body",
-                openai_response.model_dump(),
-                request_id,
-                color="blue",
-            )
+            }.items()
+            if v is not None
+        },
+    }
+    openai_params = {k: v for k, v in openai_params.items() if v is not None}
 
-            # 7. Convert OpenAI Response -> Anthropic Format
-            anthropic_response = conversion.convert_openai_to_anthropic(
-                openai_response, anthropic_request.model  # Pass original model name
-            )
-            status_code = 200  # Mark as success
-            usage_info = anthropic_response.usage.model_dump()  # Get usage info
-            log_json_body(
-                "Anthropic Response Body",
-                anthropic_response.model_dump(exclude_unset=True),
-                request_id,
-                color="green",
-            )
+    modified_openai_params = provider_mods.apply_provider_modifications(
+        openai_params, target_provider
+    )
+    log_json_body(
+        "OpenAI Request Params (Modified)",
+        modified_openai_params,
+        request_id,
+        color="magenta",
+    )
 
-            # Return the converted response
-            return JSONResponse(
-                content=anthropic_response.model_dump(exclude_unset=True)
-            )
+    if is_stream:
+        logger.debug(f"ID: {request_id} Initiating streaming request to OpenRouter.")
+        response_generator = await client.chat.completions.create(**modified_openai_params)
 
-    # --- Centralized Error Handling ---
-    # Catch specific OpenAI/HTTPX errors first, then general exceptions
-    except openai.AuthenticationError as e:
-        status_code, detail, exc_info = (
-            401,
-            f"OpenRouter Authentication Error: {e.body.get('message', e) if e.body else e}",
-            e,
-        )
-    except openai.RateLimitError as e:
-        status_code, detail, exc_info = (
-            429,
-            f"OpenRouter Rate Limit Error: {e.body.get('message', e) if e.body else e}",
-            e,
-        )
-    except openai.BadRequestError as e:
-        # Often indicates an issue with the request structure after conversion/modification
-        status_code, detail, exc_info = (
-            400,
-            f"OpenRouter Bad Request Error: {e.body.get('message', e) if e.body else e}",
-            e,
-        )
-        log_json_body(
-            "Failed OpenAI Request Params",
-            (
-                modified_openai_params
-                if "modified_openai_params" in locals()
-                else openai_params if "openai_params" in locals() else body
-            ),
+        duration_ms = (time.time() - start_time) * 1000
+        log_request_end(
             request_id,
-            color="red",
-        )  # Log params that caused error
-    except (openai.APIConnectionError, ConnectError, ConnectTimeout, ReadError) as e:
-        status_code, detail, exc_info = 502, f"Connection Error to OpenRouter: {e}", e
-    except openai.InternalServerError as e:
-        status_code, detail, exc_info = (
-            500,
-            f"OpenRouter Internal Server Error: {e.body.get('message', e) if e.body else e}",
-            e,
+            200,
+            duration_ms,
+            {
+                "input_tokens": estimated_input_tokens,
+                "output_tokens": "Streaming...",
+            },
         )
-    except openai.APIStatusError as e:  # Catch other non-2xx responses from OpenRouter
-        status_code, detail, exc_info = (
-            e.status_code,
-            f"OpenRouter API Error ({e.status_code}): {e.body.get('message', e) if e.body else e}",
-            e,
-        )
-    except HTTPException as e:
-        # Re-catch HTTPException to ensure logging happens, but keep original status/detail
-        status_code, detail, exc_info = e.status_code, str(e.detail), e
-        # Error should have been logged before raising in parsing/validation
-    except Exception as e:
-        # Catch any other unexpected errors
-        status_code, detail, exc_info = 500, f"Unexpected Internal Server Error: {e}", e
-    finally:
-        # --- Final Logging ---
-        # Log end/error details unless it was a successfully initiated stream
-        # (stream success is logged before returning the StreamingResponse)
-        if not (is_stream and status_code == 200):
-            duration_ms = (time.time() - start_time) * 1000
-            if status_code == 200:
-                # Log successful non-streaming request end
-                log_request_end(request_id, status_code, duration_ms, usage_info)
-            elif exc_info:
-                # Log error using the simplified helper
-                log_error_simplified(
-                    request_id, exc_info, status_code, duration_ms, detail
-                )
-            else:
-                # Log non-200 status without a specific exception (should be rare)
-                log_request_end(
-                    request_id, status_code, duration_ms
-                )  # No usage info on error
 
-    # If an error occurred and we didn't return a response/stream, raise HTTPException
-    if status_code != 200:
-        # Ensure detail is a string
-        detail_str = (
-            str(detail) if detail is not None else "An unexpected error occurred."
+        return StreamingResponse(
+            conversion.handle_streaming_response(
+                response_generator,
+                anthropic_request.model,
+                estimated_input_tokens,
+                request_id,
+            ),
+            media_type="text/event-stream",
         )
-        # Avoid raising again if it was already an HTTPException caught above
-        if not isinstance(exc_info, HTTPException):
-            raise HTTPException(status_code=status_code, detail=detail_str)
-        # If it *was* an HTTPException, it was already raised, so we just exit the function
+    else:
+        logger.debug(f"ID: {request_id} Sending non-streaming request to OpenRouter.")
+        openai_response = await client.chat.completions.create(**modified_openai_params)
+
+        log_json_body(
+            "OpenAI Response Body",
+            openai_response.model_dump(),
+            request_id,
+            color="blue",
+        )
+
+        anthropic_response = conversion.convert_openai_to_anthropic(
+            openai_response, anthropic_request.model
+        )
+        usage_info = anthropic_response.usage.model_dump()
+
+        duration_ms = (time.time() - start_time) * 1000
+        log_request_end(request_id, 200, duration_ms, usage_info)
+
+        log_json_body(
+            "Anthropic Response Body",
+            anthropic_response.model_dump(exclude_unset=True),
+            request_id,
+            color="green",
+        )
+
+        return JSONResponse(content=anthropic_response.model_dump(exclude_unset=True))
+
 
 
 @app.post(
@@ -352,65 +194,21 @@ async def create_message(request: Request):
 )
 async def count_tokens_endpoint(request: Request):
     """
-    Estimates token count for a given Anthropic payload using tiktoken,
-    based on the target model that *would* be selected.
+    Always returns 0 tokens. Token counting functionality has been disabled.
     """
     request_id = str(uuid.uuid4()).split("-")[0]
+    request.state.request_id = request_id
     start_time = time.time()
-    status_code = 500
-    detail = "Error counting tokens"
-    exc_info: Exception | None = None
 
-    try:
-        # 1. Parse and Validate Request
-        try:
-            body = await request.json()
-            anthropic_request = models.TokenCountRequest.model_validate(body)
-        except json.JSONDecodeError as e:
-            status_code, detail, exc_info = 400, f"Invalid JSON: {e}", e
-            raise HTTPException(status_code=status_code, detail=detail) from e
-        except ValidationError as e:
-            status_code, detail, exc_info = 422, f"Invalid Request Body: {e}", e
-            raise HTTPException(status_code=status_code, detail=detail) from e
+    body = await request.json()
 
-        # 2. Select Target Model (same logic as /v1/messages)
-        target_model = select_target_model(anthropic_request.model, request_id)
+    anthropic_request = models.TokenCountRequest.model_validate(body)
 
-        # 3. Perform Token Count
-        token_count = token_counter.count_tokens_for_request(
-            messages=anthropic_request.messages,
-            system=anthropic_request.system,
-            model_name=target_model,  # Use the determined target model
-            tools=anthropic_request.tools,  # Pass tools if needed by counter in future
-        )
-        status_code = 200  # Success
-
-        # 4. Log and Return Result
-        duration_ms = (time.time() - start_time) * 1000
-        logger.info(
-            f"ID: {request_id} Count Tokens ≈ {token_count} (Client: {anthropic_request.model}, TargetEst: {target_model}) | Time: {duration_ms:.1f}ms"
-        )
-        return models.TokenCountResponse(input_tokens=token_count)
-
-    except HTTPException as e:
-        # Capture details if raised during parsing/validation
-        status_code, detail, exc_info = e.status_code, str(e.detail), e
-        # Log here as it wasn't logged before raising in this endpoint
-        log_error_simplified(
-            request_id, e, status_code, (time.time() - start_time) * 1000, detail
-        )
-        raise  # Re-raise the captured HTTPException
-    except Exception as e:
-        status_code, detail, exc_info = (
-            500,
-            f"Unexpected error during token counting: {e}",
-            e,
-        )
-        # Log the unexpected error
-        log_error_simplified(
-            request_id, e, status_code, (time.time() - start_time) * 1000, detail
-        )
-        raise HTTPException(status_code=status_code, detail=detail) from e
+    duration_ms = (time.time() - start_time) * 1000
+    logger.info(
+        f"ID: {request_id} Token counting disabled - returning 0 tokens | Time: {duration_ms:.1f}ms"
+    )
+    return models.TokenCountResponse(input_tokens=0)
 
 
 @app.get("/", include_in_schema=False, tags=["Health"])
@@ -422,19 +220,123 @@ async def root():
     )
 
 
-# --- Optional: Add Exception Handlers for Cleaner Code ---
-# Example:
-# @app.exception_handler(RequestValidationError)
-# async def validation_exception_handler(request: Request, exc: RequestValidationError):
-#     # Log error, return 422
-#     pass
-#
-# @app.exception_handler(StarletteHTTPException)
-# async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-#     # Log error, return original status code and detail
-#     pass
-#
-# @app.exception_handler(Exception)
-# async def generic_exception_handler(request: Request, exc: Exception):
-#     # Log error, return 500
-#     pass
+
+def get_error_response(error_type: str, message: str) -> dict:
+    """Formats error response in Anthropic-compatible structure."""
+    return {
+        "type": "error",
+        "error": {
+            "type": error_type,
+            "message": message
+        }
+    }
+
+
+def extract_error_message(exc: Exception) -> str:
+    """Extracts the most useful error message from various exception types."""
+    if hasattr(exc, 'body') and isinstance(exc.body, dict):
+        error_details = exc.body.get('error', {})
+        if isinstance(error_details, dict):
+             return error_details.get('message', str(exc))
+        return exc.body.get('message', str(exc))
+    elif isinstance(exc, ValidationError):
+         try:
+             return json.dumps(exc.errors(), indent=2)
+         except Exception:
+             return str(exc)
+    elif isinstance(exc, HTTPException):
+        return str(exc.detail)
+    return str(exc)
+
+
+async def _handle_error(request: Request, exc: Exception, status_code: int, anthropic_error_type: str):
+    """Centralized logic for logging and formatting error responses."""
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()).split("-")[0])
+    detail = extract_error_message(exc)
+
+    duration = (time.time() - request.state.start_time) * 1000 if hasattr(request.state, "start_time") else 0
+    log_error_simplified(request_id, exc, status_code, duration, detail)
+
+    content = get_error_response(anthropic_error_type, detail)
+
+    return JSONResponse(
+        status_code=status_code,
+        content=content
+    )
+
+
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request: Request, exc: ValidationError):
+    """Handles Pydantic validation errors (422)."""
+    return await _handle_error(request, exc, 422, "invalid_request_error")
+
+@app.exception_handler(json.JSONDecodeError)
+async def json_decode_exception_handler(request: Request, exc: json.JSONDecodeError):
+    """Handles JSON parsing errors (400)."""
+    detail = f"Invalid JSON format: {exc}"
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()).split("-")[0])
+    log_error_simplified(request_id, exc, 400, 0, detail)
+    return JSONResponse(
+        status_code=400,
+        content=get_error_response("invalid_request_error", detail)
+    )
+
+@app.exception_handler(openai.APIError)
+async def openai_api_error_handler(request: Request, exc: openai.APIError):
+    """Handles all OpenAI API errors, mapping them to appropriate Anthropic types."""
+    status_code = 500
+    anthropic_error_type = "api_error"
+
+    if isinstance(exc, openai.AuthenticationError):
+        status_code = 401
+        anthropic_error_type = "authentication_error"
+    elif isinstance(exc, openai.RateLimitError):
+        status_code = 429
+        anthropic_error_type = "rate_limit_error"
+    elif isinstance(exc, openai.BadRequestError):
+        status_code = 400
+        anthropic_error_type = "invalid_request_error"
+    elif isinstance(exc, openai.PermissionDeniedError):
+        status_code = 403
+        anthropic_error_type = "permission_error"
+    elif isinstance(exc, openai.NotFoundError):
+         status_code = 404
+         anthropic_error_type = "not_found_error"
+    elif isinstance(exc, openai.UnprocessableEntityError):
+         status_code = 422
+         anthropic_error_type = "invalid_request_error"
+    elif isinstance(exc, openai.InternalServerError):
+        status_code = 500
+        anthropic_error_type = "api_error"
+    elif isinstance(exc, openai.APIConnectionError):
+         status_code = 502
+         anthropic_error_type = "api_error"
+    elif isinstance(exc, openai.APITimeoutError):
+         status_code = 504
+         anthropic_error_type = "api_error"
+    elif isinstance(exc, openai.APIStatusError):
+        status_code = exc.status_code if hasattr(exc, 'status_code') else 500
+        error_type_mapping = {
+            400: "invalid_request_error", 401: "authentication_error",
+            403: "permission_error", 404: "not_found_error",
+            413: "request_too_large", 422: "invalid_request_error",
+            429: "rate_limit_error", 500: "api_error",
+            502: "api_error", 503: "overloaded_error", 504: "api_error"
+        }
+        default_error = "api_error" if status_code >= 500 else "invalid_request_error"
+        anthropic_error_type = error_type_mapping.get(status_code, default_error)
+
+    return await _handle_error(request, exc, status_code, anthropic_error_type)
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    """Handles any other unexpected errors (500)."""
+    return await _handle_error(request, exc, 500, "api_error")
+
+
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    request.state.start_time = time.time()
+    response = await call_next(request)
+    return response
