@@ -12,7 +12,7 @@ Key features:
 
 - FastAPI web server exposing Anthropic-compatible endpoints
 - Format conversion between Anthropic and OpenAI requests/responses
-  (see [mapping](mapping.md) for translation details)
+  (see [mapping](docs/mapping.md) for translation details)
 - Support for both streaming and non-streaming responses
 - Dynamic model selection based on requested Claude model
 - Provider-specific modifications (extensible in order to support edge-cases)
