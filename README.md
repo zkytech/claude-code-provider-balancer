@@ -23,6 +23,7 @@ Key features:
 - Token counting
 
 ## Example
+**Model**: `deepseek/deepseek-chat-v3-0324`
 
 ![Claude Proxy Example](docs/example.png)
 
