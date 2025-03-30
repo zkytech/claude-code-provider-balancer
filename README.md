@@ -1,12 +1,12 @@
-# OpenRouter Proxy for Claude Code
+# Provider Proxy for Claude Code
 
-A proxy service that allows Anthropic API requests to be routed through OpenRouter to access alternative models.
+A proxy service that allows Anthropic API requests to be routed through OpenRouter (or a preferred URL) to access alternative models.
 
 ![Claude Proxy Logo](pic.png)
 
 ## Overview
 
-Claude Proxy provides a compatibility layer between Claude Code and alternative models available through OpenRouter. It dynamically selects models based on the requested Claude model name, mapping Opus/Sonnet to a configured "big model" and Haiku to a "small model".
+Claude Proxy provides a compatibility layer between Claude Code and alternative models available through OpenRouter or your chosen base URL. It dynamically selects models based on the requested Claude model name, mapping Opus/Sonnet to a configured "big model" and Haiku to a "small model".
 
 Key features:
 
@@ -38,7 +38,7 @@ SMALL_MODEL_NAME=openai/gpt-4o-mini
 LOG_LEVEL=DEBUG
 ```
 
-See `config.py` to configure.
+See `config.py` for more configuration options. 
 
 ### Running the Server
 
