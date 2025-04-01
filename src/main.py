@@ -2,15 +2,15 @@
 Main entry point for running the Claude Proxy application using Uvicorn.
 Displays a startup banner with configuration details.
 """
+
 import uvicorn
 from rich.panel import Panel
-from rich.text import Text
 from rich.rule import Rule
+from rich.text import Text
 
-from claude_proxy.config import settings
 from claude_proxy.api import app
+from claude_proxy.config import settings
 from claude_proxy.logging_config import console, logger
-
 
 if __name__ == "__main__":
 
@@ -33,7 +33,7 @@ if __name__ == "__main__":
 
     config_details = Text.assemble(
         ("   Version       : ", "default"),
-        (f'v{settings.app_version}', "bold red"),
+        (f"v{settings.app_version}", "bold red"),
         ("\n   Big Model     : ", "default"),
         (settings.big_model_name, "magenta"),
         ("\n   Small Model   : ", "default"),
@@ -51,7 +51,7 @@ if __name__ == "__main__":
             title="Configuration",
             border_style="blue",
             title_align="left",
-            expand=False
+            expand=False,
         )
     )
     console.print(f"\n\n")

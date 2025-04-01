@@ -1,6 +1,7 @@
 """
 JSON Lines logging configuration and utilities.
 """
+
 import json
 import logging
 import os
@@ -8,47 +9,60 @@ import sys
 import traceback
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Union
+
 from rich.console import Console
-from rich.syntax import Syntax
 from rich.pretty import pretty_repr
+from rich.syntax import Syntax
+
 from .config import settings
 
 SENSITIVE_HEADERS = {
-    'authorization', 'api-key', 'x-api-key', 'proxy-authorization', 
-    'openrouter-api-key'
+    "authorization",
+    "api-key",
+    "x-api-key",
+    "proxy-authorization",
+    "openrouter-api-key",
 }
+
 
 class JSONFormatter(logging.Formatter):
     """Formats log records as JSON Lines."""
-    
+
     def format(self, record: logging.LogRecord) -> str:
         """Convert log record to JSON string."""
         data = {
-            "timestamp": datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
+            "timestamp": datetime.fromtimestamp(
+                record.created, timezone.utc
+            ).isoformat(),
             "level": record.levelname,
             "logger": record.name,
         }
-        
-        if hasattr(record, 'request_id'):
-            data['request_id'] = record.request_id
-            
+
+        if hasattr(record, "request_id"):
+            data["request_id"] = record.request_id
+
         if record.exc_info:
             exc_type, exc_value, exc_tb = record.exc_info
-            data['error'] = {
-                'type': exc_type.__name__,
-                'message': str(exc_value),
-                'stack_trace': ''.join(traceback.format_exception(exc_type, exc_value, exc_tb))
+            data["error"] = {
+                "type": exc_type.__name__,
+                "message": str(exc_value),
+                "stack_trace": "".join(
+                    traceback.format_exception(exc_type, exc_value, exc_tb)
+                ),
             }
-        
-        if hasattr(record, 'structured_data') and isinstance(record.structured_data, dict):
+
+        if hasattr(record, "structured_data") and isinstance(
+            record.structured_data, dict
+        ):
             data.update(record.structured_data)
         else:
-            data['message'] = record.getMessage()
-            
+            data["message"] = record.getMessage()
+
         if record.args and isinstance(record.args, dict):
             data.update(record.args)
-            
+
         return json.dumps(data, ensure_ascii=False)
+
 
 logging.basicConfig(level="WARNING")
 
@@ -66,22 +80,23 @@ try:
     log_dir = os.path.dirname(settings.log_file_path)
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
-        
-    file_handler = logging.FileHandler(settings.log_file_path, mode='a')
+
+    file_handler = logging.FileHandler(settings.log_file_path, mode="a")
     file_handler.setFormatter(JSONFormatter())
     logger.addHandler(file_handler)
-    
+
     if settings.log_file_path:
         payload_dir = os.path.dirname(settings.log_file_path)
         if payload_dir:
             os.makedirs(payload_dir, exist_ok=True)
-        payload_handler = logging.FileHandler(settings.log_file_path, mode='a')
+        payload_handler = logging.FileHandler(settings.log_file_path, mode="a")
         payload_handler.setFormatter(JSONFormatter())
         payload_logger.addHandler(payload_handler)
-    
-    
+
+
 except Exception as e:
     print(f"Failed to configure file logging: {e}", file=sys.stderr)
+
 
 def format_for_console(obj):
     """Format object for console display."""
@@ -105,9 +120,9 @@ def log_json_body(title: str, data_obj: Any, request_id: str, color="dim"):
                 "structured_data": {
                     "event": "json_payload",
                     "payload_type": title,
-                    "payload": data_obj
-                }
-            }
+                    "payload": data_obj,
+                },
+            },
         )
     except Exception as e:
         logger.error(
@@ -117,9 +132,9 @@ def log_json_body(title: str, data_obj: Any, request_id: str, color="dim"):
                 "structured_data": {
                     "event": "log_error",
                     "payload_type": title,
-                    "error": str(e)
-                }
-            }
+                    "error": str(e),
+                },
+            },
         )
 
 
@@ -135,9 +150,9 @@ def log_request_start(
                 "event": "request_start",
                 "client_model": client_model,
                 "target_model": target_model,
-                "stream": stream
-            }
-        }
+                "stream": stream,
+            },
+        },
     )
 
 
@@ -148,19 +163,15 @@ def log_request_end(
     data = {
         "event": "request_end",
         "status_code": status_code,
-        "duration_ms": duration_ms
+        "duration_ms": duration_ms,
     }
-    
+
     if usage:
         data["input_tokens"] = usage.get("input_tokens")
         data["output_tokens"] = usage.get("output_tokens")
-    
+
     logger.info(
-        "Request completed",
-        extra={
-            "request_id": request_id,
-            "structured_data": data
-        }
+        "Request completed", extra={"request_id": request_id, "structured_data": data}
     )
 
 
@@ -169,7 +180,7 @@ def log_error_simplified(
 ):
     """Logs error summary with structured data."""
     error_type = type(exc).__name__
-    
+
     logger.error(
         "Request error",
         exc_info=exc,
@@ -180,19 +191,21 @@ def log_error_simplified(
                 "status_code": status_code,
                 "duration_ms": duration_ms,
                 "error_type": error_type,
-                "error_detail": detail
-            }
-        }
+                "error_detail": detail,
+            },
+        },
     )
+
 
 def _mask_sensitive_headers(headers: Dict[str, str]) -> Dict[str, str]:
     """Mask sensitive header values."""
     if not headers:
         return {}
     return {
-        k: '***MASKED***' if k.lower() in SENSITIVE_HEADERS else v
+        k: "***MASKED***" if k.lower() in SENSITIVE_HEADERS else v
         for k, v in headers.items()
     }
+
 
 def log_http_interaction(
     step_name: str,
@@ -213,9 +226,9 @@ def log_http_interaction(
                 "request_id": request_id,
                 "structured_data": {
                     "event": "payload_logging_disabled",
-                    "reason": "no_file_path"
-                }
-            }
+                    "reason": "no_file_path",
+                },
+            },
         )
         return
     if not payload_logger.handlers:
@@ -225,12 +238,12 @@ def log_http_interaction(
                 "request_id": request_id,
                 "structured_data": {
                     "event": "payload_logging_disabled",
-                    "reason": "no_handlers"
-                }
-            }
+                    "reason": "no_handlers",
+                },
+            },
         )
         return
-    
+
     try:
         entry = {
             "event": "http_interaction",
@@ -251,35 +264,27 @@ def log_http_interaction(
                 entry["body"] = {"_type": "string", "content": body}
         elif isinstance(body, bytes):
             try:
-                decoded = body.decode('utf-8')
+                decoded = body.decode("utf-8")
                 entry["body"] = json.loads(decoded)
             except (UnicodeDecodeError, json.JSONDecodeError):
                 import base64
+
                 entry["body"] = {
                     "_type": "bytes",
-                    "base64": base64.b64encode(body).decode('ascii')
+                    "base64": base64.b64encode(body).decode("ascii"),
                 }
         elif body is not None:
-            entry["body"] = {
-                "_type": type(body).__name__,
-                "repr": str(body)
-            }
+            entry["body"] = {"_type": type(body).__name__, "repr": str(body)}
 
         payload_logger.debug(
             "HTTP interaction",
-            extra={
-                "request_id": request_id,
-                "structured_data": entry
-            }
+            extra={"request_id": request_id, "structured_data": entry},
         )
     except Exception as e:
         logger.error(
             "Failed to write payload log entry",
             extra={
                 "request_id": request_id,
-                "structured_data": {
-                    "event": "payload_log_error",
-                    "error": str(e)
-                }
-            }
+                "structured_data": {"event": "payload_log_error", "error": str(e)},
+            },
         )

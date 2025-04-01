@@ -1,7 +1,9 @@
 """
 Initializes and configures the OpenAI AsyncClient for interacting with OpenRouter.
 """
+
 import openai
+
 from .config import settings
 from .logging_config import logger
 
@@ -14,7 +16,4 @@ client = openai.AsyncClient(
     },
 )
 
-logger.info(
-    "OpenAI AsyncClient initialized for OpenRouter."
-)
-
+logger.info("OpenAI AsyncClient initialized for OpenRouter.")

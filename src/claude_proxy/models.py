@@ -1,8 +1,11 @@
 """
 Pydantic models defining the Anthropic API request/response structures.
 """
+
+from typing import Any, Dict, List, Literal, Optional, Union
+
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Dict, Any, Optional, Union, Literal
+
 from .logging_config import logger
 
 
@@ -32,9 +35,7 @@ class ContentBlockToolUse(BaseModel):
 class ContentBlockToolResult(BaseModel):
     type: Literal["tool_result"]
     tool_use_id: str
-    content: Union[
-        str, List[Dict[str, Any]], List[Any]
-    ]
+    content: Union[str, List[Dict[str, Any]], List[Any]]
     is_error: Optional[bool] = None
 
 

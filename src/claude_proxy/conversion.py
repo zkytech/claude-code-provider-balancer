@@ -1,13 +1,15 @@
 """
 Handles conversion between Anthropic and OpenAI API formats, including streaming.
 """
+
 import json
 import uuid
-import openai
-from typing import List, Dict, Any, Optional, Union, Literal, AsyncGenerator
-from . import models
-from .logging_config import logger, log_error_simplified
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 
+import openai
+
+from . import models
+from .logging_config import log_error_simplified, logger
 
 
 def convert_anthropic_to_openai_messages(
@@ -16,11 +18,11 @@ def convert_anthropic_to_openai_messages(
 ) -> List[Dict[str, Any]]:
     """
     Converts Anthropic messages/system prompt to OpenAI message list format.
-    
+
     Args:
         anthropic_messages: List of Anthropic message objects
         anthropic_system: Optional system prompt as string or list of SystemContent blocks
-        
+
     Returns:
         List of OpenAI-formatted message dictionaries
     """
@@ -61,58 +63,69 @@ def convert_anthropic_to_openai_messages(
                         openai_content_list.append({"type": "text", "text": block.text})
 
                 elif isinstance(block, models.ContentBlockImage) and role == "user":
-                    openai_content_list.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{block.source.media_type};base64,{block.source.data}"
+                    openai_content_list.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{block.source.media_type};base64,{block.source.data}"
+                            },
                         }
-                    })
+                    )
 
-                elif isinstance(block, models.ContentBlockToolUse) and role == "assistant":
+                elif (
+                    isinstance(block, models.ContentBlockToolUse)
+                    and role == "assistant"
+                ):
                     try:
                         args_str = json.dumps(block.input)
                     except Exception as e:
                         logger.warning(f"Failed to serialize tool input: {e}")
                         args_str = "{}"
-                    
-                    assistant_tool_calls.append({
-                        "id": block.id,
-                        "type": "function",
-                        "function": {
-                            "name": block.name,
-                            "arguments": args_str
-                        }
-                    })
 
-                elif isinstance(block, models.ContentBlockToolResult) and role == "user":
+                    assistant_tool_calls.append(
+                        {
+                            "id": block.id,
+                            "type": "function",
+                            "function": {"name": block.name, "arguments": args_str},
+                        }
+                    )
+
+                elif (
+                    isinstance(block, models.ContentBlockToolResult) and role == "user"
+                ):
                     content_str = _serialize_tool_result(block.content)
-                    tool_results.append({
-                        "role": "tool",
-                        "tool_call_id": block.tool_use_id,
-                        "content": content_str
-                    })
+                    tool_results.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": block.tool_use_id,
+                            "content": content_str,
+                        }
+                    )
 
             if role == "user":
                 if openai_content_list:
-                    openai_messages.append({
-                        "role": "user",
-                        "content": openai_content_list if len(openai_content_list) > 1 else openai_content_list[0]["text"]
-                    })
+                    openai_messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                openai_content_list
+                                if len(openai_content_list) > 1
+                                else openai_content_list[0]["text"]
+                            ),
+                        }
+                    )
                 openai_messages.extend(tool_results)
 
             elif role == "assistant":
                 if text_content:
-                    text_msg = {
-                        "role": "assistant",
-                        "content": "\n".join(text_content)
-                    }
+                    text_msg = {"role": "assistant", "content": "\n".join(text_content)}
                     openai_messages.append(text_msg)
 
                 if assistant_tool_calls:
                     tool_msg = {
                         "role": "assistant",
                         "content": None,
-                        "tool_calls": assistant_tool_calls
+                        "tool_calls": assistant_tool_calls,
                     }
                     openai_messages.append(tool_msg)
 
@@ -129,6 +142,7 @@ def convert_anthropic_to_openai_messages(
     openai_messages = [_ensure_message_format(msg) for msg in openai_messages]
 
     return openai_messages
+
 
 def _serialize_tool_result(content) -> str:
     """Helper method to serialize tool result content to string format"""
@@ -148,10 +162,9 @@ def _serialize_tool_result(content) -> str:
             return json.dumps(content)
     except Exception as e:
         logger.warning(f"Failed to serialize tool result content: {e}")
-        return json.dumps({
-            "error": "Serialization failed",
-            "original_type": str(type(content))
-        })
+        return json.dumps(
+            {"error": "Serialization failed", "original_type": str(type(content))}
+        )
 
 
 def convert_anthropic_tools_to_openai(
@@ -193,8 +206,6 @@ def convert_anthropic_tool_choice_to_openai(
     return "auto"
 
 
-
-
 def convert_openai_to_anthropic(
     openai_response: openai.types.chat.ChatCompletion, original_model_name: str
 ) -> models.MessagesResponse:
@@ -219,9 +230,7 @@ def convert_openai_to_anthropic(
         message = choice.message
         finish_reason = choice.finish_reason
 
-        anthropic_stop_reason = stop_reason_map.get(
-            finish_reason, "end_turn"
-        )
+        anthropic_stop_reason = stop_reason_map.get(finish_reason, "end_turn")
 
         if message.content:
             anthropic_content.append(
@@ -290,8 +299,6 @@ def convert_openai_to_anthropic(
     )
 
 
-
-
 async def handle_streaming_response(
     openai_stream: openai.AsyncStream[openai.types.chat.ChatCompletionChunk],
     original_model_name: str,
@@ -347,7 +354,6 @@ async def handle_streaming_response(
         delta = chunk.choices[0].delta
         finish_reason = chunk.choices[0].finish_reason
 
-
         if delta.content:
             if not text_block_started:
                 start_text_block = {
@@ -375,8 +381,7 @@ async def handle_streaming_response(
 
                 if anthropic_idx not in current_tool_calls:
                     current_tool_calls[anthropic_idx] = {
-                        "id": tool_delta.id
-                        or f"tool_{uuid.uuid4()}",
+                        "id": tool_delta.id or f"tool_{uuid.uuid4()}",
                         "name": tool_delta.function.name or "",
                         "arguments": tool_delta.function.arguments or "",
                     }
@@ -449,4 +454,3 @@ async def handle_streaming_response(
     yield f"event: message_delta\ndata: {json.dumps(message_delta_event)}\n\n"
 
     yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
-

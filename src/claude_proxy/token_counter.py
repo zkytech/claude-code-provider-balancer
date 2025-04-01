@@ -1,7 +1,9 @@
 """
 Simplified token counter that returns zero values.
 """
-from typing import List, Dict, Any, Optional, Union
+
+from typing import Any, Dict, List, Optional, Union
+
 from . import models
 from .logging_config import logger
 
@@ -15,7 +17,7 @@ def count_tokens_for_request(
     """
     Returns zero tokens for all requests.
     Real token counting has been removed for simplicity.
-    
+
     Args:
         messages: List of Anthropic Message objects.
         system: Optional system prompt string or list of SystemContent.
