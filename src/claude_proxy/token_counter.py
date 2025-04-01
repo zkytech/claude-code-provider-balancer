@@ -5,7 +5,7 @@ Simplified token counter that returns zero values.
 from typing import List, Optional, Union
 
 from . import models
-from .logger import logger
+from .logger import _logger
 
 
 def count_tokens_for_request(
@@ -27,5 +27,5 @@ def count_tokens_for_request(
     Returns:
         Always returns 0 tokens.
     """
-    logger.debug(f"Token counting disabled - returning 0 for model: {model_name}")
+    _logger.debug(f"Token counting disabled - returning 0 for model: {model_name}")
     return 0

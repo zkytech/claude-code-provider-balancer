@@ -8,8 +8,9 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 
+from claude_proxy import logger
 from claude_proxy.config import settings
-from claude_proxy.logger import console, logger
+from claude_proxy.logger import console
 
 if __name__ == "__main__":
     console.print(
@@ -65,5 +66,5 @@ if __name__ == "__main__":
             access_log=True,
         )
     except Exception as e:
-        logger.critical(f"Failed to start Uvicorn server: {e}", exc_info=True)
+        logger._logger.error(f"Failed to start Uvicorn server: {e}", e)
         exit(1)

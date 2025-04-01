@@ -2,12 +2,14 @@
 Tests for error handling in the API.
 """
 
+import json
 from unittest.mock import patch
 
 import httpx
 import openai
 import pytest
 from fastapi.testclient import TestClient
+from pytest_mock import MockerFixture
 
 from claude_proxy.api import app
 
@@ -259,3 +261,266 @@ def test_streaming_connection_error(client):
         assert data["type"] == "error"
         assert data["error"]["type"] == "api_error"
         assert "message" in data["error"]
+
+
+def test_provider_returned_error(client):
+    """Test handling of provider-specific error messages in response."""
+    error_data = {
+        "error": {
+            "code": 400,
+            "message": "* GenerateContentRequest error message from provider",
+            "status": "INVALID_ARGUMENT",
+        }
+    }
+
+    mock_request = httpx.Request(
+        "POST", "https://test.openrouter.ai/api/v1/chat/completions"
+    )
+    mock_response = httpx.Response(
+        status_code=400,
+        json={
+            "error": {
+                "message": "Provider returned error",
+                "metadata": {
+                    "raw": json.dumps(error_data),
+                    "provider_name": "Test Provider",
+                },
+            }
+        },
+        request=mock_request,
+    )
+
+    provider_error = openai.BadRequestError(
+        message="Provider returned error",
+        response=mock_response,
+        body={
+            "error": {
+                "message": "Provider returned error",
+                "metadata": {
+                    "raw": json.dumps(error_data),
+                    "provider_name": "Test Provider",
+                },
+            }
+        },
+    )
+
+    with patch(
+        "claude_proxy.api.client.chat.completions.create", side_effect=provider_error
+    ):
+        request_data = {
+            "model": "claude-3-opus-20240229",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 1024,
+        }
+
+        response = client.post("/v1/messages", json=request_data)
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["type"] == "error"
+        assert data["error"]["type"] == "invalid_request_error"
+        assert "Provider returned error" in data["error"]["message"]
+
+
+def test_provider_rate_limit_error(client):
+    """Test handling of provider-specific rate limit error."""
+    error_data = {
+        "error": {
+            "code": 429,
+            "message": "You exceeded your current quota, please check your plan and billing details.",
+            "status": "RESOURCE_EXHAUSTED",
+        }
+    }
+
+    mock_request = httpx.Request(
+        "POST", "https://test.openrouter.ai/api/v1/chat/completions"
+    )
+    mock_response = httpx.Response(
+        status_code=429,
+        json={
+            "error": {
+                "message": "Provider returned error",
+                "code": 429,
+                "metadata": {
+                    "raw": json.dumps(error_data),
+                    "provider_name": "Test Provider",
+                },
+            }
+        },
+        request=mock_request,
+    )
+
+    provider_error = openai.RateLimitError(
+        message="Provider returned error",
+        response=mock_response,
+        body={
+            "error": {
+                "message": "Provider returned error",
+                "code": 429,
+                "metadata": {
+                    "raw": json.dumps(error_data),
+                    "provider_name": "Test Provider",
+                },
+            }
+        },
+    )
+
+    with patch(
+        "claude_proxy.api.client.chat.completions.create", side_effect=provider_error
+    ):
+        request_data = {
+            "model": "claude-3-opus-20240229",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 1024,
+        }
+
+        response = client.post("/v1/messages", json=request_data)
+
+        assert response.status_code == 429
+        data = response.json()
+        assert data["type"] == "error"
+        assert data["error"]["type"] == "rate_limit_error"
+        assert "Provider returned error" in data["error"]["message"]
+
+
+def test_gemini_rate_limit_error(client):
+    """Test handling of Gemini-specific rate limit error as seen in production."""
+    error_data = {
+        "error": {
+            "code": 429,
+            "message": "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.",
+            "status": "RESOURCE_EXHAUSTED",
+            "details": [
+                {
+                    "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                    "violations": [
+                        {
+                            "quotaMetric": "generativelanguage.googleapis.com/generate_content_paid_tier_input_token_count",
+                            "quotaId": "GenerateContentPaidTierInputTokensPerModelPerMinute",
+                            "quotaDimensions": {
+                                "location": "global",
+                                "model": "gemini-2.5-pro-exp",
+                            },
+                            "quotaValue": "10000000",
+                        }
+                    ],
+                },
+                {
+                    "@type": "type.googleapis.com/google.rpc.Help",
+                    "links": [
+                        {
+                            "description": "Learn more about Gemini API quotas",
+                            "url": "https://ai.google.dev/gemini-api/docs/rate-limits",
+                        }
+                    ],
+                },
+                {
+                    "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                    "retryDelay": "29s",
+                },
+            ],
+        }
+    }
+
+    mock_request = httpx.Request(
+        "POST", "https://test.openrouter.ai/api/v1/chat/completions"
+    )
+    mock_response = httpx.Response(
+        status_code=429,
+        json={
+            "error": {
+                "message": "Provider returned error",
+                "code": 429,
+                "metadata": {"raw": json.dumps(error_data), "provider_name": "google"},
+            }
+        },
+        request=mock_request,
+    )
+
+    provider_error = openai.RateLimitError(
+        message="Provider returned error",
+        response=mock_response,
+        body={
+            "error": {
+                "message": "Provider returned error",
+                "code": 429,
+                "metadata": {"raw": json.dumps(error_data), "provider_name": "google"},
+            }
+        },
+    )
+
+    with patch(
+        "claude_proxy.api.client.chat.completions.create", side_effect=provider_error
+    ):
+        request_data = {
+            "model": "gemini-2.5-pro-exp",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 1024,
+        }
+
+        response = client.post("/v1/messages", json=request_data)
+
+        assert response.status_code == 429
+        data = response.json()
+        assert data["type"] == "error"
+        assert data["error"]["type"] == "rate_limit_error"
+        assert "Provider returned error" in data["error"]["message"]
+
+        assert "provider" in data["error"]
+        assert data["error"]["provider"] == "google"
+
+        if "provider_message" in data["error"]:
+            assert "exceeded your current quota" in data["error"]["provider_message"]
+
+
+def test_gemini_error_in_response_body(client, mocker: MockerFixture):
+    """
+    Test handling cases where OpenRouter returns a 200 status code but includes
+    error information in the response body (as seen in production logs).
+    """
+    error_data = {
+        "error": {
+            "code": 429,
+            "message": "You exceeded your current quota, please check your plan and billing details.",
+            "status": "RESOURCE_EXHAUSTED",
+        }
+    }
+
+    response_dict = {
+        "id": None,
+        "choices": None,
+        "created": None,
+        "model": None,
+        "object": None,
+        "service_tier": None,
+        "system_fingerprint": None,
+        "usage": None,
+        "error": {
+            "message": "Provider returned error",
+            "code": 429,
+            "metadata": {"raw": json.dumps(error_data), "provider_name": "google"},
+        },
+    }
+
+    async_mock = mocker.AsyncMock()
+
+    mock_response = mocker.Mock()
+    mock_response.model_dump.return_value = response_dict
+    async_mock.return_value = mock_response
+
+    with patch("claude_proxy.api.client.chat.completions.create", async_mock):
+        request_data = {
+            "model": "gemini-2.5-pro-exp",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 1024,
+        }
+
+        response = client.post("/v1/messages", json=request_data)
+
+        assert response.status_code == 429
+        data = response.json()
+        assert data["type"] == "error"
+        assert data["error"]["type"] == "rate_limit_error"
+        assert "Provider returned error" in data["error"]["message"]
+        assert "provider" in data["error"]
+        assert data["error"]["provider"] == "google"

@@ -18,8 +18,10 @@ from pydantic import ValidationError
 
 from . import conversion, logger, models
 from .config import settings
-from .logger import LogRecord
+from .conversion import STATUS_CODE_ERROR_MAP
+from .logger import LogEvent, LogRecord
 from .openrouter_client import client
+from .provider_mods import apply_provider_modifications
 
 app = fastapi.FastAPI(
     title=settings.app_name,
@@ -38,7 +40,7 @@ def select_target_model(client_model_name: str, request_id: str) -> str:
         target_model = settings.big_model_name
         logger.debug(
             LogRecord(
-                event="model_selection",
+                event=LogEvent.MODEL_SELECTION.value,
                 message="Client model mapped to BIG model",
                 request_id=request_id,
                 data={"client_model": client_model_name, "target_model": target_model},
@@ -85,7 +87,7 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
     is_stream = anthropic_request.stream or False
     logger.debug(
         LogRecord(
-            event="request_validation",
+            event=LogEvent.REQUEST_VALIDATION.value,
             message="Request body parsed and validated successfully",
             request_id=request_id,
         )
@@ -97,7 +99,7 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
     )
     logger.debug(
         LogRecord(
-            event="provider_identification",
+            event=LogEvent.PROVIDER_IDENTIFICATION.value,
             message="Target provider identified",
             request_id=request_id,
             data={"provider": target_provider},
@@ -106,7 +108,7 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
 
     logger.info(
         LogRecord(
-            event="request_start",
+            event=LogEvent.REQUEST_START.value,
             message="Request started",
             request_id=request_id,
             data={
@@ -119,7 +121,7 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
 
     logger.debug(
         LogRecord(
-            event="request_body",
+            event=LogEvent.REQUEST_VALIDATION.value,
             message="Anthropic request body",
             request_id=request_id,
             data={"body": body},
@@ -159,9 +161,11 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
     if anthropic_request.metadata and anthropic_request.metadata.get("user_id"):
         openai_params["user"] = str(anthropic_request.metadata.get("user_id"))
 
+    openai_params = apply_provider_modifications(openai_params, target_provider)
+
     logger.debug(
         LogRecord(
-            event="openai_request",
+            event=LogEvent.OPENAI_REQUEST.value,
             message="OpenAI request parameters",
             request_id=request_id,
             data={"params": openai_params},
@@ -171,7 +175,7 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
     if is_stream:
         logger.debug(
             LogRecord(
-                event="streaming_request",
+                event=LogEvent.STREAMING_REQUEST.value,
                 message="Initiating streaming request to OpenRouter",
                 request_id=request_id,
             )
@@ -181,7 +185,7 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
         duration_ms = (time.time() - start_time) * 1000
         logger.info(
             LogRecord(
-                event="request_end",
+                event=LogEvent.REQUEST_END.value,
                 message="Streaming request completed",
                 request_id=request_id,
                 data={
@@ -205,21 +209,46 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
     else:
         logger.debug(
             LogRecord(
-                event="non_streaming_request",
+                event=LogEvent.OPENAI_REQUEST.value,
                 message="Sending non-streaming request to OpenRouter",
                 request_id=request_id,
             )
         )
         openai_response = await client.chat.completions.create(**openai_params)
 
+        response_dict = openai_response.model_dump()
         logger.debug(
             LogRecord(
-                event="openai_response",
+                event=LogEvent.OPENAI_RESPONSE.value,
                 message="OpenAI response received",
                 request_id=request_id,
-                data={"response": openai_response.model_dump()},
+                data={"response": response_dict},
             )
         )
+
+        if "error" in response_dict and response_dict["error"] is not None:
+            error_details = response_dict["error"]
+            error_code = error_details.get("code", 500)
+            error_msg = error_details.get("message", "Unknown provider error")
+
+            provider_details = None
+            if isinstance(error_details, dict) and "metadata" in error_details:
+                provider_details = extract_provider_error_details(error_details)
+
+            error_type = STATUS_CODE_ERROR_MAP.get(
+                error_code, models.AnthropicErrorType.API_ERROR
+            )
+
+            if error_code == 429:
+                error_type = models.AnthropicErrorType.RATE_LIMIT
+
+            return await _handle_error(
+                request=request,
+                status_code=error_code,
+                anthropic_error_type=error_type,
+                error_message=error_msg,
+                provider_details=provider_details,
+            )
 
         anthropic_response = conversion.convert_openai_to_anthropic(
             openai_response, anthropic_request.model
@@ -243,7 +272,7 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
 
         logger.debug(
             LogRecord(
-                event="anthropic_response",
+                event=LogEvent.ANTHROPIC_RESPONSE.value,
                 message="Anthropic response prepared",
                 request_id=request_id,
                 data={"response": anthropic_response.model_dump(exclude_unset=True)},
@@ -273,7 +302,7 @@ async def count_tokens_endpoint(request: Request) -> models.TokenCountResponse:
     duration_ms = (time.time() - start_time) * 1000
     logger.info(
         LogRecord(
-            event="token_count",
+            event=LogEvent.TOKEN_COUNT.value,
             message="Token counting disabled - returning 0 tokens",
             request_id=request_id,
             data={"duration_ms": duration_ms},
@@ -293,9 +322,136 @@ async def root() -> JSONResponse:
     )
 
 
-def get_error_response(error_type: str, message: str) -> Dict[str, Any]:
-    """Formats error response in Anthropic-compatible structure."""
-    return {"type": "error", "error": {"type": error_type, "message": message}}
+def get_error_response(
+    error_type: models.AnthropicErrorType,
+    message: str,
+    provider_details: Optional[models.ProviderErrorMetadata] = None,
+) -> models.AnthropicErrorResponse:
+    """
+    Formats error response in Anthropic-compatible structure with optional provider details.
+
+    Creates a consistent error response that follows the Anthropic API error format,
+    but with enhanced provider-specific error details when available. This allows
+    clients to get detailed information about errors from underlying providers.
+
+    Examples:
+        Basic error without provider details:
+        ```python
+        get_error_response(
+            models.AnthropicErrorType.INVALID_REQUEST,
+            "Invalid parameter value"
+        )
+        ```
+
+        Error with provider details:
+        ```python
+        provider_details = models.ProviderErrorMetadata(
+            provider_name="google",
+            raw_error={"error": {"code": 400, "message": "Invalid BatchTool schema"}}
+        )
+        get_error_response(
+            models.AnthropicErrorType.INVALID_REQUEST,
+            "Provider returned error",
+            provider_details
+        )
+        ```
+
+    Args:
+        error_type: The Anthropic error type enum
+        message: The error message
+        provider_details: Optional provider-specific error details
+
+    Returns:
+        A fully formatted Anthropic-style error response
+    """
+    error = models.AnthropicErrorDetail(type=error_type.value, message=message)
+
+    if provider_details:
+        error.provider = provider_details.provider_name
+
+        if (
+            provider_details.raw_error
+            and isinstance(provider_details.raw_error, dict)
+            and "error" in provider_details.raw_error
+        ):
+            provider_error = provider_details.raw_error["error"]
+            if isinstance(provider_error, dict):
+                if "message" in provider_error and provider_error["message"]:
+                    error.provider_message = provider_error["message"]
+
+                if "code" in provider_error:
+                    error.provider_code = provider_error["code"]
+
+    return models.AnthropicErrorResponse(error=error)
+
+
+def extract_provider_error_details(
+    error_details: Dict[str, Any],
+) -> Optional[models.ProviderErrorMetadata]:
+    """
+    Extract provider-specific error details from API error metadata.
+
+    This function parses the error metadata from OpenRouter responses to extract
+    provider-specific error details. It handles different provider error formats
+    and returns a structured ProviderErrorMetadata object with the error information.
+
+    Examples:
+        For a Gemini error:
+        ```
+        {
+          "error": {
+            "message": "Provider returned error",
+            "metadata": {
+              "provider_name": "google",
+              "raw": "{\"error\":{\"code\":400,\"message\":\"Invalid BatchTool schema\",\"status\":\"INVALID_ARGUMENT\"}}"
+            }
+          }
+        }
+        ```
+
+        Returns:
+        ```
+        ProviderErrorMetadata(
+            provider_name="google",
+            raw_error={
+                "error": {
+                    "code": 400,
+                    "message": "Invalid BatchTool schema",
+                    "status": "INVALID_ARGUMENT"
+                }
+            }
+        )
+        ```
+
+    Args:
+        error_details: The error details dictionary from the API response
+
+    Returns:
+        A ProviderErrorMetadata instance if provider error details are found,
+        otherwise None
+
+    TODO: Refactor into a strategy pattern with provider-specific handlers.
+    """
+    if not isinstance(error_details, dict):
+        return None
+
+    metadata = error_details.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return None
+
+    provider_name = metadata.get("provider_name")
+    raw_error = metadata.get("raw")
+
+    if not provider_name or not raw_error or not isinstance(raw_error, str):
+        return None
+
+    try:
+        parsed_raw = json.loads(raw_error)
+        return models.ProviderErrorMetadata(
+            provider_name=provider_name, raw_error=parsed_raw
+        )
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 def extract_error_message(exc: Exception) -> str:
@@ -304,6 +460,15 @@ def extract_error_message(exc: Exception) -> str:
         error_details = exc.body.get("error", {})
         if isinstance(error_details, dict):
             message = error_details.get("message")
+
+            provider_details = extract_provider_error_details(error_details)
+            if provider_details and "raw_error" in provider_details:
+                provider_error = provider_details["raw_error"]
+                if isinstance(provider_error, dict) and "error" in provider_error:
+                    provider_error_msg = provider_error["error"].get("message")
+                    if provider_error_msg and isinstance(provider_error_msg, str):
+                        return f"{message}: {provider_error_msg}"
+
             if message is not None and isinstance(message, str):
                 return message
             return str(exc)
@@ -325,11 +490,33 @@ def extract_error_message(exc: Exception) -> str:
 
 
 async def _handle_error(
-    request: Request, exc: Exception, status_code: int, anthropic_error_type: str
+    request: Request,
+    status_code: int,
+    anthropic_error_type: models.AnthropicErrorType,
+    error_message: str,
+    provider_details: Optional[models.ProviderErrorMetadata] = None,
+    exc: Optional[Exception] = None,
 ) -> JSONResponse:
-    """Centralized logic for logging and formatting error responses."""
+    """
+    Centralized logic for logging and formatting API error responses.
+
+    This function handles all error responses consistently by:
+    1. Using the provided error message and details
+    2. Logging the error with appropriate context
+    3. Creating a properly formatted Anthropic error response
+
+    Args:
+        request: The FastAPI request object
+        status_code: HTTP status code to return
+        anthropic_error_type: The Anthropic error type enum value
+        error_message: The error message to include in the response
+        provider_details: Optional provider-specific error details
+        exc: Optional exception that was caught (for logging)
+
+    Returns:
+        A JSON response with properly formatted error details
+    """
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()).split("-")[0])
-    detail = extract_error_message(exc)
 
     duration = (
         (time.time() - request.state.start_time) * 1000
@@ -337,21 +524,65 @@ async def _handle_error(
         else 0
     )
 
-    logger.log_exception(
-        message=f"Request error: {detail}",
-        exc=exc,
-        request_id=request_id,
+    log_data = {
+        "status_code": status_code,
+        "duration_ms": duration,
+        "error_type": anthropic_error_type.value,
+    }
+
+    if provider_details:
+        log_data["provider"] = provider_details.provider_name
+        log_data["provider_error"] = provider_details.raw_error
+
+    record = LogRecord(
         event="request_error",
-        data={
-            "status_code": status_code,
-            "duration_ms": duration,
-            "error_type": anthropic_error_type,
-        },
+        message=f"Request error: {error_message}",
+        request_id=request_id,
+        data=log_data,
+    )
+    logger.error(record, exc=exc)
+
+    error_response = get_error_response(
+        anthropic_error_type, error_message, provider_details
     )
 
-    content = get_error_response(anthropic_error_type, detail)
+    return JSONResponse(status_code=status_code, content=error_response.model_dump())
 
-    return JSONResponse(status_code=status_code, content=content)
+
+async def _handle_exception(
+    request: Request,
+    exc: Exception,
+    status_code: int,
+    anthropic_error_type: models.AnthropicErrorType,
+) -> JSONResponse:
+    """
+    Handles errors from exceptions by extracting error details and delegating to _handle_error.
+
+    Args:
+        request: The FastAPI request object
+        exc: The exception that was caught
+        status_code: HTTP status code to return
+        anthropic_error_type: The Anthropic error type enum value
+
+    Returns:
+        A JSON response with properly formatted error details
+    """
+    detail = extract_error_message(exc)
+
+    provider_details = None
+    if hasattr(exc, "body") and isinstance(exc.body, dict):
+        error_details = exc.body.get("error", {})
+        if isinstance(error_details, dict):
+            provider_details = extract_provider_error_details(error_details)
+
+    return await _handle_error(
+        request=request,
+        status_code=status_code,
+        anthropic_error_type=anthropic_error_type,
+        error_message=detail,
+        provider_details=provider_details,
+        exc=exc,
+    )
 
 
 @app.exception_handler(ValidationError)
@@ -359,7 +590,9 @@ async def validation_exception_handler(
     request: Request, exc: ValidationError
 ) -> JSONResponse:
     """Handles Pydantic validation errors (422)."""
-    return await _handle_error(request, exc, 422, "invalid_request_error")
+    return await _handle_exception(
+        request, exc, 422, models.AnthropicErrorType.INVALID_REQUEST
+    )
 
 
 @app.exception_handler(json.JSONDecodeError)
@@ -367,18 +600,8 @@ async def json_decode_exception_handler(
     request: Request, exc: json.JSONDecodeError
 ) -> JSONResponse:
     """Handles JSON parsing errors (400)."""
-    detail = f"Invalid JSON format: {exc}"
-    request_id = getattr(request.state, "request_id", str(uuid.uuid4()).split("-")[0])
-
-    logger.log_exception(
-        message="Invalid JSON format in request",
-        exc=exc,
-        request_id=request_id,
-        event="json_decode_error",
-        data={"status_code": 400},
-    )
-    return JSONResponse(
-        status_code=400, content=get_error_response("invalid_request_error", detail)
+    return await _handle_exception(
+        request, exc, 400, models.AnthropicErrorType.INVALID_REQUEST
     )
 
 
@@ -386,62 +609,68 @@ async def json_decode_exception_handler(
 async def openai_api_error_handler(
     request: Request, exc: openai.APIError
 ) -> JSONResponse:
-    """Handles all OpenAI API errors, mapping them to appropriate Anthropic types."""
+    """
+    Handles all OpenAI API errors, mapping them to appropriate Anthropic types.
+
+    Maps specific OpenAI/OpenRouter exception types to the proper Anthropic error types
+    using a consistent mapping strategy. Ensures correct status codes are returned
+    based on the exception type.
+    """
     status_code = 500
-    anthropic_error_type = "api_error"
+    anthropic_error_type = models.AnthropicErrorType.API_ERROR
 
     if isinstance(exc, openai.AuthenticationError):
         status_code = 401
-        anthropic_error_type = "authentication_error"
+        anthropic_error_type = models.AnthropicErrorType.AUTHENTICATION
     elif isinstance(exc, openai.RateLimitError):
         status_code = 429
-        anthropic_error_type = "rate_limit_error"
+        anthropic_error_type = models.AnthropicErrorType.RATE_LIMIT
     elif isinstance(exc, openai.BadRequestError):
         status_code = 400
-        anthropic_error_type = "invalid_request_error"
+        anthropic_error_type = models.AnthropicErrorType.INVALID_REQUEST
     elif isinstance(exc, openai.PermissionDeniedError):
         status_code = 403
-        anthropic_error_type = "permission_error"
+        anthropic_error_type = models.AnthropicErrorType.PERMISSION
     elif isinstance(exc, openai.NotFoundError):
         status_code = 404
-        anthropic_error_type = "not_found_error"
+        anthropic_error_type = models.AnthropicErrorType.NOT_FOUND
     elif isinstance(exc, openai.UnprocessableEntityError):
         status_code = 422
-        anthropic_error_type = "invalid_request_error"
+        anthropic_error_type = models.AnthropicErrorType.INVALID_REQUEST
     elif isinstance(exc, openai.InternalServerError):
         status_code = 500
-        anthropic_error_type = "api_error"
+        anthropic_error_type = models.AnthropicErrorType.API_ERROR
     elif isinstance(exc, openai.APIConnectionError):
         status_code = 502
-        anthropic_error_type = "api_error"
+        anthropic_error_type = models.AnthropicErrorType.API_ERROR
     elif isinstance(exc, openai.APITimeoutError):
         status_code = 504
-        anthropic_error_type = "api_error"
+        anthropic_error_type = models.AnthropicErrorType.API_ERROR
     elif isinstance(exc, openai.APIStatusError):
         status_code = exc.status_code if hasattr(exc, "status_code") else 500
-        error_type_mapping = {
-            400: "invalid_request_error",
-            401: "authentication_error",
-            403: "permission_error",
-            404: "not_found_error",
-            413: "request_too_large",
-            422: "invalid_request_error",
-            429: "rate_limit_error",
-            500: "api_error",
-            502: "api_error",
-            503: "overloaded_error",
-            504: "api_error",
-        }
-        default_error = "api_error" if status_code >= 500 else "invalid_request_error"
-        anthropic_error_type = error_type_mapping.get(status_code, default_error)
 
-    return await _handle_error(request, exc, status_code, anthropic_error_type)
+        default_error = (
+            models.AnthropicErrorType.API_ERROR
+            if status_code >= 500
+            else models.AnthropicErrorType.INVALID_REQUEST
+        )
+
+        anthropic_error_type = STATUS_CODE_ERROR_MAP.get(status_code, default_error)
+
+    return await _handle_exception(request, exc, status_code, anthropic_error_type)
 
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Handles any other unexpected errors (500)."""
-    return await _handle_error(request, exc, 500, "api_error")
+    """
+    Handles any other unexpected errors (500).
+
+    This is the catch-all handler for any exceptions not specifically handled
+    by other exception handlers. It always returns a 500 API error.
+    """
+    return await _handle_exception(
+        request, exc, 500, models.AnthropicErrorType.API_ERROR
+    )
 
 
 @app.middleware("http")

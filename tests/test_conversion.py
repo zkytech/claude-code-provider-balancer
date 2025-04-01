@@ -3,10 +3,258 @@ Unit tests for the conversion module.
 """
 
 import json
+from typing import List
 
 import pytest
 
 from claude_proxy import conversion, models
+
+
+def test_anthropic_request_serialization():
+    """Tests serializing raw Anthropic request JSON into MessagesRequest model."""
+    raw_request = {
+        "model": "claude-3-opus-20240229",
+        "max_tokens": 1024,
+        "messages": [{"role": "user", "content": "Hello, world!"}],
+        "system": "You are Claude, a helpful AI assistant.",
+        "temperature": 0.7,
+        "top_p": 0.9,
+    }
+
+    request = models.MessagesRequest.model_validate(raw_request)
+
+    assert request.model == "claude-3-opus-20240229"
+    assert request.max_tokens == 1024
+    assert request.temperature == 0.7
+    assert request.top_p == 0.9
+    assert request.system == "You are Claude, a helpful AI assistant."
+    assert len(request.messages) == 1
+    assert request.messages[0].role == "user"
+    assert request.messages[0].content == "Hello, world!"
+
+
+def test_anthropic_request_with_complex_content():
+    """Tests serializing Anthropic request with complex content blocks."""
+    raw_request = {
+        "model": "claude-3-sonnet-20240229",
+        "max_tokens": 1024,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What's in this image?"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": "base64encodeddata",
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+
+    request = models.MessagesRequest.model_validate(raw_request)
+
+    assert request.model == "claude-3-sonnet-20240229"
+    assert request.max_tokens == 1024
+    assert len(request.messages) == 1
+    assert request.messages[0].role == "user"
+    assert isinstance(request.messages[0].content, list)
+    assert len(request.messages[0].content) == 2
+    assert request.messages[0].content[0].type == "text"
+    assert request.messages[0].content[0].text == "What's in this image?"
+    assert request.messages[0].content[1].type == "image"
+    assert request.messages[0].content[1].source.type == "base64"
+    assert request.messages[0].content[1].source.media_type == "image/jpeg"
+    assert request.messages[0].content[1].source.data == "base64encodeddata"
+
+
+def test_anthropic_request_with_tools():
+    """Tests serializing Anthropic request with tools and tool_choice."""
+    raw_request = {
+        "model": "claude-3-opus-20240229",
+        "max_tokens": 1024,
+        "messages": [
+            {"role": "user", "content": "What's the weather like in San Francisco?"}
+        ],
+        "tools": [
+            {
+                "name": "get_weather",
+                "description": "Get current weather for a location",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city and state",
+                        }
+                    },
+                    "required": ["location"],
+                },
+            },
+            {
+                "name": "get_time",
+                "description": "Get current time for a location",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city and state",
+                        },
+                        "timezone": {
+                            "type": "string",
+                            "description": "The timezone code",
+                        },
+                    },
+                    "required": ["location"],
+                },
+            },
+        ],
+        "tool_choice": {"type": "auto"},
+    }
+
+    request = models.MessagesRequest.model_validate(raw_request)
+
+    assert request.model == "claude-3-opus-20240229"
+    assert len(request.tools) == 2
+    assert request.tools[0].name == "get_weather"
+    assert request.tools[0].description == "Get current weather for a location"
+    assert "location" in request.tools[0].input_schema["properties"]
+
+    assert request.tools[1].name == "get_time"
+    assert request.tools[1].description == "Get current time for a location"
+    assert request.tools[1].input_schema["required"] == ["location"]
+
+    assert request.tool_choice.type == "auto"
+    assert request.tool_choice.name is None
+
+
+@pytest.mark.parametrize(
+    "anthropic_tool_input,expected_count,expected_names",
+    [
+        (
+            [
+                models.Tool(
+                    name="get_weather",
+                    description="Get weather information",
+                    input_schema={
+                        "type": "object",
+                        "properties": {"location": {"type": "string"}},
+                        "required": ["location"],
+                    },
+                )
+            ],
+            1,
+            ["get_weather"],
+        ),
+        (
+            [
+                models.Tool(
+                    name="get_weather",
+                    description="Get weather information",
+                    input_schema={
+                        "type": "object",
+                        "properties": {"location": {"type": "string"}},
+                        "required": ["location"],
+                    },
+                ),
+                models.Tool(
+                    name="calculator",
+                    description="Perform calculations",
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "expression": {"type": "string"},
+                            "precision": {"type": "integer", "default": 2},
+                        },
+                        "required": ["expression"],
+                    },
+                ),
+            ],
+            2,
+            ["get_weather", "calculator"],
+        ),
+        (
+            [
+                models.Tool(
+                    name="database_query",
+                    description="Query a database",
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "options": {
+                                "type": "object",
+                                "properties": {
+                                    "limit": {"type": "integer"},
+                                    "offset": {"type": "integer"},
+                                    "sort": {"type": "string", "enum": ["asc", "desc"]},
+                                },
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                )
+            ],
+            1,
+            ["database_query"],
+        ),
+    ],
+)
+def test_convert_anthropic_tools_to_openai_comprehensive(
+    anthropic_tool_input: List[models.Tool],
+    expected_count: int,
+    expected_names: List[str],
+):
+    """Tests comprehensive conversion of various Anthropic tool formats to OpenAI."""
+
+    result = conversion.convert_anthropic_tools_to_openai(anthropic_tool_input)
+
+    assert len(result) == expected_count
+
+    for i, name in enumerate(expected_names):
+        assert result[i]["type"] == "function"
+        assert result[i]["function"]["name"] == name
+        assert "description" in result[i]["function"]
+        assert "parameters" in result[i]["function"]
+
+        anthropic_schema = anthropic_tool_input[i].input_schema
+        openai_parameters = result[i]["function"]["parameters"]
+
+        assert openai_parameters["type"] == anthropic_schema["type"]
+
+        if "properties" in anthropic_schema:
+            assert "properties" in openai_parameters
+            for prop_name, prop_schema in anthropic_schema["properties"].items():
+                assert prop_name in openai_parameters["properties"]
+
+        if "required" in anthropic_schema:
+            assert "required" in openai_parameters
+            assert openai_parameters["required"] == anthropic_schema["required"]
+
+
+def test_comprehensive_tool_conversion_identity():
+    """
+    Tests that converting Anthropic tools to OpenAI and back would preserve
+    all the essential information (identity test).
+    """
+    anthropic_tools = conversion.ANTHROPIC_TOOLS_FIXTURE
+    openai_tools = conversion.convert_anthropic_tools_to_openai(anthropic_tools)
+
+    assert len(openai_tools) == len(conversion.OPENAI_TOOLS_FIXTURE)
+
+    for i, tool in enumerate(openai_tools):
+        assert tool["type"] == "function"
+        assert tool["function"]["name"] == anthropic_tools[i].name
+
+        if anthropic_tools[i].description:
+            assert tool["function"]["description"] == anthropic_tools[i].description
+
+        assert tool["function"]["parameters"] == anthropic_tools[i].input_schema
 
 
 def test_convert_anthropic_to_openai_messages_simple():

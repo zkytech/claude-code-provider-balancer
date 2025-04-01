@@ -14,6 +14,7 @@ Key features:
 - Format conversion between Anthropic and OpenAI requests/responses
   (see [mapping](docs/mapping.md) for translation details)
 - Support for both streaming and non-streaming responses
+- Support for provider specific middleware
 - Dynamic model selection based on requested Claude model
 - Detailed request/response logging
 
@@ -54,6 +55,8 @@ See `config.py` for more configuration options.
 `MAX_THINKING_TOKENS`
 `API_TIMEOUT_MS`
 `ANTHROPIC_BASE_URL`
+`DISABLE_TELEMETRY`
+`DISABLE_ERROR_REPORTING`
 
 ### Running the Server
 

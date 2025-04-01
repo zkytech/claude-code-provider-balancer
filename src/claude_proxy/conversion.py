@@ -1,30 +1,173 @@
 """
-Handles conversion between Anthropic and OpenAI API formats, including streaming.
+Handles conversion between Anthropic and OpenAI API formats, including streaming,
+with enhanced error handling and consistent request ID usage.
+Removes streaming token estimation. Clarifies ID generation needs.
 """
 
 import json
 import uuid
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
+from typing import (Any, AsyncGenerator, Dict, List, Literal, Optional, Tuple,
+                    Union)
 
 import openai
+from openai import (APIConnectionError, APIError, APITimeoutError,
+                    AuthenticationError, BadRequestError, InternalServerError,
+                    NotFoundError, PermissionDeniedError, RateLimitError,
+                    UnprocessableEntityError)
 
-from . import models
-from .logger import LogRecord, logger
+from . import logger, models
+from .logger import LogRecord
+
+ANTHROPIC_TOOLS_FIXTURE = [
+    models.Tool(
+        name="dispatch_agent",
+        description="Launch a new agent that has access to tools",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "The task for the agent to perform",
+                }
+            },
+            "required": ["prompt"],
+            "additionalProperties": False,
+            "$schema": "http://json-schema.org/draft-07/schema#",
+        },
+    ),
+    models.Tool(
+        name="Bash",
+        description="Executes a given bash command in a persistent shell session",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The command to execute"},
+                "timeout": {
+                    "type": "number",
+                    "description": "Optional timeout in milliseconds (max 600000)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Clear, concise description of what this command does",
+                },
+            },
+            "required": ["command"],
+            "additionalProperties": False,
+            "$schema": "http://json-schema.org/draft-07/schema#",
+        },
+    ),
+    models.Tool(
+        name="GlobTool",
+        description="Fast file pattern matching tool",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "The glob pattern to match files against",
+                },
+                "path": {"type": "string", "description": "The directory to search in"},
+            },
+            "required": ["pattern"],
+            "additionalProperties": False,
+            "$schema": "http://json-schema.org/draft-07/schema#",
+        },
+    ),
+]
+
+OPENAI_TOOLS_FIXTURE = [
+    {
+        "type": "function",
+        "function": {
+            "name": "dispatch_agent",
+            "description": "Launch a new agent that has access to tools",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "The task for the agent to perform",
+                    }
+                },
+                "required": ["prompt"],
+                "additionalProperties": False,
+                "$schema": "http://json-schema.org/draft-07/schema#",
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "Bash",
+            "description": "Executes a given bash command in a persistent shell session",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The command to execute",
+                    },
+                    "timeout": {
+                        "type": "number",
+                        "description": "Optional timeout in milliseconds (max 600000)",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Clear, concise description of what this command does",
+                    },
+                },
+                "required": ["command"],
+                "additionalProperties": False,
+                "$schema": "http://json-schema.org/draft-07/schema#",
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "GlobTool",
+            "description": "Fast file pattern matching tool",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "The glob pattern to match files against",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "The directory to search in",
+                    },
+                },
+                "required": ["pattern"],
+                "additionalProperties": False,
+                "$schema": "http://json-schema.org/draft-07/schema#",
+            },
+        },
+    },
+]
+
+
+StopReasonType = Optional[
+    Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "error"]
+]
 
 
 def convert_anthropic_to_openai_messages(
     anthropic_messages: List[models.Message],
     anthropic_system: Optional[Union[str, List[models.SystemContent]]] = None,
+    request_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Converts Anthropic messages/system prompt to OpenAI message list format.
 
     Args:
-        anthropic_messages: List of Anthropic message objects
-        anthropic_system: Optional system prompt as string or list of SystemContent blocks
+        anthropic_messages: List of Anthropic message objects.
+        anthropic_system: Optional system prompt as string or list of SystemContent blocks.
+        request_id: The unique ID for this request cycle, for logging.
 
     Returns:
-        List of OpenAI-formatted message dictionaries
+        List of OpenAI-formatted message dictionaries.
     """
     openai_messages = []
 
@@ -32,17 +175,27 @@ def convert_anthropic_to_openai_messages(
     if isinstance(anthropic_system, str):
         system_text_content = anthropic_system
     elif isinstance(anthropic_system, list):
-        system_text_content = "\n".join(
-            [
-                block.text
-                for block in anthropic_system
-                if isinstance(block, models.SystemContent) and block.type == "text"
-            ]
-        )
+        system_texts = []
+        ignored_system_blocks = False
+        for block in anthropic_system:
+            if isinstance(block, models.SystemContent) and block.type == "text":
+                system_texts.append(block.text)
+            else:
+                ignored_system_blocks = True
+        system_text_content = "\n".join(system_texts)
+
+        if ignored_system_blocks:
+            logger.warning(
+                LogRecord(
+                    event="system_prompt_conversion_warning",
+                    message="Non-text content blocks in Anthropic system prompt were ignored.",
+                    request_id=request_id,
+                )
+            )
     if system_text_content:
         openai_messages.append({"role": "system", "content": system_text_content})
 
-    for msg in anthropic_messages:
+    for i, msg in enumerate(anthropic_messages):
         role = msg.role
         content = msg.content
 
@@ -55,22 +208,32 @@ def convert_anthropic_to_openai_messages(
             tool_results = []
             assistant_tool_calls = []
             text_content = []
+            ignored_user_image_source = False
 
-            for block in content:
+            for block_idx, block in enumerate(content):
+                block_log_ctx = {
+                    "anthropic_message_index": i,
+                    "block_index": block_idx,
+                    "block_type": block.type,
+                }
+
                 if isinstance(block, models.ContentBlockText):
                     text_content.append(block.text)
                     if role == "user":
                         openai_content_list.append({"type": "text", "text": block.text})
 
                 elif isinstance(block, models.ContentBlockImage) and role == "user":
-                    openai_content_list.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{block.source.media_type};base64,{block.source.data}"
-                            },
-                        }
-                    )
+                    if block.source.type == "base64":
+                        openai_content_list.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{block.source.media_type};base64,{block.source.data}"
+                                },
+                            }
+                        )
+                    else:
+                        ignored_user_image_source = True
 
                 elif (
                     isinstance(block, models.ContentBlockToolUse)
@@ -78,13 +241,34 @@ def convert_anthropic_to_openai_messages(
                 ):
                     try:
                         args_str = json.dumps(block.input)
-                    except Exception as e:
-                        logger.warning(
+                    except TypeError as e:
+                        logger.error(
                             LogRecord(
-                                event="serialization_error",
-                                message=f"Failed to serialize tool input: {e}",
-                                error={"type": type(e).__name__, "message": str(e)},
-                            )
+                                event="tool_input_serialization_error",
+                                message=f"Failed to serialize tool input dictionary to JSON: {e}. Using empty JSON.",
+                                request_id=request_id,
+                                data={
+                                    **block_log_ctx,
+                                    "tool_id": block.id,
+                                    "tool_name": block.name,
+                                },
+                            ),
+                            e,
+                        )
+                        args_str = "{}"
+                    except Exception as e:
+                        logger.error(
+                            LogRecord(
+                                event="tool_input_serialization_error",
+                                message=f"Unexpected error serializing tool input: {e}. Using empty JSON.",
+                                request_id=request_id,
+                                data={
+                                    **block_log_ctx,
+                                    "tool_id": block.id,
+                                    "tool_name": block.name,
+                                },
+                            ),
+                            e,
                         )
                         args_str = "{}"
 
@@ -99,7 +283,9 @@ def convert_anthropic_to_openai_messages(
                 elif (
                     isinstance(block, models.ContentBlockToolResult) and role == "user"
                 ):
-                    content_str = _serialize_tool_result(block.content)
+                    content_str = _serialize_tool_result(
+                        block.content, request_id, block_log_ctx
+                    )
                     tool_results.append(
                         {
                             "role": "tool",
@@ -108,59 +294,82 @@ def convert_anthropic_to_openai_messages(
                         }
                     )
 
+            if ignored_user_image_source:
+                logger.warning(
+                    LogRecord(
+                        event="image_conversion_warning",
+                        message=f"Image blocks with source type other than 'base64' were ignored in user message {i}.",
+                        request_id=request_id,
+                        data={"anthropic_message_index": i},
+                    )
+                )
+
             if role == "user":
                 if openai_content_list:
-                    content_value: Union[List[Dict[str, Any]], str] = (
-                        openai_content_list
-                        if len(openai_content_list) > 1
-                        else openai_content_list[0]["text"]
+                    is_multi_modal = any(
+                        item["type"] != "text" for item in openai_content_list
                     )
-                    openai_messages.append(
-                        {
-                            "role": "user",
-                            "content": content_value,
-                        }
-                    )
+                    if is_multi_modal or len(openai_content_list) > 1:
+                        content_value = openai_content_list
+                    elif openai_content_list:
+                        content_value = openai_content_list[0]["text"]
+                    else:
+                        content_value = ""
+
+                    if content_value or not tool_results:
+                        openai_messages.append(
+                            {
+                                "role": "user",
+                                "content": content_value or "",
+                            }
+                        )
                 openai_messages.extend(tool_results)
 
             elif role == "assistant":
-                if text_content:
-                    filtered_text = [t for t in text_content if t is not None]
-                    text_msg = {
-                        "role": "assistant",
-                        "content": "\n".join(filtered_text),
-                    }
-                    openai_messages.append(text_msg)
-
-                if assistant_tool_calls:
-                    tool_msg = {
-                        "role": "assistant",
-                        "content": None,
-                        "tool_calls": assistant_tool_calls,
-                    }
-                    openai_messages.append(tool_msg)
-
-    def _ensure_message_format(msg: Dict[str, Any]) -> Dict[str, Any]:
-        """Ensures each message follows OpenAI's format requirements"""
-        if msg["role"] == "assistant" and msg.get("tool_calls"):
-            if msg.get("content") is not None:
-                logger.warning(
-                    LogRecord(
-                        event="message_format_correction",
-                        message="Assistant message has both content and tool_calls. Setting content to None.",
-                        data={"original_content": msg["content"]},
+                filtered_text = [t for t in text_content if t is not None]
+                if filtered_text:
+                    openai_messages.append(
+                        {
+                            "role": "assistant",
+                            "content": "\n".join(filtered_text),
+                        }
                     )
+                if assistant_tool_calls:
+                    openai_messages.append(
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": assistant_tool_calls,
+                        }
+                    )
+
+    validated_messages = []
+    for msg in openai_messages:
+        if (
+            msg["role"] == "assistant"
+            and msg.get("tool_calls")
+            and msg.get("content") is not None
+        ):
+            logger.warning(
+                LogRecord(
+                    event="message_format_correction",
+                    message="Corrected assistant message with tool_calls to have content: None.",
+                    request_id=request_id,
+                    data={"original_content": msg["content"]},
                 )
-                msg["content"] = None
-        return msg
+            )
+            msg["content"] = None
+        validated_messages.append(msg)
 
-    openai_messages = [_ensure_message_format(msg) for msg in openai_messages]
-
-    return openai_messages
+    return validated_messages
 
 
-def _serialize_tool_result(content: Any) -> str:
-    """Helper method to serialize tool result content to string format"""
+def _serialize_tool_result(
+    content: Any, request_id: Optional[str], log_context: Dict
+) -> str:
+    """
+    Helper to serialize Anthropic tool result content to string for OpenAI.
+    """
     try:
         if isinstance(content, list):
             text_parts = [
@@ -175,16 +384,34 @@ def _serialize_tool_result(content: Any) -> str:
             return content
         else:
             return json.dumps(content)
+    except TypeError as e:
+        logger.warning(
+            LogRecord(
+                event="tool_result_serialization_error",
+                message=f"Failed to serialize tool result content to JSON: {e}. Returning error JSON.",
+                request_id=request_id,
+                data=log_context,
+            ),
+            e,
+        )
+        return json.dumps(
+            {"error": "Serialization failed", "original_type": str(type(content))}
+        )
     except Exception as e:
         logger.warning(
             LogRecord(
                 event="tool_result_serialization_error",
-                message="Failed to serialize tool result content",
-                error={"type": type(e).__name__, "message": str(e)},
-            )
+                message=f"Unexpected error serializing tool result content: {e}. Returning error JSON.",
+                request_id=request_id,
+                data=log_context,
+            ),
+            e,
         )
         return json.dumps(
-            {"error": "Serialization failed", "original_type": str(type(content))}
+            {
+                "error": "Unexpected serialization error",
+                "original_type": str(type(content)),
+            }
         )
 
 
@@ -209,6 +436,7 @@ def convert_anthropic_tools_to_openai(
 
 def convert_anthropic_tool_choice_to_openai(
     choice: Optional[models.ToolChoice],
+    request_id: Optional[str] = None,
 ) -> Optional[Union[str, Dict[str, Any]]]:
     """Converts Anthropic tool choice to OpenAI tool choice format."""
     if not choice:
@@ -224,21 +452,24 @@ def convert_anthropic_tool_choice_to_openai(
     logger.warning(
         LogRecord(
             event="unsupported_tool_choice",
-            message=f"Unsupported Anthropic tool_choice type: {choice.type}. Defaulting to 'auto'.",
-            data={"tool_choice_type": choice.type},
+            message=f"Unsupported Anthropic tool_choice type: '{choice.type}'. Defaulting to 'auto'.",
+            request_id=request_id,
+            data={
+                "tool_choice_type": choice.type,
+                "choice_details": choice.model_dump(),
+            },
         )
     )
     return "auto"
 
 
 def convert_openai_to_anthropic(
-    openai_response: openai.types.chat.ChatCompletion, original_model_name: str
+    openai_response: openai.types.chat.ChatCompletion,
+    original_model_name: str,
+    request_id: Optional[str] = None,
 ) -> models.MessagesResponse:
     """Converts a non-streaming OpenAI response to an Anthropic MessagesResponse."""
     anthropic_content: List[models.ContentBlock] = []
-    StopReasonType = Optional[
-        Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "error"]
-    ]
     anthropic_stop_reason: StopReasonType = None
     anthropic_stop_sequence: Optional[str] = None
 
@@ -246,6 +477,7 @@ def convert_openai_to_anthropic(
         "stop": "end_turn",
         "length": "max_tokens",
         "tool_calls": "tool_use",
+        "function_call": "tool_use",
         "content_filter": "stop_sequence",
         None: "end_turn",
     }
@@ -268,19 +500,39 @@ def convert_openai_to_anthropic(
                     tool_id = call.id
                     name = call.function.name
                     args_str = call.function.arguments
+                    tool_input: Dict[str, Any] = {}
+
                     try:
-                        tool_input = json.loads(args_str)
-                    except json.JSONDecodeError:
-                        logger.warning(
+                        parsed_input = json.loads(args_str)
+                        if isinstance(parsed_input, dict):
+                            tool_input = parsed_input
+                        else:
+                            logger.warning(
+                                LogRecord(
+                                    event="tool_args_type_warning",
+                                    message="OpenAI tool args JSON parsed to non-dict. Wrapping.",
+                                    request_id=request_id,
+                                    data={
+                                        "tool_name": name,
+                                        "tool_id": tool_id,
+                                        "type": str(type(parsed_input)),
+                                    },
+                                )
+                            )
+                            tool_input = {"value": parsed_input}
+                    except json.JSONDecodeError as e:
+                        logger.error(
                             LogRecord(
                                 event="tool_args_parse_error",
-                                message="Failed to parse tool arguments JSON",
+                                message="Failed to parse OpenAI tool args JSON. Storing raw.",
+                                request_id=request_id,
                                 data={
                                     "tool_name": name,
                                     "tool_id": tool_id,
                                     "raw_args": args_str,
                                 },
-                            )
+                            ),
+                            e,
                         )
                         tool_input = {
                             "error": "Failed to parse arguments JSON",
@@ -289,37 +541,29 @@ def convert_openai_to_anthropic(
                     except Exception as e:
                         logger.error(
                             LogRecord(
-                                event="tool_args_error",
-                                message="Unexpected error parsing tool arguments",
-                                data={"tool_name": name, "tool_id": tool_id},
-                                error={"type": type(e).__name__, "message": str(e)},
-                            )
-                        )
-                        tool_input = {
-                            "error": f"Unexpected error during argument parsing: {e}",
-                            "raw_arguments": args_str,
-                        }
-
-                    if not isinstance(tool_input, dict):
-                        logger.warning(
-                            LogRecord(
-                                event="tool_args_type_error",
-                                message="Tool arguments parsed to non-dict type. Wrapping in 'value'.",
+                                event="tool_args_unexpected_error",
+                                message="Unexpected error processing OpenAI tool args.",
+                                request_id=request_id,
                                 data={
                                     "tool_name": name,
                                     "tool_id": tool_id,
-                                    "type": str(type(tool_input)),
+                                    "raw_args": args_str,
                                 },
-                            )
+                            ),
+                            e,
                         )
-                        tool_input = {"value": tool_input}
+                        tool_input = {
+                            "error": f"Unexpected error: {e}",
+                            "raw_arguments": args_str,
+                        }
 
                     anthropic_content.append(
                         models.ContentBlockToolUse(
                             type="tool_use", id=tool_id, name=name, input=tool_input
                         )
                     )
-            if finish_reason == "tool_calls":
+
+            if finish_reason in ["tool_calls", "function_call"]:
                 anthropic_stop_reason = "tool_use"
 
     if not anthropic_content:
@@ -337,12 +581,137 @@ def convert_openai_to_anthropic(
     return models.MessagesResponse(
         id=response_id,
         type="message",
+        role="assistant",
         model=original_model_name,
         content=anthropic_content,
         stop_reason=anthropic_stop_reason,
         stop_sequence=anthropic_stop_sequence,
         usage=anthropic_usage,
     )
+
+
+STATUS_CODE_ERROR_MAP = {
+    400: models.AnthropicErrorType.INVALID_REQUEST,
+    401: models.AnthropicErrorType.AUTHENTICATION,
+    403: models.AnthropicErrorType.PERMISSION,
+    404: models.AnthropicErrorType.NOT_FOUND,
+    413: models.AnthropicErrorType.REQUEST_TOO_LARGE,
+    422: models.AnthropicErrorType.INVALID_REQUEST,
+    429: models.AnthropicErrorType.RATE_LIMIT,
+    500: models.AnthropicErrorType.API_ERROR,
+    502: models.AnthropicErrorType.API_ERROR,
+    503: models.AnthropicErrorType.OVERLOADED,
+    504: models.AnthropicErrorType.API_ERROR,
+}
+
+
+def _get_anthropic_error_details(
+    exc: Exception,
+) -> Tuple[models.AnthropicErrorType, str]:
+    """
+    Maps caught exceptions to Anthropic error types and messages.
+
+    This function centralizes the mapping logic between OpenAI/OpenRouter
+    exception types and the appropriate Anthropic error types. It ensures
+    consistent error handling across both streaming and non-streaming responses.
+
+    Args:
+        exc: The exception to map
+
+    Returns:
+        Tuple containing (AnthropicErrorType enum, error_message)
+    """
+    if isinstance(exc, AuthenticationError):
+        return models.AnthropicErrorType.AUTHENTICATION, str(exc)
+
+    if isinstance(exc, RateLimitError):
+        return models.AnthropicErrorType.RATE_LIMIT, str(exc)
+
+    if isinstance(exc, BadRequestError):
+        return models.AnthropicErrorType.INVALID_REQUEST, str(exc)
+
+    if isinstance(exc, PermissionDeniedError):
+        return models.AnthropicErrorType.PERMISSION, str(exc)
+
+    if isinstance(exc, NotFoundError):
+        return models.AnthropicErrorType.NOT_FOUND, str(exc)
+
+    if isinstance(exc, UnprocessableEntityError):
+        return models.AnthropicErrorType.INVALID_REQUEST, str(exc)
+
+    if isinstance(exc, InternalServerError):
+        return models.AnthropicErrorType.API_ERROR, str(exc)
+
+    if isinstance(exc, APIConnectionError):
+        return models.AnthropicErrorType.API_ERROR, f"Connection error: {exc}"
+
+    if isinstance(exc, APITimeoutError):
+        return models.AnthropicErrorType.API_ERROR, f"Timeout error: {exc}"
+
+    if isinstance(exc, APIError):
+        status_code = exc.status_code if hasattr(exc, "status_code") else 500
+
+        default_error = (
+            models.AnthropicErrorType.API_ERROR
+            if status_code >= 500
+            else models.AnthropicErrorType.INVALID_REQUEST
+        )
+
+        error_type = STATUS_CODE_ERROR_MAP.get(status_code, default_error)
+        return error_type, f"API error (Status {status_code}): {exc}"
+
+    return models.AnthropicErrorType.API_ERROR, f"Unexpected error: {exc}"
+
+
+def _format_anthropic_error_sse(
+    error_type: models.AnthropicErrorType,
+    message: str,
+    provider_details: Optional[models.ProviderErrorMetadata] = None,
+) -> str:
+    """
+    Formats an error into the Anthropic SSE error event structure.
+
+    Creates a consistent error response in Server-Sent Events (SSE) format
+    for streaming responses. This matches the structure used by the Anthropic API
+    for streaming errors and ensures error format consistency between
+    streaming and non-streaming responses.
+
+    Examples:
+        Basic error:
+        ```python
+        _format_anthropic_error_sse(
+            models.AnthropicErrorType.INVALID_REQUEST,
+            "Invalid parameter"
+        )
+        ```
+
+    Args:
+        error_type: Anthropic error type enum
+        message: Error message
+        provider_details: Optional provider error metadata
+
+    Returns:
+        A formatted SSE event string for the error
+    """
+    error = models.AnthropicErrorDetail(type=error_type, message=message)
+
+    if provider_details:
+        error.provider = provider_details.provider_name
+
+        if (
+            provider_details.raw_error
+            and isinstance(provider_details.raw_error, dict)
+            and "error" in provider_details.raw_error
+        ):
+            provider_error = provider_details.raw_error["error"]
+            if isinstance(provider_error, dict):
+                if "message" in provider_error and provider_error["message"]:
+                    error.provider_message = provider_error["message"]
+                if "code" in provider_error:
+                    error.provider_code = provider_error["code"]
+
+    error_response = models.AnthropicErrorResponse(error=error)
+    return f"event: error\ndata: {json.dumps(error_response.model_dump())}\n\n"
 
 
 async def handle_streaming_response(
@@ -353,11 +722,9 @@ async def handle_streaming_response(
 ) -> AsyncGenerator[str, None]:
     """
     Consumes an OpenAI stream and yields Anthropic-compatible SSE events.
+    Handles errors gracefully and uses consistent request ID. No token estimation.
     """
-    message_id = f"msg_stream_{uuid.uuid4()}"
-    StopReasonType = Optional[
-        Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "error"]
-    ]
+    message_id = f"msg_stream_{request_id}_{uuid.uuid4().hex[:8]}"
     final_stop_reason: StopReasonType = None
     final_stop_sequence: Optional[str] = None
     text_block_started = False
@@ -368,156 +735,175 @@ async def handle_streaming_response(
         "stop": "end_turn",
         "length": "max_tokens",
         "tool_calls": "tool_use",
+        "function_call": "tool_use",
         "content_filter": "stop_sequence",
         None: None,
     }
 
-    start_event_data = {
-        "type": "message_start",
-        "message": {
-            "id": message_id,
-            "type": "message",
-            "role": "assistant",
-            "model": original_model_name,
-            "content": [],
-            "stop_reason": None,
-            "stop_sequence": None,
-            "usage": {
-                "input_tokens": initial_input_tokens,
-                "output_tokens": 0,
+    try:
+        start_event_data = {
+            "type": "message_start",
+            "message": {
+                "id": message_id,
+                "type": "message",
+                "role": "assistant",
+                "model": original_model_name,
+                "content": [],
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": initial_input_tokens, "output_tokens": 0},
             },
-        },
-    }
-    yield f"event: message_start\ndata: {json.dumps(start_event_data)}\n\n"
+        }
+        yield f"event: message_start\ndata: {json.dumps(start_event_data)}\n\n"
+        yield f"event: ping\ndata: {json.dumps({'type': 'ping'})}\n\n"
 
-    yield f"event: ping\ndata: {json.dumps({'type': 'ping'})}\n\n"
+        async for chunk in openai_stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            finish_reason = chunk.choices[0].finish_reason
 
-    async for chunk in openai_stream:
-        if not chunk.choices:
-            continue
-
-        delta = chunk.choices[0].delta
-        finish_reason = chunk.choices[0].finish_reason
-
-        if delta.content:
-            if not text_block_started:
-                start_text_block = {
-                    "type": "content_block_start",
-                    "index": 0,
-                    "content_block": {
-                        "type": "text",
-                        "text": "",
-                    },
-                }
-                yield f"event: content_block_start\ndata: {json.dumps(start_text_block)}\n\n"
-                text_block_started = True
-
-            text_delta_event = {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "text_delta", "text": delta.content},
-            }
-            yield f"event: content_block_delta\ndata: {json.dumps(text_delta_event)}\n\n"
-
-        if delta.tool_calls:
-            for tool_delta in delta.tool_calls:
-                openai_tool_index = tool_delta.index
-                anthropic_idx = openai_tool_index
-
-                tool_id = (
-                    tool_delta.id
-                    if tool_delta.id is not None
-                    else f"tool_{uuid.uuid4()}"
-                )
-
-                function_name = ""
-                function_args = ""
-                if tool_delta.function is not None:
-                    function_name = (
-                        tool_delta.function.name
-                        if tool_delta.function.name is not None
-                        else ""
-                    )
-                    function_args = (
-                        tool_delta.function.arguments
-                        if tool_delta.function.arguments is not None
-                        else ""
-                    )
-
-                if anthropic_idx not in current_tool_calls:
-                    current_tool_calls[anthropic_idx] = {
-                        "id": tool_id,
-                        "name": function_name,
-                        "arguments": function_args,
-                    }
-                else:
-                    if tool_delta.id is not None:
-                        current_tool_calls[anthropic_idx]["id"] = tool_delta.id
-                    if tool_delta.function is not None:
-                        if tool_delta.function.name is not None:
-                            current_tool_calls[anthropic_idx]["name"] = (
-                                tool_delta.function.name
-                            )
-                        if tool_delta.function.arguments is not None:
-                            current_tool_calls[anthropic_idx]["arguments"] += (
-                                tool_delta.function.arguments
-                            )
-
-                tool_state = current_tool_calls[anthropic_idx]
-
-                if (
-                    anthropic_idx not in sent_tool_block_starts
-                    and tool_state["id"]
-                    and tool_state["name"]
-                ):
-                    start_tool_block = {
+            if delta.content:
+                if not text_block_started:
+                    start_text_block = {
                         "type": "content_block_start",
-                        "index": anthropic_idx,
-                        "content_block": {
-                            "type": "tool_use",
-                            "id": tool_state["id"],
-                            "name": tool_state["name"],
-                            "input": {},
-                        },
+                        "index": 0,
+                        "content_block": {"type": "text", "text": ""},
                     }
-                    yield f"event: content_block_start\ndata: {json.dumps(start_tool_block)}\n\n"
-                    sent_tool_block_starts.add(anthropic_idx)
+                    yield f"event: content_block_start\ndata: {json.dumps(start_text_block)}\n\n"
+                    text_block_started = True
+                text_delta_event = {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": delta.content},
+                }
+                yield f"event: content_block_delta\ndata: {json.dumps(text_delta_event)}\n\n"
 
-                if (
-                    tool_delta.function is not None
-                    and tool_delta.function.arguments is not None
-                    and anthropic_idx in sent_tool_block_starts
-                ):
-                    args_delta_event = {
-                        "type": "content_block_delta",
-                        "index": anthropic_idx,
-                        "delta": {
-                            "type": "input_json_delta",
-                            "partial_json": tool_delta.function.arguments,
-                        },
-                    }
-                    yield f"event: content_block_delta\ndata: {json.dumps(args_delta_event)}\n\n"
+            if delta.tool_calls:
+                for tool_delta in delta.tool_calls:
+                    anthropic_idx = tool_delta.index
 
-        if finish_reason:
-            final_stop_reason = stop_reason_map.get(finish_reason, "end_turn")
-            break
+                    if anthropic_idx not in current_tool_calls:
+                        tool_id = (
+                            tool_delta.id
+                            if tool_delta.id
+                            else f"tool_ph_{request_id}_{anthropic_idx}"
+                        )
+                        current_tool_calls[anthropic_idx] = {
+                            "id": tool_id,
+                            "name": "",
+                            "arguments": "",
+                        }
+                        if not tool_delta.id:
+                            logger.error(
+                                LogRecord(
+                                    event="tool_id_placeholder",
+                                    request_id=request_id,
+                                    message=f"Generated placeholder Tool ID '{tool_id}' for index {anthropic_idx} as OpenAI ID was initially absent.",
+                                )
+                            )
 
-    if text_block_started:
-        yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
-    for idx in sent_tool_block_starts:
-        yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': idx})}\n\n"
+                    tool_state = current_tool_calls[anthropic_idx]
+                    if tool_delta.id and tool_state["id"].startswith("tool_ph_"):
+                        logger.debug(
+                            LogRecord(
+                                event="tool_id_update",
+                                request_id=request_id,
+                                message=f"Updating placeholder Tool ID '{tool_state['id']}' to '{tool_delta.id}' for index {anthropic_idx}.",
+                            )
+                        )
+                        tool_state["id"] = tool_delta.id
+                    if tool_delta.function:
+                        if tool_delta.function.name:
+                            tool_state["name"] = tool_delta.function.name
+                        if tool_delta.function.arguments:
+                            tool_state["arguments"] += tool_delta.function.arguments
 
-    if final_stop_reason is None:
-        final_stop_reason = "end_turn"
+                    if (
+                        anthropic_idx not in sent_tool_block_starts
+                        and tool_state["id"]
+                        and tool_state["name"]
+                    ):
+                        start_tool_block = {
+                            "type": "content_block_start",
+                            "index": anthropic_idx,
+                            "content_block": {
+                                "type": "tool_use",
+                                "id": tool_state["id"],
+                                "name": tool_state["name"],
+                                "input": {},
+                            },
+                        }
+                        yield f"event: content_block_start\ndata: {json.dumps(start_tool_block)}\n\n"
+                        sent_tool_block_starts.add(anthropic_idx)
 
-    message_delta_event = {
-        "type": "message_delta",
-        "delta": {
-            "stop_reason": final_stop_reason,
-            "stop_sequence": final_stop_sequence,
-        },
-        "usage": {"output_tokens": 0},
-    }
-    yield f"event: message_delta\ndata: {json.dumps(message_delta_event)}\n\n"
+                    if (
+                        tool_delta.function
+                        and tool_delta.function.arguments
+                        and anthropic_idx in sent_tool_block_starts
+                    ):
+                        args_delta_event = {
+                            "type": "content_block_delta",
+                            "index": anthropic_idx,
+                            "delta": {
+                                "type": "input_json_delta",
+                                "partial_json": tool_delta.function.arguments,
+                            },
+                        }
+                        yield f"event: content_block_delta\ndata: {json.dumps(args_delta_event)}\n\n"
 
-    yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
+            if finish_reason:
+                final_stop_reason = stop_reason_map.get(finish_reason, "end_turn")
+                if finish_reason in ["tool_calls", "function_call"]:
+                    final_stop_reason = "tool_use"
+                break
+
+        if text_block_started:
+            yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
+        for idx in sent_tool_block_starts:
+            yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': idx})}\n\n"
+
+        if final_stop_reason is None:
+            final_stop_reason = "end_turn"
+
+        message_delta_event = {
+            "type": "message_delta",
+            "delta": {
+                "stop_reason": final_stop_reason,
+                "stop_sequence": final_stop_sequence,
+            },
+            "usage": {"output_tokens": 0},
+        }
+        yield f"event: message_delta\ndata: {json.dumps(message_delta_event)}\n\n"
+        yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
+
+    except Exception as e:
+        error_type, error_message = _get_anthropic_error_details(e)
+
+        provider_details = None
+        if hasattr(e, "body") and isinstance(e.body, dict):
+            error_details = e.body.get("error", {})
+            if isinstance(error_details, dict):
+                from .api import extract_provider_error_details
+
+                provider_details = extract_provider_error_details(error_details)
+
+        logger.error(
+            LogRecord(
+                event="streaming_error",
+                message=f"Error during OpenAI stream: {error_message}",
+                request_id=request_id,
+                error={
+                    "type": error_type.value,
+                    "original_exception": str(e),
+                    "provider": provider_details.provider_name
+                    if provider_details
+                    else None,
+                    "provider_error": provider_details.raw_error
+                    if provider_details
+                    else None,
+                },
+            )
+        )
+        yield _format_anthropic_error_sse(error_type, error_message, provider_details)
+        return

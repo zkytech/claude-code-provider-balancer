@@ -2,11 +2,13 @@
 Pydantic models defining the Anthropic API request/response structures.
 """
 
+from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, field_validator
 
-from .logger import LogRecord, logger
+from . import logger
+from .logger import LogRecord
 
 
 class ContentBlockText(BaseModel):
@@ -105,6 +107,74 @@ class TokenCountResponse(BaseModel):
 class Usage(BaseModel):
     input_tokens: int
     output_tokens: int
+
+
+class ProviderErrorMetadata(BaseModel):
+    """
+    Provider-specific error metadata as defined by OpenRouter API.
+
+    This model captures provider-specific error details forwarded by OpenRouter.
+    Provider errors are included in the OpenRouter error response's metadata field.
+
+    See: https://openrouter.ai/docs/api-reference/errors#provider-errors
+    """
+
+    provider_name: str
+    raw_error: Optional[Dict[str, Any]] = None
+
+
+class AnthropicErrorType(str, Enum):
+    """
+    Standard Anthropic error types for consistent error handling.
+
+    These error types mirror the official Anthropic API error types.
+    Ref: https://docs.anthropic.com/claude/reference/errors
+
+    Note: This is a string Enum, making it directly JSON serializable.
+    """
+
+    INVALID_REQUEST = "invalid_request_error"
+    AUTHENTICATION = "authentication_error"
+    PERMISSION = "permission_error"
+    NOT_FOUND = "not_found_error"
+    RATE_LIMIT = "rate_limit_error"
+    API_ERROR = "api_error"
+    OVERLOADED = "overloaded_error"
+    REQUEST_TOO_LARGE = "request_too_large"
+
+
+class AnthropicErrorDetail(BaseModel):
+    """
+    Structured error information compliant with Anthropic API.
+
+    This model defines the structure of error details in Anthropic API responses.
+    It includes standard fields from Anthropic plus additional provider-specific
+    fields for better error debugging when using third-party models.
+
+    Ref: https://docs.anthropic.com/claude/reference/errors
+    """
+
+    type: AnthropicErrorType
+    message: str
+    provider: Optional[str] = None
+    provider_message: Optional[str] = None
+    provider_code: Optional[Union[str, int]] = None
+
+
+class AnthropicErrorResponse(BaseModel):
+    """
+    Anthropic-compatible error response structure.
+
+    This is the top-level error response model that matches the
+    official Anthropic API error response format. It contains
+    a constant type field set to "error" and a nested error
+    detail object with specifics about the error.
+
+    Ref: https://docs.anthropic.com/claude/reference/errors
+    """
+
+    type: Literal["error"] = "error"
+    error: AnthropicErrorDetail
 
 
 class MessagesResponse(BaseModel):

@@ -3,6 +3,7 @@ Structured JSON logging configuration.
 """
 
 import dataclasses
+import enum
 import json
 import logging
 import os
@@ -10,13 +11,14 @@ import sys
 import traceback
 from datetime import datetime, timezone
 from logging.config import dictConfig
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from rich.console import Console
 
 from .config import settings
 
 console = Console()
+error_console = Console(stderr=True, style="bold red")
 
 
 class JSONFormatter(logging.Formatter):
@@ -40,11 +42,46 @@ class JSONFormatter(logging.Formatter):
             if record.exc_info:
                 exc_type, exc_value, exc_tb = record.exc_info
                 header["error"] = {
-                    "type": exc_type.__name__,
+                    "name": exc_type.__name__,
                     "message": str(exc_value),
                     "stack_trace": "".join(
                         traceback.format_exception(exc_type, exc_value, exc_tb)
                     ),
+                    "args": exc_value.args,
+                }
+
+        return json.dumps(header, ensure_ascii=False)
+
+
+class ConsoleJSONFormatter(JSONFormatter):
+    """JSON formatter for console that excludes stack traces."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        header = {
+            "timestamp": datetime.fromtimestamp(
+                record.created, timezone.utc
+            ).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+        }
+
+        log_record = getattr(record, "log_record", None)
+        if isinstance(log_record, LogRecord):
+            log_record_dict = dataclasses.asdict(log_record)
+            if log_record_dict.get("error"):
+                if log_record_dict["error"].get("stack_trace"):
+                    log_record_dict["error"].pop("stack_trace", None)
+
+            header["detail"] = log_record_dict
+        else:
+            header["message"] = record.getMessage()
+
+            if record.exc_info:
+                exc_type, exc_value, _ = record.exc_info
+                header["error"] = {
+                    "name": exc_type.__name__,
+                    "message": str(exc_value),
+                    "args": exc_value.args,
                 }
 
         return json.dumps(header, ensure_ascii=False)
@@ -57,12 +94,15 @@ dictConfig(
         "formatters": {
             "json": {
                 "()": JSONFormatter,
-            }
+            },
+            "console_json": {
+                "()": ConsoleJSONFormatter,
+            },
         },
         "handlers": {
             "default": {
                 "class": "logging.StreamHandler",
-                "formatter": "json",
+                "formatter": "console_json",
                 "stream": "ext://sys.stdout",
             },
         },
@@ -96,6 +136,36 @@ dictConfig(
 )
 
 
+class LogEvent(enum.Enum):
+    """All possible log event types for structured logging."""
+
+    MODEL_SELECTION = "model_selection"
+    REQUEST_START = "request_start"
+    REQUEST_END = "request_end"
+    REQUEST_VALIDATION = "request_validation"
+    PROVIDER_IDENTIFICATION = "provider_identification"
+    OPENAI_REQUEST = "openai_request"
+    OPENAI_RESPONSE = "openai_response"
+    ANTHROPIC_RESPONSE = "anthropic_response"
+    STREAMING_REQUEST = "streaming_request"
+    TOKEN_COUNT = "token_count"
+    ERROR_RESPONSE = "error_response"
+    CONVERSION_FAILURE = "conversion_failure"
+    TOOL_HANDLING = "tool_handling"
+    RATE_LIMIT = "rate_limit"
+    CONFIG_ERROR = "config_error"
+    NETWORK_ERROR = "network_error"
+    UNKNOWN_ERROR = "unknown_error"
+
+
+@dataclasses.dataclass
+class LogError:
+    name: str
+    message: str
+    stack_trace: str
+    args: Tuple[Any, ...]
+
+
 @dataclasses.dataclass
 class LogRecord:
     """Standard structure for all application logs."""
@@ -104,10 +174,10 @@ class LogRecord:
     message: str
     request_id: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
-    error: Optional[Dict[str, Any]] = None
+    error: Optional[LogError] = None
 
 
-logger = logging.getLogger("claude_proxy")
+_logger = logging.getLogger("claude_proxy")
 
 if settings.log_file_path:
     try:
@@ -117,14 +187,17 @@ if settings.log_file_path:
 
         file_handler = logging.FileHandler(settings.log_file_path, mode="a")
         file_handler.setFormatter(JSONFormatter())
-        logger.addHandler(file_handler)
+        _logger.addHandler(file_handler)
     except Exception as e:
         print(f"Failed to configure file logging: {e}", file=sys.stderr)
 
 
 def log(level: int, record: LogRecord) -> None:
     """Log a structured record at the specified level."""
-    logger.log(level=level, msg="", extra={"log_record": record})
+    if type(record) is str:
+        return _logger.log(level=level, msg=record)
+
+    return _logger.log(level=level, msg="", extra={"log_record": record})
 
 
 def debug(record: LogRecord) -> None:
@@ -142,34 +215,23 @@ def warning(record: LogRecord) -> None:
     log(logging.WARNING, record)
 
 
-def error(record: LogRecord) -> None:
-    """Log at ERROR level."""
+def error(record: LogRecord, exc: Optional[Exception] = None) -> None:
+    """Log at ERROR level with optional exception."""
+    if exc is not None:
+        error_console.print_exception(show_locals=True, width=120)
+        record.error = {
+            "name": type(exc).__name__,
+            "message": str(exc),
+            "stack_trace": "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            ),
+            "args": exc.args,
+        }
+        if not record.message:
+            record.message = str(exc)
     log(logging.ERROR, record)
 
 
 def critical(record: LogRecord) -> None:
     """Log at CRITICAL level."""
     log(logging.CRITICAL, record)
-
-
-def log_exception(
-    message: str,
-    exc: Exception,
-    request_id: Optional[str] = None,
-    event: str = "exception",
-    data: Optional[Dict[str, Any]] = None,
-) -> None:
-    """Log an exception with full traceback."""
-    error_data = {
-        "type": type(exc).__name__,
-        "message": str(exc),
-        "stack_trace": "".join(
-            traceback.format_exception(type(exc), exc, exc.__traceback__)
-        ),
-    }
-
-    record = LogRecord(
-        event=event, message=message, request_id=request_id, data=data, error=error_data
-    )
-
-    error(record)
