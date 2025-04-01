@@ -9,7 +9,7 @@ from rich.rule import Rule
 from rich.text import Text
 
 from claude_proxy.config import settings
-from claude_proxy.logging_config import console, logger
+from claude_proxy.logger import console, logger
 
 if __name__ == "__main__":
     console.print(
@@ -62,7 +62,7 @@ if __name__ == "__main__":
             port=settings.port,
             reload=settings.reload,
             log_config=None,
-            access_log=False,
+            access_log=True,
         )
     except Exception as e:
         logger.critical(f"Failed to start Uvicorn server: {e}", exc_info=True)

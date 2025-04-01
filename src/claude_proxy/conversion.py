@@ -9,7 +9,7 @@ from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 import openai
 
 from . import models
-from .logging_config import logger
+from .logger import LogRecord, logger
 
 
 def convert_anthropic_to_openai_messages(
@@ -79,7 +79,13 @@ def convert_anthropic_to_openai_messages(
                     try:
                         args_str = json.dumps(block.input)
                     except Exception as e:
-                        logger.warning(f"Failed to serialize tool input: {e}")
+                        logger.warning(
+                            LogRecord(
+                                event="serialization_error",
+                                message=f"Failed to serialize tool input: {e}",
+                                error={"type": type(e).__name__, "message": str(e)},
+                            )
+                        )
                         args_str = "{}"
 
                     assistant_tool_calls.append(
@@ -104,21 +110,26 @@ def convert_anthropic_to_openai_messages(
 
             if role == "user":
                 if openai_content_list:
+                    content_value: Union[List[Dict[str, Any]], str] = (
+                        openai_content_list
+                        if len(openai_content_list) > 1
+                        else openai_content_list[0]["text"]
+                    )
                     openai_messages.append(
                         {
                             "role": "user",
-                            "content": (
-                                openai_content_list
-                                if len(openai_content_list) > 1
-                                else openai_content_list[0]["text"]
-                            ),
+                            "content": content_value,
                         }
                     )
                 openai_messages.extend(tool_results)
 
             elif role == "assistant":
                 if text_content:
-                    text_msg = {"role": "assistant", "content": "\n".join(text_content)}
+                    filtered_text = [t for t in text_content if t is not None]
+                    text_msg = {
+                        "role": "assistant",
+                        "content": "\n".join(filtered_text),
+                    }
                     openai_messages.append(text_msg)
 
                 if assistant_tool_calls:
@@ -129,12 +140,16 @@ def convert_anthropic_to_openai_messages(
                     }
                     openai_messages.append(tool_msg)
 
-    def _ensure_message_format(msg):
+    def _ensure_message_format(msg: Dict[str, Any]) -> Dict[str, Any]:
         """Ensures each message follows OpenAI's format requirements"""
         if msg["role"] == "assistant" and msg.get("tool_calls"):
             if msg.get("content") is not None:
                 logger.warning(
-                    f"Assistant message has both content and tool_calls. Setting content to None. Content was: {msg['content']}"
+                    LogRecord(
+                        event="message_format_correction",
+                        message="Assistant message has both content and tool_calls. Setting content to None.",
+                        data={"original_content": msg["content"]},
+                    )
                 )
                 msg["content"] = None
         return msg
@@ -144,7 +159,7 @@ def convert_anthropic_to_openai_messages(
     return openai_messages
 
 
-def _serialize_tool_result(content) -> str:
+def _serialize_tool_result(content: Any) -> str:
     """Helper method to serialize tool result content to string format"""
     try:
         if isinstance(content, list):
@@ -161,7 +176,13 @@ def _serialize_tool_result(content) -> str:
         else:
             return json.dumps(content)
     except Exception as e:
-        logger.warning(f"Failed to serialize tool result content: {e}")
+        logger.warning(
+            LogRecord(
+                event="tool_result_serialization_error",
+                message="Failed to serialize tool result content",
+                error={"type": type(e).__name__, "message": str(e)},
+            )
+        )
         return json.dumps(
             {"error": "Serialization failed", "original_type": str(type(content))}
         )
@@ -201,7 +222,11 @@ def convert_anthropic_tool_choice_to_openai(
         return {"type": "function", "function": {"name": choice.name}}
 
     logger.warning(
-        f"Unsupported Anthropic tool_choice type: {choice.type}. Defaulting to 'auto'."
+        LogRecord(
+            event="unsupported_tool_choice",
+            message=f"Unsupported Anthropic tool_choice type: {choice.type}. Defaulting to 'auto'.",
+            data={"tool_choice_type": choice.type},
+        )
     )
     return "auto"
 
@@ -247,7 +272,15 @@ def convert_openai_to_anthropic(
                         tool_input = json.loads(args_str)
                     except json.JSONDecodeError:
                         logger.warning(
-                            f"Failed to parse tool arguments JSON for tool {name} (ID: {tool_id}). Raw: {args_str}"
+                            LogRecord(
+                                event="tool_args_parse_error",
+                                message="Failed to parse tool arguments JSON",
+                                data={
+                                    "tool_name": name,
+                                    "tool_id": tool_id,
+                                    "raw_args": args_str,
+                                },
+                            )
                         )
                         tool_input = {
                             "error": "Failed to parse arguments JSON",
@@ -255,7 +288,12 @@ def convert_openai_to_anthropic(
                         }
                     except Exception as e:
                         logger.error(
-                            f"Unexpected error parsing tool arguments for tool {name} (ID: {tool_id}): {e}"
+                            LogRecord(
+                                event="tool_args_error",
+                                message="Unexpected error parsing tool arguments",
+                                data={"tool_name": name, "tool_id": tool_id},
+                                error={"type": type(e).__name__, "message": str(e)},
+                            )
                         )
                         tool_input = {
                             "error": f"Unexpected error during argument parsing: {e}",
@@ -264,7 +302,15 @@ def convert_openai_to_anthropic(
 
                     if not isinstance(tool_input, dict):
                         logger.warning(
-                            f"Tool arguments for {name} (ID: {tool_id}) parsed to non-dict type ({type(tool_input)}). Wrapping in 'value'."
+                            LogRecord(
+                                event="tool_args_type_error",
+                                message="Tool arguments parsed to non-dict type. Wrapping in 'value'.",
+                                data={
+                                    "tool_name": name,
+                                    "tool_id": tool_id,
+                                    "type": str(type(tool_input)),
+                                },
+                            )
                         )
                         tool_input = {"value": tool_input}
 
@@ -378,23 +424,44 @@ async def handle_streaming_response(
                 openai_tool_index = tool_delta.index
                 anthropic_idx = openai_tool_index
 
+                tool_id = (
+                    tool_delta.id
+                    if tool_delta.id is not None
+                    else f"tool_{uuid.uuid4()}"
+                )
+
+                function_name = ""
+                function_args = ""
+                if tool_delta.function is not None:
+                    function_name = (
+                        tool_delta.function.name
+                        if tool_delta.function.name is not None
+                        else ""
+                    )
+                    function_args = (
+                        tool_delta.function.arguments
+                        if tool_delta.function.arguments is not None
+                        else ""
+                    )
+
                 if anthropic_idx not in current_tool_calls:
                     current_tool_calls[anthropic_idx] = {
-                        "id": tool_delta.id or f"tool_{uuid.uuid4()}",
-                        "name": tool_delta.function.name or "",
-                        "arguments": tool_delta.function.arguments or "",
+                        "id": tool_id,
+                        "name": function_name,
+                        "arguments": function_args,
                     }
                 else:
-                    if tool_delta.id:
+                    if tool_delta.id is not None:
                         current_tool_calls[anthropic_idx]["id"] = tool_delta.id
-                    if tool_delta.function.name:
-                        current_tool_calls[anthropic_idx]["name"] = (
-                            tool_delta.function.name
-                        )
-                    if tool_delta.function.arguments:
-                        current_tool_calls[anthropic_idx]["arguments"] += (
-                            tool_delta.function.arguments
-                        )
+                    if tool_delta.function is not None:
+                        if tool_delta.function.name is not None:
+                            current_tool_calls[anthropic_idx]["name"] = (
+                                tool_delta.function.name
+                            )
+                        if tool_delta.function.arguments is not None:
+                            current_tool_calls[anthropic_idx]["arguments"] += (
+                                tool_delta.function.arguments
+                            )
 
                 tool_state = current_tool_calls[anthropic_idx]
 
@@ -417,7 +484,8 @@ async def handle_streaming_response(
                     sent_tool_block_starts.add(anthropic_idx)
 
                 if (
-                    tool_delta.function.arguments
+                    tool_delta.function is not None
+                    and tool_delta.function.arguments is not None
                     and anthropic_idx in sent_tool_block_starts
                 ):
                     args_delta_event = {

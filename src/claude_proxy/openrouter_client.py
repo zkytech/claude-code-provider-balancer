@@ -5,7 +5,7 @@ Initializes and configures the OpenAI AsyncClient for interacting with OpenRoute
 import openai
 
 from .config import settings
-from .logging_config import logger
+from .logger import logger
 
 client = openai.AsyncClient(
     api_key=settings.openrouter_api_key,

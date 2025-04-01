@@ -5,7 +5,7 @@ Simplified token counter that returns zero values.
 from typing import List, Optional, Union
 
 from . import models
-from .logging_config import logger
+from .logger import logger
 
 
 def count_tokens_for_request(

@@ -22,6 +22,7 @@ Key features:
 - Token counting
 
 ## Example
+
 **Model**: `deepseek/deepseek-chat-v3-0324`
 
 ![Claude Proxy Example](docs/example.png)
@@ -45,7 +46,14 @@ SMALL_MODEL_NAME=openai/gpt-4o-mini
 LOG_LEVEL=DEBUG
 ```
 
-See `config.py` for more configuration options. 
+See `config.py` for more configuration options.
+
+#### Useful environment variables
+
+`CLAUDE_CODE_EXTRA_BODY`
+`MAX_THINKING_TOKENS`
+`API_TIMEOUT_MS`
+`ANTHROPIC_BASE_URL`
 
 ### Running the Server
 

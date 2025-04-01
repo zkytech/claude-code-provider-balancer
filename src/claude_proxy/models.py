@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, field_validator
 
-from .logging_config import logger
+from .logger import LogRecord, logger
 
 
 class ContentBlockText(BaseModel):
@@ -80,10 +80,13 @@ class MessagesRequest(BaseModel):
     tool_choice: Optional[ToolChoice] = None
 
     @field_validator("top_k")
-    def check_top_k(cls, v):
+    def check_top_k(cls, v: Optional[int]) -> Optional[int]:
         if v is not None:
             logger.warning(
-                "Param 'top_k' provided but ignored (not supported by OpenAI API)."
+                LogRecord(
+                    event="unsupported_parameter",
+                    message="Param 'top_k' provided but ignored (not supported by OpenAI API)",
+                )
             )
         return v
 

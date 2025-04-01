@@ -2,7 +2,6 @@
 Unit tests for the model selection logic in api.py
 """
 
-
 import pytest
 
 from claude_proxy.api import select_target_model
