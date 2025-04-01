@@ -12,7 +12,6 @@ from typing import Any, Dict, Optional, Union
 
 from rich.console import Console
 from rich.pretty import pretty_repr
-from rich.syntax import Syntax
 
 from .config import settings
 
@@ -126,7 +125,7 @@ def log_json_body(title: str, data_obj: Any, request_id: str, color="dim"):
         )
     except Exception as e:
         logger.error(
-            f"Error logging JSON body",
+            "Error logging JSON body",
             extra={
                 "request_id": request_id,
                 "structured_data": {

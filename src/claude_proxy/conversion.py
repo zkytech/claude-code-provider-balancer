@@ -9,7 +9,7 @@ from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 import openai
 
 from . import models
-from .logging_config import log_error_simplified, logger
+from .logging_config import logger
 
 
 def convert_anthropic_to_openai_messages(
@@ -314,7 +314,6 @@ async def handle_streaming_response(
     ]
     final_stop_reason: StopReasonType = None
     final_stop_sequence: Optional[str] = None
-    content_block_index = 0
     text_block_started = False
     current_tool_calls: Dict[int, Dict[str, str]] = {}
     sent_tool_block_starts = set()
@@ -389,13 +388,13 @@ async def handle_streaming_response(
                     if tool_delta.id:
                         current_tool_calls[anthropic_idx]["id"] = tool_delta.id
                     if tool_delta.function.name:
-                        current_tool_calls[anthropic_idx][
-                            "name"
-                        ] = tool_delta.function.name
+                        current_tool_calls[anthropic_idx]["name"] = (
+                            tool_delta.function.name
+                        )
                     if tool_delta.function.arguments:
-                        current_tool_calls[anthropic_idx][
-                            "arguments"
-                        ] += tool_delta.function.arguments
+                        current_tool_calls[anthropic_idx]["arguments"] += (
+                            tool_delta.function.arguments
+                        )
 
                 tool_state = current_tool_calls[anthropic_idx]
 

@@ -8,7 +8,6 @@ import time
 import uuid
 
 import fastapi
-import httpx
 import openai
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -16,8 +15,13 @@ from pydantic import ValidationError
 
 from . import conversion, models
 from .config import settings
-from .logging_config import (log_error_simplified, log_json_body,
-                             log_request_end, log_request_start, logger)
+from .logging_config import (
+    log_error_simplified,
+    log_json_body,
+    log_request_end,
+    log_request_start,
+    logger,
+)
 from .openrouter_client import client
 
 app = fastapi.FastAPI(
@@ -186,7 +190,7 @@ async def count_tokens_endpoint(request: Request):
 
     body = await request.json()
 
-    anthropic_request = models.TokenCountRequest.model_validate(body)
+    models.TokenCountRequest.model_validate(body)
 
     duration_ms = (time.time() - start_time) * 1000
     logger.info(

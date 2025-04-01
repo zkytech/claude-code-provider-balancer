@@ -6,7 +6,6 @@ Only contains fixtures that are truly shared between multiple test modules.
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 from claude_proxy.config import Settings
 

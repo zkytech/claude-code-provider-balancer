@@ -8,12 +8,10 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 
-from claude_proxy.api import app
 from claude_proxy.config import settings
 from claude_proxy.logging_config import console, logger
 
 if __name__ == "__main__":
-
     console.print(
         r"""[bold blue]
            /$$                           /$$
@@ -54,12 +52,12 @@ if __name__ == "__main__":
             expand=False,
         )
     )
-    console.print(f"\n\n")
-    console.print(Rule(f"Starting uvicorn server...", style="dim blue"))
+    console.print("\n\n")
+    console.print(Rule("Starting uvicorn server...", style="dim blue"))
 
     try:
         uvicorn.run(
-            app="__main__:app" if __package__ is None else "claude_proxy.api:app",
+            app="claude_proxy.api:app",
             host=settings.host,
             port=settings.port,
             reload=settings.reload,

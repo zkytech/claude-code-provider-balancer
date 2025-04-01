@@ -2,13 +2,11 @@
 Tests for error handling in the API.
 """
 
-import json
 from unittest.mock import patch
 
 import httpx
 import openai
 import pytest
-import respx
 from fastapi.testclient import TestClient
 
 from claude_proxy.api import app
@@ -78,9 +76,9 @@ def test_openai_error_mapping(client, status_code, openai_error, anthropic_error
         data = response.json()
         assert data["type"] == "error"
         assert data["error"]["type"] == anthropic_error_type
-        assert (
-            openai_error in data["error"]["message"]
-        ), f"Expected error message to contain '{openai_error}'"
+        assert openai_error in data["error"]["message"], (
+            f"Expected error message to contain '{openai_error}'"
+        )
 
 
 @pytest.mark.parametrize(

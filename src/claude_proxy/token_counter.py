@@ -2,7 +2,7 @@
 Simplified token counter that returns zero values.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import List, Optional, Union
 
 from . import models
 from .logging_config import logger

@@ -2,7 +2,6 @@
 Unit tests for the model selection logic in api.py
 """
 
-from unittest.mock import patch
 
 import pytest
 
