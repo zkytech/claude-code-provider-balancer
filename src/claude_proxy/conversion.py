@@ -16,7 +16,7 @@ from openai import (APIConnectionError, APIError, APITimeoutError,
                     UnprocessableEntityError)
 
 from . import logger, models
-from .logger import LogRecord
+from .logger import LogEvent, LogRecord
 
 ANTHROPIC_TOOLS_FIXTURE = [
     models.Tool(
@@ -187,7 +187,7 @@ def convert_anthropic_to_openai_messages(
         if ignored_system_blocks:
             logger.warning(
                 LogRecord(
-                    event="system_prompt_conversion_warning",
+                    event=LogEvent.SYSTEM_PROMPT_ADJUSTED.value,
                     message="Non-text content blocks in Anthropic system prompt were ignored.",
                     request_id=request_id,
                 )
@@ -209,6 +209,11 @@ def convert_anthropic_to_openai_messages(
             assistant_tool_calls = []
             text_content = []
             ignored_user_image_source = False
+
+            # Handle empty list case
+            if not content:
+                openai_messages.append({"role": role, "content": ""})
+                continue
 
             for block_idx, block in enumerate(content):
                 block_log_ctx = {
@@ -244,7 +249,7 @@ def convert_anthropic_to_openai_messages(
                     except TypeError as e:
                         logger.error(
                             LogRecord(
-                                event="tool_input_serialization_error",
+                                event=LogEvent.TOOL_INPUT_SERIALIZATION_FAILURE.value,
                                 message=f"Failed to serialize tool input dictionary to JSON: {e}. Using empty JSON.",
                                 request_id=request_id,
                                 data={
@@ -259,7 +264,7 @@ def convert_anthropic_to_openai_messages(
                     except Exception as e:
                         logger.error(
                             LogRecord(
-                                event="tool_input_serialization_error",
+                                event=LogEvent.TOOL_INPUT_SERIALIZATION_FAILURE.value,
                                 message=f"Unexpected error serializing tool input: {e}. Using empty JSON.",
                                 request_id=request_id,
                                 data={
@@ -297,7 +302,7 @@ def convert_anthropic_to_openai_messages(
             if ignored_user_image_source:
                 logger.warning(
                     LogRecord(
-                        event="image_conversion_warning",
+                        event=LogEvent.IMAGE_FORMAT_UNSUPPORTED.value,
                         message=f"Image blocks with source type other than 'base64' were ignored in user message {i}.",
                         request_id=request_id,
                         data={"anthropic_message_index": i},
@@ -352,7 +357,7 @@ def convert_anthropic_to_openai_messages(
         ):
             logger.warning(
                 LogRecord(
-                    event="message_format_correction",
+                    event=LogEvent.MESSAGE_FORMAT_NORMALIZED.value,
                     message="Corrected assistant message with tool_calls to have content: None.",
                     request_id=request_id,
                     data={"original_content": msg["content"]},
@@ -385,27 +390,27 @@ def _serialize_tool_result(
         else:
             return json.dumps(content)
     except TypeError as e:
+        # Handle TypeError without passing the exception to logger.warning
         logger.warning(
             LogRecord(
-                event="tool_result_serialization_error",
+                event=LogEvent.TOOL_RESULT_SERIALIZATION_FAILURE.value,
                 message=f"Failed to serialize tool result content to JSON: {e}. Returning error JSON.",
                 request_id=request_id,
                 data=log_context,
-            ),
-            e,
+            )
         )
         return json.dumps(
             {"error": "Serialization failed", "original_type": str(type(content))}
         )
     except Exception as e:
+        # Handle other exceptions without passing the exception to logger.warning
         logger.warning(
             LogRecord(
-                event="tool_result_serialization_error",
+                event=LogEvent.TOOL_RESULT_SERIALIZATION_FAILURE.value,
                 message=f"Unexpected error serializing tool result content: {e}. Returning error JSON.",
                 request_id=request_id,
                 data=log_context,
-            ),
-            e,
+            )
         )
         return json.dumps(
             {
@@ -451,7 +456,7 @@ def convert_anthropic_tool_choice_to_openai(
 
     logger.warning(
         LogRecord(
-            event="unsupported_tool_choice",
+            event=LogEvent.TOOL_CHOICE_UNSUPPORTED.value,
             message=f"Unsupported Anthropic tool_choice type: '{choice.type}'. Defaulting to 'auto'.",
             request_id=request_id,
             data={
@@ -509,7 +514,7 @@ def convert_openai_to_anthropic(
                         else:
                             logger.warning(
                                 LogRecord(
-                                    event="tool_args_type_warning",
+                                    event=LogEvent.TOOL_ARGS_TYPE_MISMATCH.value,
                                     message="OpenAI tool args JSON parsed to non-dict. Wrapping.",
                                     request_id=request_id,
                                     data={
@@ -523,7 +528,7 @@ def convert_openai_to_anthropic(
                     except json.JSONDecodeError as e:
                         logger.error(
                             LogRecord(
-                                event="tool_args_parse_error",
+                                event=LogEvent.TOOL_ARGS_PARSE_FAILURE.value,
                                 message="Failed to parse OpenAI tool args JSON. Storing raw.",
                                 request_id=request_id,
                                 data={
@@ -541,7 +546,7 @@ def convert_openai_to_anthropic(
                     except Exception as e:
                         logger.error(
                             LogRecord(
-                                event="tool_args_unexpected_error",
+                                event=LogEvent.TOOL_ARGS_UNEXPECTED.value,
                                 message="Unexpected error processing OpenAI tool args.",
                                 request_id=request_id,
                                 data={
@@ -797,7 +802,7 @@ async def handle_streaming_response(
                         if not tool_delta.id:
                             logger.error(
                                 LogRecord(
-                                    event="tool_id_placeholder",
+                                    event=LogEvent.TOOL_ID_PLACEHOLDER.value,
                                     request_id=request_id,
                                     message=f"Generated placeholder Tool ID '{tool_id}' for index {anthropic_idx} as OpenAI ID was initially absent.",
                                 )
@@ -807,7 +812,7 @@ async def handle_streaming_response(
                     if tool_delta.id and tool_state["id"].startswith("tool_ph_"):
                         logger.debug(
                             LogRecord(
-                                event="tool_id_update",
+                                event=LogEvent.TOOL_ID_UPDATED.value,
                                 request_id=request_id,
                                 message=f"Updating placeholder Tool ID '{tool_state['id']}' to '{tool_delta.id}' for index {anthropic_idx}.",
                             )
@@ -890,7 +895,7 @@ async def handle_streaming_response(
 
         logger.error(
             LogRecord(
-                event="streaming_error",
+                event=LogEvent.STREAM_INTERRUPTED.value,
                 message=f"Error during OpenAI stream: {error_message}",
                 request_id=request_id,
                 error={

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, field_validator
 
 from . import logger
-from .logger import LogRecord
+from .logger import LogEvent, LogRecord
 
 
 class ContentBlockText(BaseModel):
@@ -86,7 +86,7 @@ class MessagesRequest(BaseModel):
         if v is not None:
             logger.warning(
                 LogRecord(
-                    event="unsupported_parameter",
+                    event=LogEvent.PARAMETER_UNSUPPORTED.value,
                     message="Param 'top_k' provided but ignored (not supported by OpenAI API)",
                 )
             )

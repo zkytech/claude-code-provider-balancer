@@ -50,7 +50,7 @@ def select_target_model(client_model_name: str, request_id: str) -> str:
         target_model = settings.small_model_name
         logger.debug(
             LogRecord(
-                event="model_selection",
+                event=LogEvent.MODEL_SELECTION.value,
                 message="Client model mapped to SMALL model",
                 request_id=request_id,
                 data={"client_model": client_model_name, "target_model": target_model},
@@ -60,7 +60,7 @@ def select_target_model(client_model_name: str, request_id: str) -> str:
         target_model = settings.small_model_name
         logger.warning(
             LogRecord(
-                event="model_selection",
+                event=LogEvent.MODEL_SELECTION.value,
                 message="Unknown client model, defaulting to SMALL model",
                 request_id=request_id,
                 data={"client_model": client_model_name, "target_model": target_model},
@@ -185,7 +185,7 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
         duration_ms = (time.time() - start_time) * 1000
         logger.info(
             LogRecord(
-                event=LogEvent.REQUEST_END.value,
+                event=LogEvent.REQUEST_COMPLETED.value,
                 message="Streaming request completed",
                 request_id=request_id,
                 data={
@@ -258,7 +258,7 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
         duration_ms = (time.time() - start_time) * 1000
         logger.info(
             LogRecord(
-                event="request_end",
+                event=LogEvent.REQUEST_COMPLETED.value,
                 message="Request completed successfully",
                 request_id=request_id,
                 data={
@@ -315,7 +315,10 @@ async def count_tokens_endpoint(request: Request) -> models.TokenCountResponse:
 async def root() -> JSONResponse:
     """Basic health check and information endpoint."""
     logger.debug(
-        LogRecord(event="health_check", message="Root health check endpoint accessed")
+        LogRecord(
+            event=LogEvent.HEALTH_CHECK.value,
+            message="Root health check endpoint accessed",
+        )
     )
     return JSONResponse(
         {"proxy": settings.app_name, "version": settings.app_version, "status": "ok"}
@@ -535,7 +538,7 @@ async def _handle_error(
         log_data["provider_error"] = provider_details.raw_error
 
     record = LogRecord(
-        event="request_error",
+        event=LogEvent.REQUEST_FAILURE.value,
         message=f"Request error: {error_message}",
         request_id=request_id,
         data=log_data,
