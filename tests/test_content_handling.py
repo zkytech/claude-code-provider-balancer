@@ -17,7 +17,6 @@ from claude_proxy.models import (ContentBlockImage, ContentBlockText,
                                  ContentBlockToolResult, ContentBlockToolUse,
                                  Message, SystemContent)
 
-# ================= FIXTURES =================
 
 
 @pytest.fixture
@@ -175,7 +174,6 @@ def mock_streaming_response():
     """Fixture for creating mock streaming responses."""
 
     def _create_streaming_response(chunks: List[Dict[str, Any]]) -> MagicMock:
-        # Create a mock async generator that yields chunks
         class MockAsyncGenerator:
             def __init__(self, chunks):
                 self.chunks = chunks
@@ -200,7 +198,6 @@ def mock_streaming_response():
     return _create_streaming_response
 
 
-# ================= TESTS =================
 
 
 class TestAnthropicToOpenAIConversion:
@@ -223,7 +220,6 @@ class TestAnthropicToOpenAIConversion:
 
     def test_system_message_conversion(self, system_content_block):
         """Test conversion of system messages in both string and list formats."""
-        # Test string system content
         messages = [Message(role="user", content="Hello")]
         system_string = "You are a helpful assistant."
 
@@ -233,7 +229,6 @@ class TestAnthropicToOpenAIConversion:
         assert result1[0]["role"] == "system"
         assert result1[0]["content"] == "You are a helpful assistant."
 
-        # Test list system content
         system_blocks = [
             system_content_block("You are a helpful assistant."),
             system_content_block("Be concise and accurate."),
@@ -312,19 +307,15 @@ class TestAnthropicToOpenAIConversion:
 
         result = convert_anthropic_to_openai_messages(messages)
 
-        # Should be split into text and tool call messages
         assert len(result) == 2
-        # First message should be text
         assert result[0]["role"] == "assistant"
         assert result[0]["content"] == "I'll check the weather for you."
-        # Second message should be tool call
         assert result[1]["role"] == "assistant"
         assert result[1]["content"] is None
         assert "tool_calls" in result[1]
         assert len(result[1]["tool_calls"]) == 1
         assert result[1]["tool_calls"][0]["id"] == "tool_123"
         assert result[1]["tool_calls"][0]["function"]["name"] == "weather"
-        # Parse the arguments JSON string
         args = json.loads(result[1]["tool_calls"][0]["function"]["arguments"])
         assert args["location"] == "New York"
         assert args["units"] == "celsius"
@@ -343,13 +334,10 @@ class TestAnthropicToOpenAIConversion:
 
         result = convert_anthropic_to_openai_messages(messages)
 
-        # Should have user message and tool result message
         assert len(result) >= 2
-        # First message should have the text
         assert result[0]["role"] == "user"
         assert "Here's the result:" in result[0]["content"]
 
-        # At least one message should be a tool result
         tool_messages = [msg for msg in result if msg.get("role") == "tool"]
         assert len(tool_messages) >= 1
         assert tool_messages[0]["tool_call_id"] == "tool_123"
@@ -358,18 +346,13 @@ class TestAnthropicToOpenAIConversion:
     def test_complex_tool_result_formats(self, text_block, tool_result_block):
         """Test conversion of tool results with various content formats."""
         test_cases = [
-            # String content
             "Simple string result",
-            # List of text blocks
             [
                 {"type": "text", "text": "Text block 1"},
                 {"type": "text", "text": "Text block 2"},
             ],
-            # Dictionary content needs to be converted to string to pass validation
             json.dumps({"data": {"results": [{"value": 42, "unit": "degrees"}]}}),
-            # Mixed content
             [{"type": "text", "text": "Text"}, {"value": 123}, "plain string"],
-            # Malformed content
             [{"not_type": "invalid", "value": "test"}],
         ]
 
@@ -386,26 +369,22 @@ class TestAnthropicToOpenAIConversion:
 
             result = convert_anthropic_to_openai_messages(messages)
 
-            # Should have user message and tool result message
             assert len(result) >= 2
 
-            # At least one message should be a tool result
             tool_messages = [msg for msg in result if msg.get("role") == "tool"]
             assert len(tool_messages) >= 1
             assert tool_messages[0]["tool_call_id"] == "tool_123"
             assert (
                 tool_messages[0]["content"] != ""
-            )  # Content should be serialized to something
+            )  
 
     def test_empty_content_handling(self):
         """Test handling of empty or None content."""
-        # Empty string content
         messages1 = [Message(role="user", content="")]
         result1 = convert_anthropic_to_openai_messages(messages1)
         assert len(result1) == 1
         assert result1[0]["content"] == ""
 
-        # Empty list content
         messages2 = [Message(role="user", content=[])]
         result2 = convert_anthropic_to_openai_messages(messages2)
         assert len(result2) == 1
@@ -433,7 +412,6 @@ class TestToolResultSerialization:
         """Test serialization of dictionary content."""
         content = {"key": "value", "nested": {"data": 42}}
         result = _serialize_tool_result(content, "test_req_id", {})
-        # Should be serialized as JSON
         parsed = json.loads(result)
         assert parsed["key"] == "value"
         assert parsed["nested"]["data"] == 42
@@ -446,30 +424,24 @@ class TestToolResultSerialization:
 
     def test_non_serializable_content(self):
         """Test error handling for non-serializable content."""
-        # Create a circular reference that can't be serialized
         circular = {}
         circular["self"] = circular
 
-        # Should handle the error and return error message
         result = _serialize_tool_result(circular, "test_req_id", {})
         assert "error" in result.lower()
         assert "serialization" in result.lower()
 
     def test_empty_content_serialization(self):
         """Test serialization of empty content."""
-        # Empty string
         result1 = _serialize_tool_result("", "test_req_id", {})
         assert result1 == ""
 
-        # Empty list
         result2 = _serialize_tool_result([], "test_req_id", {})
         assert result2 == "[]"
 
-        # Empty dict
         result3 = _serialize_tool_result({}, "test_req_id", {})
         assert result3 == "{}"
 
-        # None
         result4 = _serialize_tool_result(None, "test_req_id", {})
         assert "null" in result4 or "none" in result4.lower()
 
@@ -518,7 +490,6 @@ class TestOpenAIToAnthropicConversion:
         assert result.role == "assistant"
         assert len(result.content) >= 1
 
-        # Should have at least one tool_use block
         tool_use_blocks = [b for b in result.content if b.type == "tool_use"]
         assert len(tool_use_blocks) == 1
         assert tool_use_blocks[0].id == "call_456"
@@ -552,13 +523,11 @@ class TestOpenAIToAnthropicConversion:
         assert result.id == "msg_resp_123"
         assert result.model == original_model
         assert result.role == "assistant"
-        assert len(result.content) == 2  # Should have both text and tool_use
+        assert len(result.content) == 2  
 
-        # First block should be text
         assert result.content[0].type == "text"
         assert result.content[0].text == "Let me calculate that for you."
 
-        # Second block should be tool_use
         assert result.content[1].type == "tool_use"
         assert result.content[1].id == "call_789"
         assert result.content[1].name == "calculator"
@@ -568,7 +537,6 @@ class TestOpenAIToAnthropicConversion:
 
     def test_error_handling_in_tool_arguments(self, mock_openai_response):
         """Test handling of malformed tool arguments."""
-        # Invalid JSON in arguments
         tool_calls = [
             {
                 "id": "call_error",
@@ -581,7 +549,6 @@ class TestOpenAIToAnthropicConversion:
 
         result = convert_openai_to_anthropic(openai_response, original_model)
 
-        # Should handle gracefully and still include the tool
         assert len(result.content) >= 1
         tool_use_blocks = [b for b in result.content if b.type == "tool_use"]
         assert len(tool_use_blocks) == 1
@@ -614,11 +581,8 @@ class TestComplexContentScenarios:
         self, text_block, tool_use_block, tool_result_block
     ):
         """Test conversion of a multi-turn conversation with tools."""
-        # Create a complex conversation
         conversation = [
-            # User question
             Message(role="user", content="What's 135 + 7.5 divided by 2.5?"),
-            # Assistant with tool use
             Message(
                 role="assistant",
                 content=[
@@ -628,7 +592,6 @@ class TestComplexContentScenarios:
                     ),
                 ],
             ),
-            # User with tool result
             Message(
                 role="user",
                 content=[
@@ -636,7 +599,6 @@ class TestComplexContentScenarios:
                     tool_result_block("tool_1", "138"),
                 ],
             ),
-            # Assistant final response
             Message(
                 role="assistant",
                 content="The answer is 138. I calculated 135 + (7.5 / 2.5) which is 135 + 3 = 138.",
@@ -645,14 +607,11 @@ class TestComplexContentScenarios:
 
         result = convert_anthropic_to_openai_messages(conversation)
 
-        # Check correct conversion of all messages
-        assert len(result) >= 5  # At least 5 messages due to splitting
+        assert len(result) >= 5  
 
-        # First message should be user question
         assert result[0]["role"] == "user"
         assert "What's 135 + 7.5 divided by 2.5?" in result[0]["content"]
 
-        # Find assistant text message
         assistant_text_msg = [
             msg
             for msg in result
@@ -662,7 +621,6 @@ class TestComplexContentScenarios:
         ]
         assert len(assistant_text_msg) >= 1
 
-        # Find assistant tool call message
         tool_call_msgs = [
             msg
             for msg in result
@@ -671,7 +629,6 @@ class TestComplexContentScenarios:
         assert len(tool_call_msgs) >= 1
         assert tool_call_msgs[0]["tool_calls"][0]["function"]["name"] == "calculator"
 
-        # Find user tool result message
         tool_result_msgs = [msg for msg in result if msg.get("role") == "tool"]
         assert len(tool_result_msgs) >= 1
         assert (
@@ -679,7 +636,6 @@ class TestComplexContentScenarios:
             or "138" in tool_result_msgs[0]["content"]
         )
 
-        # Find assistant final response
         final_msg = [
             msg
             for msg in result
@@ -694,7 +650,6 @@ class TestComplexContentScenarios:
     ):
         """Test conversion with multiple content types in the same conversation."""
         conversation = [
-            # User with text and image
             Message(
                 role="user",
                 content=[
@@ -702,7 +657,6 @@ class TestComplexContentScenarios:
                     image_block(image_base64_data),
                 ],
             ),
-            # Assistant response with text and tool use
             Message(
                 role="assistant",
                 content=[
@@ -714,25 +668,21 @@ class TestComplexContentScenarios:
 
         result = convert_anthropic_to_openai_messages(conversation)
 
-        # Check for multimodal user message
         assert result[0]["role"] == "user"
         assert isinstance(result[0]["content"], list)
         assert len(result[0]["content"]) == 2
         assert result[0]["content"][0]["type"] == "text"
         assert result[0]["content"][1]["type"] == "image_url"
 
-        # Check for assistant messages
         assistant_msgs = [msg for msg in result if msg["role"] == "assistant"]
-        assert len(assistant_msgs) >= 2  # Text and tool call
+        assert len(assistant_msgs) >= 2  
 
-        # One should have text content
         text_content_msgs = [
             msg for msg in assistant_msgs if isinstance(msg.get("content"), str)
         ]
         assert len(text_content_msgs) >= 1
         assert "analyze" in text_content_msgs[0]["content"]
 
-        # One should have tool calls
         tool_call_msgs = [
             msg for msg in assistant_msgs if msg.get("tool_calls") is not None
         ]
@@ -743,7 +693,6 @@ class TestComplexContentScenarios:
 
     def test_nested_tool_result_content(self, text_block, tool_result_block):
         """Test conversion of complex nested structures in tool results."""
-        # Create a complex nested tool result
         nested_content = {
             "results": {
                 "weather": {
@@ -761,7 +710,6 @@ class TestComplexContentScenarios:
             }
         }
 
-        # Convert to string to pass validation with the ContentBlockToolResult model
         nested_content_str = json.dumps(nested_content)
 
         messages = [
@@ -776,15 +724,12 @@ class TestComplexContentScenarios:
 
         result = convert_anthropic_to_openai_messages(messages)
 
-        # Should have user message and tool result message
         assert len(result) >= 2
 
-        # At least one message should be a tool result
         tool_messages = [msg for msg in result if msg.get("role") == "tool"]
         assert len(tool_messages) >= 1
         assert tool_messages[0]["tool_call_id"] == "tool_123"
 
-        # Content should be serialized and should contain key information
         content_str = tool_messages[0]["content"]
         assert "New York" in content_str or "New York" in json.dumps(content_str)
         assert "temperature" in content_str or "temperature" in json.dumps(content_str)

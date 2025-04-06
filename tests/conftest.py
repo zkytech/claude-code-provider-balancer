@@ -3,11 +3,29 @@ Pytest configuration file containing shared fixtures.
 Only contains fixtures that are truly shared between multiple test modules.
 """
 
+import logging
 from unittest.mock import patch
 
 import pytest
 
+from claude_proxy import logger as app_logger
 from claude_proxy.config import Settings
+
+
+@pytest.fixture(autouse=True)
+def disable_app_logging():
+    """
+    Auto-use fixture to disable application logs during test runs
+    by setting the log level extremely high.
+    """
+    log_instance = app_logger._logger
+    original_level = log_instance.level
+
+    log_instance.setLevel(logging.CRITICAL + 1)
+
+    yield  
+
+    log_instance.setLevel(original_level)
 
 
 @pytest.fixture(autouse=True)

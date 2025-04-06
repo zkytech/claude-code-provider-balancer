@@ -85,13 +85,6 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
 
     anthropic_request = models.MessagesRequest.model_validate(body)
     is_stream = anthropic_request.stream or False
-    logger.debug(
-        LogRecord(
-            event=LogEvent.REQUEST_VALIDATION.value,
-            message="Request body parsed and validated successfully",
-            request_id=request_id,
-        )
-    )
 
     target_model = select_target_model(anthropic_request.model, request_id)
     target_provider = (
@@ -121,7 +114,7 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
 
     logger.debug(
         LogRecord(
-            event=LogEvent.REQUEST_VALIDATION.value,
+            event=LogEvent.ANTHROPIC_REQUEST.value,
             message="Anthropic request body",
             request_id=request_id,
             data={"body": body},

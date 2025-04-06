@@ -10,6 +10,7 @@ from typing import (Any, AsyncGenerator, Dict, List, Literal, Optional, Tuple,
                     Union)
 
 import openai
+import tiktoken
 from openai import (APIConnectionError, APIError, APITimeoutError,
                     AuthenticationError, BadRequestError, InternalServerError,
                     NotFoundError, PermissionDeniedError, RateLimitError,
@@ -210,7 +211,6 @@ def convert_anthropic_to_openai_messages(
             text_content = []
             ignored_user_image_source = False
 
-            # Handle empty list case
             if not content:
                 openai_messages.append({"role": role, "content": ""})
                 continue
@@ -390,7 +390,6 @@ def _serialize_tool_result(
         else:
             return json.dumps(content)
     except TypeError as e:
-        # Handle TypeError without passing the exception to logger.warning
         logger.warning(
             LogRecord(
                 event=LogEvent.TOOL_RESULT_SERIALIZATION_FAILURE.value,
@@ -403,7 +402,6 @@ def _serialize_tool_result(
             {"error": "Serialization failed", "original_type": str(type(content))}
         )
     except Exception as e:
-        # Handle other exceptions without passing the exception to logger.warning
         logger.warning(
             LogRecord(
                 event=LogEvent.TOOL_RESULT_SERIALIZATION_FAILURE.value,
@@ -735,6 +733,9 @@ async def handle_streaming_response(
     text_block_started = False
     current_tool_calls: Dict[int, Dict[str, str]] = {}
     sent_tool_block_starts = set()
+    output_token_count = 0
+    
+    enc = tiktoken.encoding_for_model("gpt-4")
 
     stop_reason_map: Dict[Optional[str], StopReasonType] = {
         "stop": "end_turn",
@@ -777,6 +778,8 @@ async def handle_streaming_response(
                     }
                     yield f"event: content_block_start\ndata: {json.dumps(start_text_block)}\n\n"
                     text_block_started = True
+                output_token_count += len(enc.encode(delta.content))
+                
                 text_delta_event = {
                     "type": "content_block_delta",
                     "index": 0,
@@ -847,6 +850,8 @@ async def handle_streaming_response(
                         and tool_delta.function.arguments
                         and anthropic_idx in sent_tool_block_starts
                     ):
+                        output_token_count += len(enc.encode(tool_delta.function.arguments))
+                        
                         args_delta_event = {
                             "type": "content_block_delta",
                             "index": anthropic_idx,
@@ -877,7 +882,7 @@ async def handle_streaming_response(
                 "stop_reason": final_stop_reason,
                 "stop_sequence": final_stop_sequence,
             },
-            "usage": {"output_tokens": 0},
+            "usage": {"output_tokens": output_token_count},
         }
         yield f"event: message_delta\ndata: {json.dumps(message_delta_event)}\n\n"
         yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"

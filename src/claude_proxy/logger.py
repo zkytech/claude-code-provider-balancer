@@ -142,7 +142,7 @@ class LogEvent(enum.Enum):
     MODEL_SELECTION = "model_selection"
     REQUEST_START = "request_start"
     REQUEST_COMPLETED = "request_completed"
-    REQUEST_VALIDATION = "request_validation"
+    ANTHROPIC_REQUEST = "anthropic_body"
     PROVIDER_IDENTIFICATION = "provider_identification"
     OPENAI_REQUEST = "openai_request"
     OPENAI_RESPONSE = "openai_response"

@@ -17,10 +17,12 @@ Key features:
 - Support for provider specific middleware
 - Dynamic model selection based on requested Claude model
 - Detailed request/response logging
+- Token counting
 
 ## Work in progress
 
-- Token counting
+- Custom system prompt override
+- Disable tools
 
 ## Example
 
