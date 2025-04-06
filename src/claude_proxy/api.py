@@ -22,6 +22,7 @@ from .conversion import STATUS_CODE_ERROR_MAP
 from .logger import LogEvent, LogRecord
 from .openrouter_client import client
 from .provider_mods import apply_provider_modifications
+from . import token_counter
 
 app = fastapi.FastAPI(
     title=settings.app_name,
@@ -282,7 +283,7 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
 )
 async def count_tokens_endpoint(request: Request) -> models.TokenCountResponse:
     """
-    Always returns 0 tokens. Token counting functionality has been disabled.
+    Counts tokens for the given messages and system prompt using tiktoken.
     """
     request_id = str(uuid.uuid4()).split("-")[0]
     request.state.request_id = request_id
@@ -290,18 +291,29 @@ async def count_tokens_endpoint(request: Request) -> models.TokenCountResponse:
 
     body = await request.json()
 
-    models.TokenCountRequest.model_validate(body)
+    request_data = models.TokenCountRequest.model_validate(body)
+    
+    token_count = token_counter.count_tokens_for_request(
+        messages=request_data.messages,
+        system=request_data.system,
+        model_name=request_data.model,
+        tools=request_data.tools
+    )
 
     duration_ms = (time.time() - start_time) * 1000
     logger.info(
         LogRecord(
             event=LogEvent.TOKEN_COUNT.value,
-            message="Token counting disabled - returning 0 tokens",
+            message=f"Counted {token_count} tokens for request",
             request_id=request_id,
-            data={"duration_ms": duration_ms},
+            data={
+                "duration_ms": duration_ms,
+                "token_count": token_count,
+                "model": request_data.model
+            },
         )
     )
-    return models.TokenCountResponse(input_tokens=0)
+    return models.TokenCountResponse(input_tokens=token_count)
 
 
 @app.get("/", include_in_schema=False, tags=["Health"])

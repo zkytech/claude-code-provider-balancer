@@ -161,6 +161,7 @@ class LogEvent(enum.Enum):
     IMAGE_FORMAT_UNSUPPORTED = "image_format_unsupported"
     MESSAGE_FORMAT_NORMALIZED = "message_format_normalized"
     TOOL_RESULT_SERIALIZATION_FAILURE = "tool_result_serialization_failure"
+    TOOL_RESULT_PROCESSING = "tool_result_processing"
     TOOL_CHOICE_UNSUPPORTED = "tool_choice_unsupported"
     TOOL_ARGS_TYPE_MISMATCH = "tool_args_type_mismatch"
     TOOL_ARGS_PARSE_FAILURE = "tool_args_parse_failure"

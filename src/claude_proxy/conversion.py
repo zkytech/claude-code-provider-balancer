@@ -19,135 +19,6 @@ from openai import (APIConnectionError, APIError, APITimeoutError,
 from . import logger, models
 from .logger import LogEvent, LogRecord
 
-ANTHROPIC_TOOLS_FIXTURE = [
-    models.Tool(
-        name="dispatch_agent",
-        description="Launch a new agent that has access to tools",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": "The task for the agent to perform",
-                }
-            },
-            "required": ["prompt"],
-            "additionalProperties": False,
-            "$schema": "http://json-schema.org/draft-07/schema#",
-        },
-    ),
-    models.Tool(
-        name="Bash",
-        description="Executes a given bash command in a persistent shell session",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "The command to execute"},
-                "timeout": {
-                    "type": "number",
-                    "description": "Optional timeout in milliseconds (max 600000)",
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Clear, concise description of what this command does",
-                },
-            },
-            "required": ["command"],
-            "additionalProperties": False,
-            "$schema": "http://json-schema.org/draft-07/schema#",
-        },
-    ),
-    models.Tool(
-        name="GlobTool",
-        description="Fast file pattern matching tool",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "The glob pattern to match files against",
-                },
-                "path": {"type": "string", "description": "The directory to search in"},
-            },
-            "required": ["pattern"],
-            "additionalProperties": False,
-            "$schema": "http://json-schema.org/draft-07/schema#",
-        },
-    ),
-]
-
-OPENAI_TOOLS_FIXTURE = [
-    {
-        "type": "function",
-        "function": {
-            "name": "dispatch_agent",
-            "description": "Launch a new agent that has access to tools",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "prompt": {
-                        "type": "string",
-                        "description": "The task for the agent to perform",
-                    }
-                },
-                "required": ["prompt"],
-                "additionalProperties": False,
-                "$schema": "http://json-schema.org/draft-07/schema#",
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "Bash",
-            "description": "Executes a given bash command in a persistent shell session",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "The command to execute",
-                    },
-                    "timeout": {
-                        "type": "number",
-                        "description": "Optional timeout in milliseconds (max 600000)",
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Clear, concise description of what this command does",
-                    },
-                },
-                "required": ["command"],
-                "additionalProperties": False,
-                "$schema": "http://json-schema.org/draft-07/schema#",
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "GlobTool",
-            "description": "Fast file pattern matching tool",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "The glob pattern to match files against",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "The directory to search in",
-                    },
-                },
-                "required": ["pattern"],
-                "additionalProperties": False,
-                "$schema": "http://json-schema.org/draft-07/schema#",
-            },
-        },
-    },
-]
-
 
 StopReasonType = Optional[
     Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "error"]
@@ -288,8 +159,34 @@ def convert_anthropic_to_openai_messages(
                 elif (
                     isinstance(block, models.ContentBlockToolResult) and role == "user"
                 ):
+                    logger.debug(
+                        LogRecord(
+                            event=LogEvent.TOOL_RESULT_PROCESSING.value,
+                            message="Processing tool result content before serialization",
+                            request_id=request_id,
+                            data={
+                                **block_log_ctx,
+                                "tool_use_id": block.tool_use_id,
+                                "content_type": str(type(block.content)),
+                                "content_repr": repr(block.content),
+                                "is_error": block.is_error,
+                            }
+                        )
+                    )
                     content_str = _serialize_tool_result(
                         block.content, request_id, block_log_ctx
+                    )
+                    logger.debug(
+                        LogRecord(
+                            event=LogEvent.TOOL_RESULT_PROCESSING.value,
+                            message="Tool result content after serialization",
+                            request_id=request_id,
+                            data={
+                                **block_log_ctx,
+                                "tool_use_id": block.tool_use_id,
+                                "serialized_content": content_str
+                            }
+                        )
                     )
                     tool_results.append(
                         {
@@ -376,6 +273,21 @@ def _serialize_tool_result(
     Helper to serialize Anthropic tool result content to string for OpenAI.
     """
     try:
+        logger.debug(
+            LogRecord(
+                event=LogEvent.TOOL_RESULT_PROCESSING.value,
+                message="Serializing tool result content",
+                request_id=request_id,
+                data={
+                    **log_context,
+                    "content_type": str(type(content)),
+                    "content_repr": repr(content),
+                    "is_list": isinstance(content, list),
+                    "is_string": isinstance(content, str),
+                }
+            )
+        )
+
         if isinstance(content, list):
             text_parts = [
                 item.get("text")
@@ -383,12 +295,58 @@ def _serialize_tool_result(
                 if isinstance(item, dict) and item.get("type") == "text"
             ]
             if text_parts:
-                return "\n".join(text_parts)
-            return json.dumps(content)
+                result = "\n".join(text_parts)
+                logger.debug(
+                    LogRecord(
+                        event=LogEvent.TOOL_RESULT_PROCESSING.value,
+                        message="Joined text parts from list",
+                        request_id=request_id,
+                        data={
+                            **log_context,
+                            "text_parts_count": len(text_parts),
+                            "result": result
+                        }
+                    )
+                )
+                return result
+            result = json.dumps(content)
+            logger.debug(
+                LogRecord(
+                    event=LogEvent.TOOL_RESULT_PROCESSING.value,
+                    message="Serialized non-text list content",
+                    request_id=request_id,
+                    data={
+                        **log_context,
+                        "result": result
+                    }
+                )
+            )
+            return result
         elif isinstance(content, str):
+            if content == "{}":
+                logger.warning(
+                    LogRecord(
+                        event=LogEvent.TOOL_RESULT_PROCESSING.value,
+                        message="Received literal string '{}' as tool result",
+                        request_id=request_id,
+                        data=log_context
+                    )
+                )
             return content
         else:
-            return json.dumps(content)
+            result = json.dumps(content)
+            logger.debug(
+                LogRecord(
+                    event=LogEvent.TOOL_RESULT_PROCESSING.value,
+                    message="Serialized non-string non-list content",
+                    request_id=request_id,
+                    data={
+                        **log_context,
+                        "result": result
+                    }
+                )
+            )
+            return result
     except TypeError as e:
         logger.warning(
             LogRecord(
