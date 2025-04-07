@@ -2,6 +2,7 @@
 Pydantic models defining the Anthropic API request/response structures.
 """
 
+import json
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -175,6 +176,88 @@ class AnthropicErrorResponse(BaseModel):
 
     type: Literal["error"] = "error"
     error: AnthropicErrorDetail
+
+
+def extract_provider_error_details(
+    error_details: Dict[str, Any],
+) -> Optional[ProviderErrorMetadata]:
+    """
+    Extract provider-specific error details from API error metadata.
+
+    This function parses the error metadata from OpenRouter responses to extract
+    provider-specific error details. It handles different provider error formats
+    and returns a structured ProviderErrorMetadata object with the error information.
+
+    Examples:
+        For a Gemini error:
+        ```
+        {
+          "error": {
+            "message": "Provider returned error",
+            "metadata": {
+              "provider_name": "google",
+              "raw": "{\"error\":{\"code\":400,\"message\":\"Invalid BatchTool schema\",\"status\":\"INVALID_ARGUMENT\"}}"
+            }
+          }
+        }
+        ```
+
+        Returns:
+        ```
+        ProviderErrorMetadata(
+            provider_name="google",
+            raw_error={
+                "error": {
+                    "code": 400,
+                    "message": "Invalid BatchTool schema",
+                    "status": "INVALID_ARGUMENT"
+                }
+            }
+        )
+        ```
+
+    Args:
+        error_details: The error details dictionary from the API response
+
+    Returns:
+        A ProviderErrorMetadata instance if provider error details are found,
+        otherwise None
+    """
+    if not isinstance(error_details, dict):
+        return None
+
+    metadata = error_details.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return None
+
+    provider_name = metadata.get("provider_name")
+    raw_error = metadata.get("raw")
+
+    if not provider_name or not raw_error or not isinstance(raw_error, str):
+        return None
+
+    try:
+        parsed_raw = json.loads(raw_error)
+        return ProviderErrorMetadata(
+            provider_name=provider_name, raw_error=parsed_raw
+        )
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+STATUS_CODE_ERROR_MAP = {
+    400: AnthropicErrorType.INVALID_REQUEST,
+    401: AnthropicErrorType.AUTHENTICATION,
+    403: AnthropicErrorType.PERMISSION,
+    404: AnthropicErrorType.NOT_FOUND,
+    413: AnthropicErrorType.REQUEST_TOO_LARGE,
+    422: AnthropicErrorType.INVALID_REQUEST,
+    429: AnthropicErrorType.RATE_LIMIT,
+    500: AnthropicErrorType.API_ERROR,
+    502: AnthropicErrorType.API_ERROR,
+    503: AnthropicErrorType.OVERLOADED,
+    504: AnthropicErrorType.API_ERROR,
+}
 
 
 class MessagesResponse(BaseModel):

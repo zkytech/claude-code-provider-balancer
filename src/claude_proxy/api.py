@@ -10,19 +10,18 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Union, cast
 
 import fastapi
 import openai
-from fastapi import HTTPException, Request
+from fastapi import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from openai.types.chat import (ChatCompletionMessageParam,
                                ChatCompletionToolParam)
 from pydantic import ValidationError
 
-from . import conversion, logger, models
+from . import conversion, logger, models, token_counter
+from .models import extract_provider_error_details, STATUS_CODE_ERROR_MAP
 from .config import settings
-from .conversion import STATUS_CODE_ERROR_MAP
 from .logger import LogEvent, LogRecord
 from .openrouter_client import client
 from .provider_mods import apply_provider_modifications
-from . import token_counter
 
 app = fastapi.FastAPI(
     title=settings.app_name,
@@ -123,11 +122,11 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
     )
 
     openai_messages = conversion.convert_anthropic_to_openai_messages(
-        anthropic_request.messages, anthropic_request.system
+        anthropic_request.messages, anthropic_request.system, request_id=request_id
     )
     openai_tools = conversion.convert_anthropic_tools_to_openai(anthropic_request.tools)
     openai_tool_choice = conversion.convert_anthropic_tool_choice_to_openai(
-        anthropic_request.tool_choice
+        anthropic_request.tool_choice, request_id=request_id
     )
 
     estimated_input_tokens = 0
@@ -155,7 +154,9 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
     if anthropic_request.metadata and anthropic_request.metadata.get("user_id"):
         openai_params["user"] = str(anthropic_request.metadata.get("user_id"))
 
-    openai_params = apply_provider_modifications(openai_params, target_provider)
+    openai_params = apply_provider_modifications(
+        openai_params, target_provider, request_id=request_id
+    )
 
     logger.debug(
         LogRecord(
@@ -245,7 +246,7 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
             )
 
         anthropic_response = conversion.convert_openai_to_anthropic(
-            openai_response, anthropic_request.model
+            openai_response, anthropic_request.model, request_id=request_id
         )
         usage_info = anthropic_response.usage.model_dump()
 
@@ -297,7 +298,8 @@ async def count_tokens_endpoint(request: Request) -> models.TokenCountResponse:
         messages=request_data.messages,
         system=request_data.system,
         model_name=request_data.model,
-        tools=request_data.tools
+        tools=request_data.tools,
+        request_id=request_id,
     )
 
     duration_ms = (time.time() - start_time) * 1000
@@ -393,110 +395,6 @@ def get_error_response(
     return models.AnthropicErrorResponse(error=error)
 
 
-def extract_provider_error_details(
-    error_details: Dict[str, Any],
-) -> Optional[models.ProviderErrorMetadata]:
-    """
-    Extract provider-specific error details from API error metadata.
-
-    This function parses the error metadata from OpenRouter responses to extract
-    provider-specific error details. It handles different provider error formats
-    and returns a structured ProviderErrorMetadata object with the error information.
-
-    Examples:
-        For a Gemini error:
-        ```
-        {
-          "error": {
-            "message": "Provider returned error",
-            "metadata": {
-              "provider_name": "google",
-              "raw": "{\"error\":{\"code\":400,\"message\":\"Invalid BatchTool schema\",\"status\":\"INVALID_ARGUMENT\"}}"
-            }
-          }
-        }
-        ```
-
-        Returns:
-        ```
-        ProviderErrorMetadata(
-            provider_name="google",
-            raw_error={
-                "error": {
-                    "code": 400,
-                    "message": "Invalid BatchTool schema",
-                    "status": "INVALID_ARGUMENT"
-                }
-            }
-        )
-        ```
-
-    Args:
-        error_details: The error details dictionary from the API response
-
-    Returns:
-        A ProviderErrorMetadata instance if provider error details are found,
-        otherwise None
-
-    TODO: Refactor into a strategy pattern with provider-specific handlers.
-    """
-    if not isinstance(error_details, dict):
-        return None
-
-    metadata = error_details.get("metadata", {})
-    if not isinstance(metadata, dict):
-        return None
-
-    provider_name = metadata.get("provider_name")
-    raw_error = metadata.get("raw")
-
-    if not provider_name or not raw_error or not isinstance(raw_error, str):
-        return None
-
-    try:
-        parsed_raw = json.loads(raw_error)
-        return models.ProviderErrorMetadata(
-            provider_name=provider_name, raw_error=parsed_raw
-        )
-    except (json.JSONDecodeError, TypeError):
-        return None
-
-
-def extract_error_message(exc: Exception) -> str:
-    """Extracts the most useful error message from various exception types."""
-    if hasattr(exc, "body") and isinstance(exc.body, dict):
-        error_details = exc.body.get("error", {})
-        if isinstance(error_details, dict):
-            message = error_details.get("message")
-
-            provider_details = extract_provider_error_details(error_details)
-            if provider_details and "raw_error" in provider_details:
-                provider_error = provider_details["raw_error"]
-                if isinstance(provider_error, dict) and "error" in provider_error:
-                    provider_error_msg = provider_error["error"].get("message")
-                    if provider_error_msg and isinstance(provider_error_msg, str):
-                        return f"{message}: {provider_error_msg}"
-
-            if message is not None and isinstance(message, str):
-                return message
-            return str(exc)
-        message = exc.body.get("message")
-        if message is not None and isinstance(message, str):
-            return message
-        return str(exc)
-    elif isinstance(exc, ValidationError):
-        try:
-            return json.dumps(exc.errors(), indent=2)
-        except Exception:
-            return str(exc)
-    elif isinstance(exc, HTTPException):
-        detail = exc.detail
-        if detail is not None and isinstance(detail, str):
-            return detail
-        return str(detail)
-    return str(exc)
-
-
 async def _handle_error(
     request: Request,
     status_code: int,
@@ -575,7 +473,7 @@ async def _handle_exception(
     Returns:
         A JSON response with properly formatted error details
     """
-    detail = extract_error_message(exc)
+    detail = str(exc)
 
     provider_details = None
     if hasattr(exc, "body") and isinstance(exc.body, dict):

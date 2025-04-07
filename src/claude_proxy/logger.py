@@ -209,9 +209,8 @@ if settings.log_file_path:
 
 def log(level: int, record: LogRecord) -> None:
     """Log a structured record at the specified level."""
-    if type(record) is str:
-        return _logger.log(level=level, msg=record)
-
+    if not isinstance(record, LogRecord):
+        raise TypeError(f"Expected LogRecord, got {type(record)}. Use LogRecord for all logging.")
     return _logger.log(level=level, msg="", extra={"log_record": record})
 
 

@@ -16,6 +16,7 @@ def count_tokens_for_request(
     system: Optional[Union[str, List[models.SystemContent]]],
     model_name: str,
     tools: Optional[List[models.Tool]] = None,
+    request_id: Optional[str] = None,
 ) -> int:
     """
     Counts tokens for messages and system prompt using tiktoken.
@@ -59,6 +60,7 @@ def count_tokens_for_request(
                                 event=LogEvent.TOOL_INPUT_SERIALIZATION_FAILURE.value,
                                 message=f"Failed to serialize tool input for token counting: {e}",
                                 data={"tool_name": block.name},
+                                request_id=request_id,
                             )
                         )
                 elif isinstance(block, models.ContentBlockToolResult):
@@ -73,6 +75,7 @@ def count_tokens_for_request(
                             LogRecord(
                                 event=LogEvent.TOOL_RESULT_SERIALIZATION_FAILURE.value,
                                 message=f"Failed to serialize tool result for token counting: {e}",
+                                request_id=request_id,
                             )
                         )
 
@@ -90,6 +93,7 @@ def count_tokens_for_request(
                         event=LogEvent.TOOL_INPUT_SERIALIZATION_FAILURE.value,
                         message=f"Failed to serialize tool schema for token counting: {e}",
                         data={"tool_name": tool.name},
+                        request_id=request_id,
                     )
                 )
 
@@ -98,6 +102,7 @@ def count_tokens_for_request(
             event=LogEvent.TOKEN_COUNT.value,
             message=f"Counted {total_tokens} tokens for request",
             data={"model": model_name, "token_count": total_tokens},
+            request_id=request_id,
         )
     )
 

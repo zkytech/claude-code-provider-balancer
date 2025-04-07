@@ -18,7 +18,6 @@ from claude_proxy.models import (ContentBlockImage, ContentBlockText,
                                  Message, SystemContent)
 
 
-
 @pytest.fixture
 def image_base64_data():
     """Sample base64 image data for testing."""

@@ -17,8 +17,8 @@ from openai import (APIConnectionError, APIError, APITimeoutError,
                     UnprocessableEntityError)
 
 from . import logger, models
+from .models import extract_provider_error_details
 from .logger import LogEvent, LogRecord
-
 
 StopReasonType = Optional[
     Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "error"]
@@ -551,77 +551,63 @@ def convert_openai_to_anthropic(
     )
 
 
-STATUS_CODE_ERROR_MAP = {
-    400: models.AnthropicErrorType.INVALID_REQUEST,
-    401: models.AnthropicErrorType.AUTHENTICATION,
-    403: models.AnthropicErrorType.PERMISSION,
-    404: models.AnthropicErrorType.NOT_FOUND,
-    413: models.AnthropicErrorType.REQUEST_TOO_LARGE,
-    422: models.AnthropicErrorType.INVALID_REQUEST,
-    429: models.AnthropicErrorType.RATE_LIMIT,
-    500: models.AnthropicErrorType.API_ERROR,
-    502: models.AnthropicErrorType.API_ERROR,
-    503: models.AnthropicErrorType.OVERLOADED,
-    504: models.AnthropicErrorType.API_ERROR,
-}
-
 
 def _get_anthropic_error_details(
     exc: Exception,
-) -> Tuple[models.AnthropicErrorType, str]:
+) -> Tuple[models.AnthropicErrorType, str, Optional[models.ProviderErrorMetadata]]:
     """
-    Maps caught exceptions to Anthropic error types and messages.
-
-    This function centralizes the mapping logic between OpenAI/OpenRouter
-    exception types and the appropriate Anthropic error types. It ensures
-    consistent error handling across both streaming and non-streaming responses.
+    Maps caught exceptions to Anthropic error types and messages,
+    and extracts provider-specific details if available.
 
     Args:
         exc: The exception to map
 
     Returns:
-        Tuple containing (AnthropicErrorType enum, error_message)
+        Tuple containing (AnthropicErrorType enum, error_message, provider_details)
     """
+    provider_details: Optional[models.ProviderErrorMetadata] = None
+    error_message = str(exc)
+    error_type = models.AnthropicErrorType.API_ERROR  # Default
+
+    # Attempt to extract provider details from APIError body
+    if isinstance(exc, APIError) and hasattr(exc, "body") and isinstance(exc.body, dict):
+        provider_details = extract_provider_error_details(exc.body.get("error", {}))
+
+    # Map specific exception types
     if isinstance(exc, AuthenticationError):
-        return models.AnthropicErrorType.AUTHENTICATION, str(exc)
-
-    if isinstance(exc, RateLimitError):
-        return models.AnthropicErrorType.RATE_LIMIT, str(exc)
-
-    if isinstance(exc, BadRequestError):
-        return models.AnthropicErrorType.INVALID_REQUEST, str(exc)
-
-    if isinstance(exc, PermissionDeniedError):
-        return models.AnthropicErrorType.PERMISSION, str(exc)
-
-    if isinstance(exc, NotFoundError):
-        return models.AnthropicErrorType.NOT_FOUND, str(exc)
-
-    if isinstance(exc, UnprocessableEntityError):
-        return models.AnthropicErrorType.INVALID_REQUEST, str(exc)
-
-    if isinstance(exc, InternalServerError):
-        return models.AnthropicErrorType.API_ERROR, str(exc)
-
-    if isinstance(exc, APIConnectionError):
-        return models.AnthropicErrorType.API_ERROR, f"Connection error: {exc}"
-
-    if isinstance(exc, APITimeoutError):
-        return models.AnthropicErrorType.API_ERROR, f"Timeout error: {exc}"
-
-    if isinstance(exc, APIError):
+        error_type = models.AnthropicErrorType.AUTHENTICATION
+    elif isinstance(exc, RateLimitError):
+        error_type = models.AnthropicErrorType.RATE_LIMIT
+    elif isinstance(exc, BadRequestError):
+        error_type = models.AnthropicErrorType.INVALID_REQUEST
+    elif isinstance(exc, PermissionDeniedError):
+        error_type = models.AnthropicErrorType.PERMISSION
+    elif isinstance(exc, NotFoundError):
+        error_type = models.AnthropicErrorType.NOT_FOUND
+    elif isinstance(exc, UnprocessableEntityError):
+        error_type = models.AnthropicErrorType.INVALID_REQUEST
+    elif isinstance(exc, InternalServerError):
+        error_type = models.AnthropicErrorType.API_ERROR
+    elif isinstance(exc, APIConnectionError):
+        error_type = models.AnthropicErrorType.API_ERROR
+        error_message = f"Connection error: {exc}"
+    elif isinstance(exc, APITimeoutError):
+        error_type = models.AnthropicErrorType.API_ERROR
+        error_message = f"Timeout error: {exc}"
+    elif isinstance(exc, APIError):  # Catch broader APIError after specific ones
         status_code = exc.status_code if hasattr(exc, "status_code") else 500
-
         default_error = (
             models.AnthropicErrorType.API_ERROR
             if status_code >= 500
             else models.AnthropicErrorType.INVALID_REQUEST
         )
+        error_type = models.STATUS_CODE_ERROR_MAP.get(status_code, default_error)
+        error_message = f"API error (Status {status_code}): {exc}"
+    else:  # Fallback for unexpected errors
+        error_type = models.AnthropicErrorType.API_ERROR
+        error_message = f"Unexpected error: {exc}"
 
-        error_type = STATUS_CODE_ERROR_MAP.get(status_code, default_error)
-        return error_type, f"API error (Status {status_code}): {exc}"
-
-    return models.AnthropicErrorType.API_ERROR, f"Unexpected error: {exc}"
+    return error_type, error_message, provider_details
 
 
 def _format_anthropic_error_sse(
@@ -846,32 +832,15 @@ async def handle_streaming_response(
         yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
 
     except Exception as e:
-        error_type, error_message = _get_anthropic_error_details(e)
-
-        provider_details = None
-        if hasattr(e, "body") and isinstance(e.body, dict):
-            error_details = e.body.get("error", {})
-            if isinstance(error_details, dict):
-                from .api import extract_provider_error_details
-
-                provider_details = extract_provider_error_details(error_details)
+        error_type, error_message, provider_details = _get_anthropic_error_details(e)
 
         logger.error(
             LogRecord(
                 event=LogEvent.STREAM_INTERRUPTED.value,
                 message=f"Error during OpenAI stream: {error_message}",
                 request_id=request_id,
-                error={
-                    "type": error_type.value,
-                    "original_exception": str(e),
-                    "provider": provider_details.provider_name
-                    if provider_details
-                    else None,
-                    "provider_error": provider_details.raw_error
-                    if provider_details
-                    else None,
-                },
-            )
+            ),
+            e
         )
         yield _format_anthropic_error_sse(error_type, error_message, provider_details)
         return

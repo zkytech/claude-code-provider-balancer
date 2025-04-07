@@ -15,5 +15,3 @@ client = openai.AsyncClient(
         "X-Title": settings.app_name,
     },
 )
-
-logger.info("OpenAI AsyncClient initialized for OpenRouter.")

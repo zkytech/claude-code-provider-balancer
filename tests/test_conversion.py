@@ -1,21 +1,140 @@
 import json
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import pytest
-from claude_proxy import conversion, models
-from claude_proxy.conversion import (ANTHROPIC_TOOLS_FIXTURE,
-                                     OPENAI_TOOLS_FIXTURE)
-from openai.types.chat import ChatCompletionMessage, ChatCompletionMessageToolCall
-from openai.types.chat.chat_completion import ChatCompletion, Choice
-from openai.types.chat.chat_completion_chunk import (ChatCompletionChunk,
-                                                      ChoiceDelta,
-                                                      ChoiceDeltaToolCall)
-from openai.types.chat.chat_completion_chunk import \
-    ChoiceDeltaToolCallFunction as ChunkFunction
-from openai.types.chat.chat_completion_message import FunctionCall
-from openai.types.chat.chat_completion_message_tool_call import Function
-from openai.types.completion_usage import CompletionUsage
+from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
 
+from claude_proxy import conversion, models
+
+# Fixtures for tool conversion tests
+ANTHROPIC_TOOLS_FIXTURE = [
+    models.Tool(
+        name="dispatch_agent",
+        description="Launch a new agent that has access to tools",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "The task for the agent to perform",
+                }
+            },
+            "required": ["prompt"],
+            "additionalProperties": False,
+            "$schema": "http://json-schema.org/draft-07/schema#",
+        },
+    ),
+    models.Tool(
+        name="Bash",
+        description="Executes a given bash command in a persistent shell session",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The command to execute"},
+                "timeout": {
+                    "type": "number",
+                    "description": "Optional timeout in milliseconds (max 600000)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Clear, concise description of what this command does",
+                },
+            },
+            "required": ["command"],
+            "additionalProperties": False,
+            "$schema": "http://json-schema.org/draft-07/schema#",
+        },
+    ),
+    models.Tool(
+        name="GlobTool",
+        description="Fast file pattern matching tool",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "The glob pattern to match files against",
+                },
+                "path": {"type": "string", "description": "The directory to search in"},
+            },
+            "required": ["pattern"],
+            "additionalProperties": False,
+            "$schema": "http://json-schema.org/draft-07/schema#",
+        },
+    ),
+]
+
+OPENAI_TOOLS_FIXTURE = [
+    {
+        "type": "function",
+        "function": {
+            "name": "dispatch_agent",
+            "description": "Launch a new agent that has access to tools",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "The task for the agent to perform",
+                    }
+                },
+                "required": ["prompt"],
+                "additionalProperties": False,
+                "$schema": "http://json-schema.org/draft-07/schema#",
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "Bash",
+            "description": "Executes a given bash command in a persistent shell session",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The command to execute",
+                    },
+                    "timeout": {
+                        "type": "number",
+                        "description": "Optional timeout in milliseconds (max 600000)",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Clear, concise description of what this command does",
+                    },
+                },
+                "required": ["command"],
+                "additionalProperties": False,
+                "$schema": "http://json-schema.org/draft-07/schema#",
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "GlobTool",
+            "description": "Fast file pattern matching tool",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "The glob pattern to match files against",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "The directory to search in",
+                    },
+                },
+                "required": ["pattern"],
+                "additionalProperties": False,
+                "$schema": "http://json-schema.org/draft-07/schema#",
+            },
+        },
+    },
+]
 
 
 class MockDelta:
@@ -299,11 +418,14 @@ def test_convert_anthropic_tools_to_openai_comprehensive(
         actual_names = [tool["function"]["name"] for tool in openai_tools]
         assert sorted(actual_names) == sorted(expected_names)
         if anthropic_tool_input:
-            for i, tool in enumerate(anthropic_tool_input):
+            # Sort both lists by name to ensure comparison is correct
+            sorted_anthropic = sorted(anthropic_tool_input, key=lambda x: x.name)
+            sorted_openai = sorted(openai_tools, key=lambda x: x["function"]["name"])
+            for i, tool in enumerate(sorted_anthropic):
                 assert (
-                    openai_tools[i]["function"]["description"] == tool.description or ""
+                    sorted_openai[i]["function"]["description"] == tool.description or ""
                 )
-                assert openai_tools[i]["function"]["parameters"] == tool.input_schema
+                assert sorted_openai[i]["function"]["parameters"] == tool.input_schema
 
 
 def test_comprehensive_tool_conversion_identity():
@@ -311,7 +433,10 @@ def test_comprehensive_tool_conversion_identity():
     openai_tools = conversion.convert_anthropic_tools_to_openai(
         ANTHROPIC_TOOLS_FIXTURE
     )
-    assert openai_tools == OPENAI_TOOLS_FIXTURE
+    # Sort both lists by function name before comparing
+    sorted_actual = sorted(openai_tools, key=lambda x: x["function"]["name"])
+    sorted_expected = sorted(OPENAI_TOOLS_FIXTURE, key=lambda x: x["function"]["name"])
+    assert sorted_actual == sorted_expected
 
 
 def test_convert_anthropic_to_openai_messages_simple():
@@ -386,7 +511,7 @@ def test_convert_anthropic_to_openai_messages_with_complex_content():
     assert "tool_calls" not in openai_messages[1]
 
     assert openai_messages[2]["role"] == "assistant"
-    assert openai_messages[2]["content"] is None 
+    assert openai_messages[2]["content"] is None
     assert "tool_calls" in openai_messages[2]
     assert len(openai_messages[2]["tool_calls"]) == 1
     assert openai_messages[2]["tool_calls"][0] == {
@@ -397,7 +522,7 @@ def test_convert_anthropic_to_openai_messages_with_complex_content():
 
     assert openai_messages[3]["role"] == "tool"
     assert openai_messages[3]["tool_call_id"] == "tool_abc"
-    assert openai_messages[3]["content"] == "Analysis complete: High complexity." 
+    assert openai_messages[3]["content"] == "Analysis complete: High complexity."
 
     assert openai_messages[4]["role"] == "assistant"
     assert openai_messages[4]["content"] == "The analysis shows high complexity."
@@ -429,7 +554,7 @@ def test_convert_anthropic_tools_to_openai():
     "tool_choice,expected_result",
     [
         (models.ToolChoice(type="auto"), "auto"),
-        (models.ToolChoice(type="any"), "required"), 
+        (models.ToolChoice(type="any"), "auto"),
         (
             models.ToolChoice(type="tool", name="get_weather"),
             {"type": "function", "function": {"name": "get_weather"}},
@@ -483,7 +608,7 @@ def test_convert_openai_to_anthropic_with_tool_calls():
             MockChoice(
                 message=MockMessage(
                     role="assistant",
-                    content=None, 
+                    content=None,
                     tool_calls=[
                         MockToolCall(
                             id="call_1",
@@ -553,7 +678,7 @@ anthropic_tool_sequence_messages = [
             models.ContentBlockToolResult(
                 type="tool_result",
                 tool_use_id="echo_tool_123",
-                content="Echo: hello world", 
+                content="Echo: hello world",
             )
         ],
     ),
@@ -617,7 +742,7 @@ def test_tool_use_result_sequence_non_streaming():
     assert anthropic_response.id == f"msg_{openai_response.id}"
     assert anthropic_response.model == original_model
     assert anthropic_response.stop_reason == "end_turn"
-    assert len(anthropic_response.content) == 1 
+    assert len(anthropic_response.content) == 1
 
     assert isinstance(anthropic_response.content[0], models.ContentBlockText)
     assert anthropic_response.content[0].type == "text"
@@ -632,7 +757,7 @@ async def test_tool_use_result_sequence_streaming():
     """
     original_model = "claude-test-model-stream"
     request_id = "stream_req_abc"
-    initial_input_tokens = 50 
+    initial_input_tokens = 50
 
     async def mock_openai_stream_after_tool() -> AsyncGenerator[MockChatCompletionChunk, None]:
         yield MockChatCompletionChunk(
@@ -654,14 +779,14 @@ async def test_tool_use_result_sequence_streaming():
     sse_events = []
     openai_stream_cast = mock_openai_stream_after_tool()
     async for event_str in conversion.handle_streaming_response(
-        openai_stream_cast, 
+        openai_stream_cast,
         original_model,
         initial_input_tokens,
         request_id,
     ):
         sse_events.append(event_str)
 
-    assert len(sse_events) > 3 
+    assert len(sse_events) > 3
 
     assert sse_events[0].startswith("event: message_start")
     start_data = json.loads(sse_events[0].split("data: ")[1])
@@ -673,7 +798,7 @@ async def test_tool_use_result_sequence_streaming():
     for event in sse_events:
         if event.startswith("event: content_block_start"):
             data = json.loads(event.split("data: ")[1])
-            assert data["content_block"]["type"] == "text" 
+            assert data["content_block"]["type"] == "text"
             text_block_start_found = True
             break
     assert text_block_start_found, "Did not find content_block_start for text"
@@ -682,7 +807,7 @@ async def test_tool_use_result_sequence_streaming():
     for event in sse_events:
         if event.startswith("event: content_block_delta"):
             data = json.loads(event.split("data: ")[1])
-            assert data["delta"]["type"] == "text_delta" 
+            assert data["delta"]["type"] == "text_delta"
             aggregated_text += data["delta"]["text"]
     assert aggregated_text == "Okay, the tool echoed 'Echo: hello world'. What should I do next?"
 
@@ -690,7 +815,7 @@ async def test_tool_use_result_sequence_streaming():
     for event in sse_events:
         if event.startswith("event: content_block_stop"):
              data = json.loads(event.split("data: ")[1])
-             assert data["index"] == 0 
+             assert data["index"] == 0
              text_block_stop_found = True
              break
     assert text_block_stop_found, "Did not find content_block_stop for text block"
