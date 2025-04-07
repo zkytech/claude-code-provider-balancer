@@ -108,6 +108,7 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
                 "client_model": anthropic_request.model,
                 "target_model": target_model,
                 "stream": is_stream,
+                "estimated_input_tokens": estimated_input_tokens,
             },
         )
     )
@@ -130,6 +131,15 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
     )
 
     estimated_input_tokens = 0
+
+    # Calculate input tokens before branching
+    estimated_input_tokens = token_counter.count_tokens_for_request(
+        messages=anthropic_request.messages,
+        system=anthropic_request.system,
+        model_name=anthropic_request.model,
+        tools=anthropic_request.tools,
+        request_id=request_id,
+    )
 
     messages = cast(List[ChatCompletionMessageParam], openai_messages)
     tools = cast(Optional[List[ChatCompletionToolParam]], openai_tools)
@@ -177,27 +187,13 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
         )
         response_generator = await client.chat.completions.create(**openai_params)
 
-        duration_ms = (time.time() - start_time) * 1000
-        logger.info(
-            LogRecord(
-                event=LogEvent.REQUEST_COMPLETED.value,
-                message="Streaming request completed",
-                request_id=request_id,
-                data={
-                    "status_code": 200,
-                    "duration_ms": duration_ms,
-                    "input_tokens": estimated_input_tokens,
-                    "output_tokens": "Streaming...",
-                },
-            )
-        )
-
         return StreamingResponse(
             conversion.handle_streaming_response(
                 response_generator,
                 anthropic_request.model,
                 estimated_input_tokens,
                 request_id,
+                start_time,
             ),
             media_type="text/event-stream",
         )

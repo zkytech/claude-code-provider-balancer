@@ -666,10 +666,11 @@ async def handle_streaming_response(
     original_model_name: str,
     initial_input_tokens: int,
     request_id: str,
+    start_time: float,
 ) -> AsyncGenerator[str, None]:
     """
     Consumes an OpenAI stream and yields Anthropic-compatible SSE events.
-    Handles errors gracefully and uses consistent request ID. No token estimation.
+    Handles errors gracefully, uses consistent request ID, and logs final metrics.
     """
     message_id = f"msg_stream_{request_id}_{uuid.uuid4().hex[:8]}"
     final_stop_reason: StopReasonType = None
@@ -678,8 +679,19 @@ async def handle_streaming_response(
     current_tool_calls: Dict[int, Dict[str, str]] = {}
     sent_tool_block_starts = set()
     output_token_count = 0
-    
-    enc = tiktoken.encoding_for_model("gpt-4")
+    status_code = 200
+    final_message = "Streaming request completed successfully"
+    log_event = LogEvent.REQUEST_COMPLETED.value
+
+    try:
+        enc = tiktoken.encoding_for_model("gpt-4")
+    except Exception:
+        logger.warning(LogRecord(
+            event="token_encoder_load_failed",
+            message="Could not load tiktoken encoder gpt-4, using cl100k_base.",
+            request_id=request_id
+        ))
+        enc = tiktoken.get_encoding("cl100k_base")
 
     stop_reason_map: Dict[Optional[str], StopReasonType] = {
         "stop": "end_turn",
@@ -871,15 +883,40 @@ async def handle_streaming_response(
         yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
 
     except Exception as e:
+        status_code = 500
+        log_event = LogEvent.REQUEST_FAILURE.value
         error_type, error_message, provider_details = _get_anthropic_error_details(e)
+        final_message = f"Error during OpenAI stream: {error_message}"
+        final_stop_reason = "error"
 
         logger.error(
             LogRecord(
                 event=LogEvent.STREAM_INTERRUPTED.value,
-                message=f"Error during OpenAI stream: {error_message}",
+                message=final_message,
                 request_id=request_id,
+                data={
+                    "error_type": error_type.value,
+                    "provider_details": provider_details.model_dump() if provider_details else None,
+                }
             ),
             e
         )
         yield _format_anthropic_error_sse(error_type, error_message, provider_details)
-        return
+    finally:
+        duration_ms = (time.time() - start_time) * 1000
+        log_data = {
+            "status_code": status_code,
+            "duration_ms": duration_ms,
+            "input_tokens": initial_input_tokens,
+            "output_tokens": output_token_count,
+            "stop_reason": final_stop_reason,
+        }
+        log_func = logger.info if log_event == LogEvent.REQUEST_COMPLETED.value else logger.error
+        log_func(
+            LogRecord(
+                event=log_event,
+                message=final_message,
+                request_id=request_id,
+                data=log_data,
+            )
+        )
