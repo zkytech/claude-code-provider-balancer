@@ -5,6 +5,7 @@ Removes streaming token estimation. Clarifies ID generation needs.
 """
 
 import json
+import time
 import uuid
 from typing import (Any, AsyncGenerator, Dict, List, Literal, Optional, Tuple,
                     Union)

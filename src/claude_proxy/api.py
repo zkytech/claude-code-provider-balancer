@@ -99,20 +99,6 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
         )
     )
 
-    logger.info(
-        LogRecord(
-            event=LogEvent.REQUEST_START.value,
-            message="Request started",
-            request_id=request_id,
-            data={
-                "client_model": anthropic_request.model,
-                "target_model": target_model,
-                "stream": is_stream,
-                "estimated_input_tokens": estimated_input_tokens,
-            },
-        )
-    )
-
     logger.debug(
         LogRecord(
             event=LogEvent.ANTHROPIC_REQUEST.value,
@@ -139,6 +125,20 @@ async def create_message(request: Request) -> Union[JSONResponse, StreamingRespo
         model_name=anthropic_request.model,
         tools=anthropic_request.tools,
         request_id=request_id,
+    )
+
+    logger.info(
+        LogRecord(
+            event=LogEvent.REQUEST_START.value,
+            message="Request started",
+            request_id=request_id,
+            data={
+                "client_model": anthropic_request.model,
+                "target_model": target_model,
+                "stream": is_stream,
+                "estimated_input_tokens": estimated_input_tokens,
+            },
+        )
     )
 
     messages = cast(List[ChatCompletionMessageParam], openai_messages)
