@@ -733,6 +733,21 @@ async def handle_streaming_response(
 
             if delta.tool_calls:
                 for tool_delta in delta.tool_calls:
+                    logger.debug(
+                        LogRecord(
+                            event=LogEvent.TOOL_HANDLING.value,
+                            request_id=request_id,
+                            message=f"Received tool delta for index {tool_delta.index}",
+                            data={
+                                "index": tool_delta.index,
+                                "id": tool_delta.id,
+                                "function_name": tool_delta.function.name if tool_delta.function else None,
+                                "function_args": tool_delta.function.arguments if tool_delta.function else None,
+                                "current_tool_state": current_tool_calls.get(tool_delta.index),
+                                "start_event_sent": tool_delta.index in sent_tool_block_starts,
+                            }
+                        )
+                    )
                     anthropic_idx = tool_delta.index
 
                     if anthropic_idx not in current_tool_calls:
@@ -746,6 +761,14 @@ async def handle_streaming_response(
                             "name": "",
                             "arguments": "",
                         }
+                        logger.debug(
+                            LogRecord(
+                                event=LogEvent.TOOL_HANDLING.value,
+                                request_id=request_id,
+                                message=f"Initialized state for tool index {anthropic_idx}",
+                                data={"index": anthropic_idx, "state": current_tool_calls[anthropic_idx]}
+                            )
+                        )
                         if not tool_delta.id:
                             logger.error(
                                 LogRecord(
@@ -776,6 +799,14 @@ async def handle_streaming_response(
                         and tool_state["id"]
                         and tool_state["name"]
                     ):
+                        logger.debug(
+                            LogRecord(
+                                event=LogEvent.TOOL_HANDLING.value,
+                                request_id=request_id,
+                                message=f"Sending content_block_start for tool index {anthropic_idx}",
+                                data={"index": anthropic_idx, "tool_id": tool_state['id'], "tool_name": tool_state['name']}
+                            )
+                        )
                         start_tool_block = {
                             "type": "content_block_start",
                             "index": anthropic_idx,
@@ -794,6 +825,14 @@ async def handle_streaming_response(
                         and tool_delta.function.arguments
                         and anthropic_idx in sent_tool_block_starts
                     ):
+                        logger.debug(
+                            LogRecord(
+                                event=LogEvent.TOOL_HANDLING.value,
+                                request_id=request_id,
+                                message=f"Sending content_block_delta (args) for tool index {anthropic_idx}",
+                                data={"index": anthropic_idx, "args_delta": tool_delta.function.arguments}
+                            )
+                        )
                         output_token_count += len(enc.encode(tool_delta.function.arguments))
                         
                         args_delta_event = {
