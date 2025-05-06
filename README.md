@@ -1,6 +1,6 @@
 # Provider Proxy for Claude Code
 
-A proxy service that allows Anthropic API requests to be routed through OpenRouter (or a preferred URL) to access alternative models.
+A proxy service that allows Anthropic API requests to be routed through an OpenAI-compatible URL to access alternative models.
 
 ![Claude Proxy Logo](docs/cover.png)
 
@@ -14,15 +14,9 @@ Key features:
 - Format conversion between Anthropic and OpenAI requests/responses
   (see [mapping](docs/mapping.md) for translation details)
 - Support for both streaming and non-streaming responses
-- Support for provider specific middleware
 - Dynamic model selection based on requested Claude model
 - Detailed request/response logging
 - Token counting
-
-## Work in progress
-
-- Custom system prompt override
-- Disable tools
 
 ## Example
 
@@ -44,8 +38,8 @@ Create a `.env` file with your configuration:
 
 ```env
 OPENROUTER_API_KEY=<key>
-BIG_MODEL_NAME=deepseek/deepseek-chat-v3-0324
-SMALL_MODEL_NAME=openai/gpt-4o-mini
+BIG_MODEL_NAME=google/gemini-2.5-pro-preview
+SMALL_MODEL_NAME=google/gemini-2.0-flash-lite-001
 LOG_LEVEL=DEBUG
 ```
 
@@ -69,7 +63,7 @@ uv run src/main.py
 ### Running Claude Code
 
 ```bash
-ANTHROPIC_BASE_URL=http://localhost:8082 claude
+ANTHROPIC_BASE_URL=http://localhost:8080 claude
 ```
 
 ## Usage

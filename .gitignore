@@ -178,3 +178,5 @@ cython_debug/
 log.jsonl
 .python-version
 .aider*
+
+**/.claude/settings.local.json
