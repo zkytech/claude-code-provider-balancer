@@ -37,7 +37,7 @@ Key features:
 Create a `.env` file with your configuration:
 
 ```env
-OPENROUTER_API_KEY=<key>
+OPENAI_API_KEY=<key>
 BIG_MODEL_NAME=google/gemini-2.5-pro-preview
 SMALL_MODEL_NAME=google/gemini-2.0-flash-lite-001
 LOG_LEVEL=DEBUG
