@@ -44,16 +44,14 @@ class Settings(BaseSettings):
     openai_api_key: str
     big_model_name: str
     small_model_name: str
-    # base_url: str = "https://yibuapi.com/v1"
-    base_url: str = "https://vip.apiyi.com/v1"
+    base_url: str
+    log_level: str
+    log_file_path: str
+    port: int
     referrer_url: str = "http://localhost:8082/claude_proxy"
-
     app_name: str = "AnthropicProxy"
     app_version: str = "0.2.0"
-    log_level: str = "INFO"
-    log_file_path: Optional[str] = "log.jsonl"
     host: str = "127.0.0.1"
-    port: int = 8082
     reload: bool = True
 
 
@@ -1794,45 +1792,31 @@ async def logging_middleware(
 
 
 if __name__ == "__main__":
-    _console.print(
-        r"""[bold blue]
-           /$$                           /$$
-          | $$                          | $$
-  /$$$$$$$| $$  /$$$$$$  /$$   /$$  /$$$$$$$  /$$$$$$         /$$$$$$   /$$$$$$   /$$$$$$  /$$   /$$ /$$   /$$
- /$$_____/| $$ |____  $$| $$  | $$ /$$__  $$ /$$__  $$       /$$__  $$ /$$__  $$ /$$__  $$|  $$ /$$/| $$  | $$
-| $$      | $$  /$$$$$$$| $$  | $$| $$  | $$| $$$$$$$$      | $$  \ $$| $$  \__/| $$  \ $$ \  $$$$/ | $$  | $$
-| $$      | $$ /$$__  $$| $$  | $$| $$  | $$| $$_____/      | $$  | $$| $$      | $$  | $$  >$$  $$ | $$  | $$
-|  $$$$$$$| $$|  $$$$$$$|  $$$$$$/|  $$$$$$$|  $$$$$$$      | $$$$$$$/| $$      |  $$$$$$/ /$$/\  $$|  $$$$$$$
- \_______/|__/ \_______/ \______/  \_______/ \_______/      | $$____/ |__/       \______/ |__/  \__/ \____  $$
-                                                            | $$                                     /$$  | $$
-                                                            | $$                                    |  $$$$$$/
-                                                            |__/                                     \______/
-    [/]""",
-        justify="left",
-    )
     config_details_text = Text.assemble(
-        ("   Version       : ", "default"),
-        (f"v{settings.app_version}", "bold cyan"),
-        ("\n   Big Model     : ", "default"),
-        (settings.big_model_name, "magenta"),
-        ("\n   Small Model   : ", "default"),
-        (settings.small_model_name, "green"),
-        ("\n   Log Level     : ", "default"),
-        (settings.log_level.upper(), "yellow"),
-        ("\n   Log File      : ", "default"),
-        (settings.log_file_path or "Disabled", "dim"),
-        ("\n   Listening on  : ", "default"),
-        (f"http://{settings.host}:{settings.port}", "bold white"),
-        ("\n   Reload        : ", "default"),
-        ("Enabled", "bold orange1") if settings.reload else ("Disabled", "dim"),
+      ("   Version       : ", "default"),
+      (f"v{settings.app_version}", "bold cyan"),
+      ("\n   Base URL      : ", "default"),
+      (settings.base_url, "bold white"),
+      ("\n   Big Model     : ", "default"),
+      (settings.big_model_name, "magenta"),
+      ("\n   Small Model   : ", "default"),
+      (settings.small_model_name, "green"),
+      ("\n   Log Level     : ", "default"),
+      (settings.log_level.upper(), "yellow"),
+      ("\n   Log File      : ", "default"),
+      (settings.log_file_path or "Disabled", "dim"),
+      ("\n   Listening on  : ", "default"),
+      (f"http://{settings.host}:{settings.port}", "bold white"),
+      ("\n   Reload        : ", "default"),
+      ("Enabled", "bold orange1") if settings.reload else ("Disabled", "dim")
     )
     _console.print(
-        Panel(
-            config_details_text,
-            title="Anthropic Proxy Configuration",
-            border_style="blue",
-            expand=False,
-        )
+      Panel(
+        config_details_text,
+        title="Anthropic Proxy Configuration",
+        border_style="blue",
+        expand=False,
+      )
     )
     _console.print(Rule("Starting Uvicorn server...", style="dim blue"))
 
