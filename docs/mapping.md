@@ -244,8 +244,8 @@ This is critical for multi-turn tool use:
 | `{"type": "auto"}` (or omitted)             | `"auto"` (or omitted)       | Model decides whether to call a function and which one. (Default behavior for both).                      |
 | `{"type": "any"}`                           | `"auto"`                    | Force the model to use *any* available tool. OpenAI has no direct equivalent. Map to `"auto"` and potentially add instructions in the system prompt (e.g., "You must use a tool if appropriate"). |
 | `{"type": "tool", "name": "tool_name"}`     | `{"name": "tool_name"}`     | Force the model to call the specified tool/function.                                                    |
+| `{"type": "none"}`                          | `"none"`                    | Explicitly prevent the model from using any tools/functions.                                            |
 | Omitted / Default                           | Omitted / Default (`"auto"`) | If Anthropic `tool_choice` is not provided, use OpenAI's default (`"auto"`).                             |
-| *(Note: Anthropic also has a "none" type implied by omitting tools)* | `"none"` | If no tools are provided, or if explicit prevention is needed, OpenAI can use `"none"`. This doesn't seem to directly map from an Anthropic option but might be needed for specific proxy logic. |
 
 
 ---

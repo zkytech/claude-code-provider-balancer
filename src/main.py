@@ -44,15 +44,16 @@ class Settings(BaseSettings):
     openai_api_key: str
     big_model_name: str
     small_model_name: str
-    base_url: str = "https://openrouter.ai/api/v1"
-    referrer_url: str = "http://localhost:8080/claude_proxy"
+    # base_url: str = "https://yibuapi.com/v1"
+    base_url: str = "https://vip.apiyi.com/v1"
+    referrer_url: str = "http://localhost:8082/claude_proxy"
 
     app_name: str = "AnthropicProxy"
     app_version: str = "0.2.0"
     log_level: str = "INFO"
     log_file_path: Optional[str] = "log.jsonl"
     host: str = "127.0.0.1"
-    port: int = 8080
+    port: int = 8082
     reload: bool = True
 
 
@@ -299,7 +300,7 @@ class Tool(BaseModel):
 
 
 class ToolChoice(BaseModel):
-    type: Literal["auto", "any", "tool"]
+    type: Literal["auto", "any", "tool", "none"]
     name: Optional[str] = None
 
 
@@ -903,6 +904,8 @@ def convert_anthropic_tool_choice_to_openai(
             )
         )
         return "auto"
+    if anthropic_choice.type == "none":
+        return "none"
     if anthropic_choice.type == "tool" and anthropic_choice.name:
         return {"type": "function", "function": {"name": anthropic_choice.name}}
 
@@ -1803,7 +1806,7 @@ if __name__ == "__main__":
  \_______/|__/ \_______/ \______/  \_______/ \_______/      | $$____/ |__/       \______/ |__/  \__/ \____  $$
                                                             | $$                                     /$$  | $$
                                                             | $$                                    |  $$$$$$/
-                                                            |__/                                     \______/ 
+                                                            |__/                                     \______/
     [/]""",
         justify="left",
     )
