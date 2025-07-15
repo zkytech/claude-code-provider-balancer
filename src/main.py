@@ -292,6 +292,7 @@ class LogEvent(enum.Enum):
     PARAMETER_UNSUPPORTED = "parameter_unsupported"
     HEALTH_CHECK = "health_check"
     PROVIDER_ERROR_DETAILS = "provider_error_details"
+    REQUEST_RECEIVED = "request_received"
 
 
 
@@ -580,10 +581,10 @@ def extract_provider_error_details(
 
 # Multi-provider client management
 
-async def make_provider_request(provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, stream: bool = False) -> Union[httpx.Response, Dict[str, Any]]:
+async def make_provider_request(provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
     """Make a request to a specific provider"""
     url = provider_manager.get_request_url(provider, endpoint)
-    headers = provider_manager.get_provider_headers(provider)
+    headers = provider_manager.get_provider_headers(provider, original_headers)
     timeout = provider_manager.get_request_timeout()
     
     debug(
@@ -591,34 +592,132 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
             event="provider_request",
             message=f"Making request to provider: {provider.name}",
             request_id=request_id,
-            data={"provider": provider.name, "url": url, "type": provider.type.value}
+            data={"provider": provider.name, "url": url, "type": provider.type.value, "headers": {k: v for k, v in headers.items() if k.lower() not in ['authorization', 'x-api-key']}}
         )
     )
     
     async with httpx.AsyncClient(timeout=timeout) as client:
         if stream:
             response = await client.post(url, json=data, headers=headers)
+            # 在流式请求中，检查错误状态并记录详细信息
+            if response.status_code >= 400:
+                try:
+                    error_text = response.text
+                    if not error_text:
+                        error_text = "Empty response body"
+                    error_text = error_text[:1000]  # 限制长度
+                except Exception:
+                    error_text = "Failed to read response text"
+                    
+                error(
+                    LogRecord(
+                        event="provider_http_error",
+                        message=f"HTTP {response.status_code} error from provider: {provider.name}",
+                        request_id=request_id,
+                        data={
+                            "provider": provider.name,
+                            "status_code": response.status_code,
+                            "content_type": response.headers.get("content-type", "unknown"),
+                            "response_text": error_text,
+                            "url": url,
+                            "content_length": len(response.content)
+                        }
+                    )
+                )
             response.raise_for_status()
             return response
         else:
             response = await client.post(url, json=data, headers=headers)
+            
+            # 记录响应状态和内容类型以便调试
+            debug(
+                LogRecord(
+                    event="provider_response",
+                    message=f"Received response from provider: {provider.name}",
+                    request_id=request_id,
+                    data={
+                        "provider": provider.name,
+                        "status_code": response.status_code,
+                        "content_type": response.headers.get("content-type", "unknown"),
+                        "content_length": len(response.content)
+                    }
+                )
+            )
+            
+            # 在非流式请求中，检查错误状态并记录详细信息
+            if response.status_code >= 400:
+                try:
+                    error_text = response.text
+                    if not error_text:
+                        error_text = "Empty response body"
+                    error_text = error_text[:1000]  # 限制长度
+                except Exception:
+                    error_text = "Failed to read response text"
+                    
+                error(
+                    LogRecord(
+                        event="provider_http_error",
+                        message=f"HTTP {response.status_code} error from provider: {provider.name}",
+                        request_id=request_id,
+                        data={
+                            "provider": provider.name,
+                            "status_code": response.status_code,
+                            "content_type": response.headers.get("content-type", "unknown"),
+                            "response_text": error_text,
+                            "url": url,
+                            "content_length": len(response.content)
+                        }
+                    )
+                )
+            
             response.raise_for_status()
-            return response.json()
+            
+            try:
+                return response.json()
+            except json.JSONDecodeError as e:
+                # 记录响应内容以便调试
+                response_text = response.text[:1000]  # 限制长度避免日志过长
+                error(
+                    LogRecord(
+                        event="json_parse_error",
+                        message=f"Failed to parse JSON response from provider: {provider.name}",
+                        request_id=request_id,
+                        data={
+                            "provider": provider.name,
+                            "status_code": response.status_code,
+                            "content_type": response.headers.get("content-type", "unknown"),
+                            "response_text": response_text,
+                            "error": str(e)
+                        }
+                    ),
+                    exc=e
+                )
+                raise e
 
-async def make_anthropic_request(provider: Provider, messages_data: Dict[str, Any], request_id: str, stream: bool = False) -> Union[httpx.Response, Dict[str, Any]]:
+async def make_anthropic_request(provider: Provider, messages_data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
     """Make a request to an Anthropic-compatible provider"""
-    return await make_provider_request(provider, "v1/messages", messages_data, request_id, stream)
+    return await make_provider_request(provider, "v1/messages", messages_data, request_id, stream, original_headers)
 
-async def make_openai_request(provider: Provider, openai_params: Dict[str, Any], request_id: str, stream: bool = False) -> Any:
+async def make_openai_request(provider: Provider, openai_params: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Any:
     """Make a request to an OpenAI-compatible provider using openai client"""
     try:
+        # 准备默认头部
+        default_headers = {
+            "HTTP-Referer": settings.referrer_url,
+            "X-Title": settings.app_name,
+        }
+        
+        # 如果提供了原始请求头，合并它们（排除需要替换的头部）
+        if original_headers:
+            for key, value in original_headers.items():
+                # 跳过需要替换的认证相关头部、host头部和content-length头部
+                if key.lower() not in ['authorization', 'x-api-key', 'host', 'content-length']:
+                    default_headers[key] = value
+        
         client = openai.AsyncClient(
             api_key=provider.auth_value,
             base_url=provider.base_url,
-            default_headers={
-                "HTTP-Referer": settings.referrer_url,
-                "X-Title": settings.app_name,
-            },
+            default_headers=default_headers,
             timeout=provider_manager.get_request_timeout(),
         )
         
@@ -1693,6 +1792,23 @@ async def create_message_proxy(
     request.state.request_id = request_id
     request.state.start_time_monotonic = time.monotonic()
 
+    # 打印所有的 request头信息
+    debug(
+        LogRecord(
+            LogEvent.REQUEST_RECEIVED.value,
+            "Received new request",
+            request_id,
+            {
+                "headers": dict(request.headers),
+                "client_ip": request.client.host if request.client else "unknown",
+                "user_agent": request.headers.get("user-agent", "unknown"),
+            },
+        )
+    )
+
+    # 提取原始请求头
+    original_headers = dict(request.headers)
+    
     try:
         raw_body = await request.json()
         debug(
@@ -1793,7 +1909,7 @@ async def create_message_proxy(
                         )
                     )
                     anthropic_response = await make_anthropic_request(
-                        current_provider, anthropic_data, request_id, stream=True
+                        current_provider, anthropic_data, request_id, stream=True, original_headers=original_headers
                     )
                     # Handle Anthropic streaming response directly
                     async def anthropic_stream_generator():
@@ -1819,7 +1935,7 @@ async def create_message_proxy(
                         )
                     )
                     anthropic_response_data = await make_anthropic_request(
-                        current_provider, anthropic_data, request_id, stream=False
+                        current_provider, anthropic_data, request_id, stream=False, original_headers=original_headers
                     )
                     
                     duration_ms = (time.monotonic() - request.state.start_time_monotonic) * 1000
@@ -1896,7 +2012,7 @@ async def create_message_proxy(
                         )
                     )
                     openai_stream_response = await make_openai_request(
-                        current_provider, openai_params, request_id, stream=True
+                        current_provider, openai_params, request_id, stream=True, original_headers=original_headers
                     )
                     provider_manager.mark_provider_success(current_provider)
                     return StreamingResponse(
@@ -1918,7 +2034,7 @@ async def create_message_proxy(
                         )
                     )
                     openai_response_obj = await make_openai_request(
-                        current_provider, openai_params, request_id, stream=False
+                        current_provider, openai_params, request_id, stream=False, original_headers=original_headers
                     )
 
                     debug(

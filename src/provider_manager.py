@@ -161,11 +161,18 @@ class ProviderManager:
         """Mark a provider as successful"""
         provider.mark_success()
     
-    def get_provider_headers(self, provider: Provider) -> Dict[str, str]:
-        """Get authentication headers for a provider"""
+    def get_provider_headers(self, provider: Provider, original_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        """Get authentication headers for a provider, optionally merging with original headers"""
         headers = {
             "Content-Type": "application/json"
         }
+        
+        # 如果提供了原始请求头，先复制它们（排除需要替换的认证头、host头和content-length头）
+        if original_headers:
+            for key, value in original_headers.items():
+                # 跳过需要替换的认证相关头部、host头部和content-length头部
+                if key.lower() not in ['authorization', 'x-api-key', 'host', 'content-length']:
+                    headers[key] = value
         
         if provider.auth_type == AuthType.API_KEY:
             if provider.type == ProviderType.ANTHROPIC:
@@ -178,6 +185,15 @@ class ProviderManager:
             headers["Authorization"] = f"Bearer {provider.auth_value}"
             if provider.type == ProviderType.ANTHROPIC:
                 headers["anthropic-version"] = "2023-06-01"
+        
+        # 为anyrouter等服务商添加更多类似Claude Code的头部（如果原始头部中没有的话）
+        if provider.name == "anyrouter":
+            if "User-Agent" not in headers:
+                headers["User-Agent"] = "claude-cli/1.0.52 (external, cli)"
+            if "Accept" not in headers:
+                headers["Accept"] = "application/json"
+            if "Accept-Encoding" not in headers:
+                headers["Accept-Encoding"] = "gzip, deflate, br"
         
         return headers
     

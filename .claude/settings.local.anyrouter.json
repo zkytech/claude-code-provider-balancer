@@ -1,0 +1,36 @@
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "sk-b212WsB0iDyFymUKi4QYTE8g4lwVRS7FOJA2Gyf951GxpH01",
+    "ANTHROPIC_BASE_URL": "https://anyrouter.top"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(curl:*)",
+      "Bash(rg:*)",
+      "Bash(grep:*)",
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(timeout:*)",
+      "Bash(chmod:*)",
+      "Bash(mv:*)",
+      "Bash(bash:*)",
+      "Bash(export:*)",
+      "Bash(pytest:*)",
+      "Bash(source:*)",
+      "Bash(cat:*)",
+      "Bash(mkdir:*)",
+      "Bash(cargo check:*)",
+      "Bash(yarn build)",
+      "Bash(yarn collect:*)",
+      "Bash(yarn analyze)",
+      "Bash(pip install:*)",
+      "Bash(rm:*)",
+      "Bash(npx ts-node:*)",
+      "Bash(yarn dev)",
+      "Bash(./scripts/switch_version.sh:*)"
+    ],
+    "deny": []
+  }
+}
