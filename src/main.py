@@ -1467,7 +1467,7 @@ app = fastapi.FastAPI(
 )
 
 
-def select_target_model_and_provider(client_model_name: str, request_id: str) -> Tuple[str, Provider]:
+def select_target_model_and_provider(client_model_name: str, request_id: str) -> Optional[Tuple[str, Provider]]:
     """Selects the target model and provider based on the client's request."""
     if not provider_manager:
         raise RuntimeError("Provider manager not initialized")
@@ -1476,7 +1476,7 @@ def select_target_model_and_provider(client_model_name: str, request_id: str) ->
     if not current_provider:
         healthy_providers = provider_manager.get_healthy_providers()
         if not healthy_providers:
-            raise RuntimeError("No healthy providers available")
+            return None  # No healthy providers available
         current_provider = healthy_providers[0]
         provider_manager.current_provider_index = provider_manager.providers.index(current_provider)
     
@@ -1644,7 +1644,19 @@ async def create_message_proxy(
         )
 
     is_stream = anthropic_request.stream or False
-    target_model_name, current_provider = select_target_model_and_provider(anthropic_request.model, request_id)
+    provider_result = select_target_model_and_provider(anthropic_request.model, request_id)
+    
+    if provider_result is None:
+        # No healthy providers available
+        return await _log_and_return_error_response(
+            request,
+            503,
+            AnthropicErrorType.API_ERROR,
+            "All providers are currently unavailable. Please try again later.",
+            caught_exception=None,
+        )
+    
+    target_model_name, current_provider = provider_result
 
     estimated_input_tokens = count_tokens_for_anthropic_request(
         messages=anthropic_request.messages,
