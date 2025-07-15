@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import traceback
 import uuid
@@ -81,6 +82,10 @@ except Exception as e:
 
 _console = Console()
 _error_console = Console(stderr=True, style="bold red")
+
+# Recursion protection for exception handling
+_exception_handler_lock = threading.RLock()
+_exception_handler_depth = threading.local()
 
 
 class JSONFormatter(logging.Formatter):
@@ -228,21 +233,42 @@ if settings.log_file_path:
 
 
 def _log(level: int, record: LogRecord, exc: Optional[Exception] = None) -> None:
-    if exc:
-        record.error = LogError(
-            name=type(exc).__name__,
-            message=str(exc),
-            stack_trace="".join(
-                traceback.format_exception(type(exc), exc, exc.__traceback__)
-            ),
-            args=exc.args if hasattr(exc, "args") else tuple(),
-        )
-        if not record.message and str(exc):
-            record.message = str(exc)
-        elif not record.message:
-            record.message = "An unspecified error occurred"
+    try:
+        if exc:
+            try:
+                record.error = LogError(
+                    name=type(exc).__name__,
+                    message=str(exc),
+                    stack_trace="".join(
+                        traceback.format_exception(type(exc), exc, exc.__traceback__)
+                    ),
+                    args=exc.args if hasattr(exc, "args") else tuple(),
+                )
+            except Exception:
+                # If error processing fails, create minimal error info
+                record.error = LogError(
+                    name="ProcessingError",
+                    message="Error occurred during exception processing",
+                    stack_trace="",
+                    args=tuple(),
+                )
+            
+            if not record.message and str(exc):
+                try:
+                    record.message = str(exc)
+                except Exception:
+                    record.message = "An error occurred but message could not be extracted"
+            elif not record.message:
+                record.message = "An unspecified error occurred"
 
-    _logger.log(level=level, msg=record.message, extra={"log_record": record})
+        _logger.log(level=level, msg=record.message, extra={"log_record": record})
+    except Exception:
+        # Last resort: use standard Python logging without custom formatting
+        try:
+            import logging as std_logging
+            std_logging.getLogger("fallback").log(level, f"Log error: {record.message}")
+        except Exception:
+            pass  # Silent failure to prevent infinite recursion
 
 
 def debug(record: LogRecord):
@@ -258,9 +284,21 @@ def warning(record: LogRecord, exc: Optional[Exception] = None):
 
 
 def error(record: LogRecord, exc: Optional[Exception] = None):
-    if exc:
-        _error_console.print_exception(show_locals=False, width=120)
-    _log(logging.ERROR, record, exc=exc)
+    try:
+        if exc:
+            try:
+                _error_console.print_exception(show_locals=False, width=120)
+            except Exception:
+                # If console printing fails, continue with logging
+                pass
+        _log(logging.ERROR, record, exc=exc)
+    except Exception:
+        # Last resort: use standard Python logging
+        try:
+            import logging as std_logging
+            std_logging.getLogger("fallback").error(f"Error logging failed: {record.message}")
+        except Exception:
+            pass  # Silent failure to prevent infinite recursion
 
 
 def critical(record: LogRecord, exc: Optional[Exception] = None):
@@ -1468,25 +1506,42 @@ def _build_anthropic_error_response(
     provider_details: Optional[ProviderErrorMetadata] = None,
 ) -> JSONResponse:
     """Creates a JSONResponse with Anthropic-formatted error."""
-    err_detail = AnthropicErrorDetail(type=error_type, message=message)
-    if provider_details:
-        err_detail.provider = provider_details.provider_name
-        if provider_details.raw_error:
-            if isinstance(provider_details.raw_error, dict):
-                prov_err_obj = provider_details.raw_error.get("error")
-                if isinstance(prov_err_obj, dict):
-                    err_detail.provider_message = prov_err_obj.get("message")
-                    err_detail.provider_code = prov_err_obj.get("code")
-                elif isinstance(provider_details.raw_error.get("message"), str):
-                    err_detail.provider_message = provider_details.raw_error.get(
-                        "message"
-                    )
-                    err_detail.provider_code = provider_details.raw_error.get("code")
+    try:
+        err_detail = AnthropicErrorDetail(type=error_type, message=message)
+        if provider_details:
+            try:
+                err_detail.provider = provider_details.provider_name
+                if provider_details.raw_error:
+                    if isinstance(provider_details.raw_error, dict):
+                        prov_err_obj = provider_details.raw_error.get("error")
+                        if isinstance(prov_err_obj, dict):
+                            err_detail.provider_message = prov_err_obj.get("message")
+                            err_detail.provider_code = prov_err_obj.get("code")
+                        elif isinstance(provider_details.raw_error.get("message"), str):
+                            err_detail.provider_message = provider_details.raw_error.get(
+                                "message"
+                            )
+                            err_detail.provider_code = provider_details.raw_error.get("code")
+            except Exception:
+                # If provider details processing fails, continue with basic error
+                pass
 
-    error_resp_model = AnthropicErrorResponse(error=err_detail)
-    return JSONResponse(
-        status_code=status_code, content=error_resp_model.model_dump(exclude_unset=True)
-    )
+        error_resp_model = AnthropicErrorResponse(error=err_detail)
+        return JSONResponse(
+            status_code=status_code, content=error_resp_model.model_dump(exclude_unset=True)
+        )
+    except Exception:
+        # Emergency fallback - return minimal JSON response
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                "type": "error",
+                "error": {
+                    "type": error_type.value if hasattr(error_type, 'value') else "api_error",
+                    "message": message if isinstance(message, str) else "Internal server error"
+                }
+            }
+        )
 
 
 async def _log_and_return_error_response(
@@ -1497,32 +1552,52 @@ async def _log_and_return_error_response(
     provider_details: Optional[ProviderErrorMetadata] = None,
     caught_exception: Optional[Exception] = None,
 ) -> JSONResponse:
-    request_id = getattr(request.state, "request_id", "unknown")
-    start_time_mono = getattr(request.state, "start_time_monotonic", time.monotonic())
-    duration_ms = (time.monotonic() - start_time_mono) * 1000
+    try:
+        request_id = getattr(request.state, "request_id", "unknown")
+        start_time_mono = getattr(request.state, "start_time_monotonic", time.monotonic())
+        duration_ms = (time.monotonic() - start_time_mono) * 1000
 
-    log_data = {
-        "status_code": status_code,
-        "duration_ms": duration_ms,
-        "error_type": anthropic_error_type.value,
-        "client_ip": request.client.host if request.client else "unknown",
-    }
-    if provider_details:
-        log_data["provider_name"] = provider_details.provider_name
-        log_data["provider_raw_error"] = provider_details.raw_error
+        log_data = {
+            "status_code": status_code,
+            "duration_ms": duration_ms,
+            "error_type": anthropic_error_type.value,
+            "client_ip": request.client.host if request.client else "unknown",
+        }
+        if provider_details:
+            log_data["provider_name"] = provider_details.provider_name
+            log_data["provider_raw_error"] = provider_details.raw_error
 
-    error(
-        LogRecord(
-            event=LogEvent.REQUEST_FAILURE.value,
-            message=f"Request failed: {error_message}",
-            request_id=request_id,
-            data=log_data,
-        ),
-        exc=caught_exception,
-    )
-    return _build_anthropic_error_response(
-        anthropic_error_type, error_message, status_code, provider_details
-    )
+        # Protected error logging
+        try:
+            error(
+                LogRecord(
+                    event=LogEvent.REQUEST_FAILURE.value,
+                    message=f"Request failed: {error_message}",
+                    request_id=request_id,
+                    data=log_data,
+                ),
+                exc=caught_exception,
+            )
+        except Exception:
+            # If logging fails, continue with response generation
+            pass
+        
+        return _build_anthropic_error_response(
+            anthropic_error_type, error_message, status_code, provider_details
+        )
+    except Exception:
+        # Emergency fallback - return minimal response
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            content={
+                "type": "error",
+                "error": {
+                    "type": "api_error",
+                    "message": "Internal server error"
+                }
+            },
+            status_code=500
+        )
 
 
 @app.post("/v1/messages", response_model=None, tags=["API"], status_code=200)
@@ -1942,45 +2017,183 @@ async def reload_providers_config() -> JSONResponse:
 
 @app.exception_handler(openai.APIError)
 async def openai_api_error_handler(request: Request, exc: openai.APIError):
-    err_type, err_msg, err_status, prov_details = _get_anthropic_error_details_from_exc(
-        exc
-    )
-    return await _log_and_return_error_response(
-        request, err_status, err_type, err_msg, prov_details, exc
-    )
+    # Recursion protection
+    if not hasattr(_exception_handler_depth, 'value'):
+        _exception_handler_depth.value = 0
+    
+    with _exception_handler_lock:
+        if _exception_handler_depth.value >= 3:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": "API error - recursion protection activated"
+                    }
+                },
+                status_code=500
+            )
+        
+        _exception_handler_depth.value += 1
+        try:
+            err_type, err_msg, err_status, prov_details = _get_anthropic_error_details_from_exc(
+                exc
+            )
+            return await _log_and_return_error_response(
+                request, err_status, err_type, err_msg, prov_details, exc
+            )
+        except Exception:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": "API error handling failed"
+                    }
+                },
+                status_code=500
+            )
+        finally:
+            _exception_handler_depth.value -= 1
 
 
 @app.exception_handler(ValidationError)
 async def pydantic_validation_error_handler(request: Request, exc: ValidationError):
-    return await _log_and_return_error_response(
-        request,
-        422,
-        AnthropicErrorType.INVALID_REQUEST,
-        f"Validation error: {exc.errors()}",
-        caught_exception=exc,
-    )
+    # Recursion protection
+    if not hasattr(_exception_handler_depth, 'value'):
+        _exception_handler_depth.value = 0
+    
+    with _exception_handler_lock:
+        if _exception_handler_depth.value >= 3:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": "Validation error - recursion protection activated"
+                    }
+                },
+                status_code=422
+            )
+        
+        _exception_handler_depth.value += 1
+        try:
+            return await _log_and_return_error_response(
+                request,
+                422,
+                AnthropicErrorType.INVALID_REQUEST,
+                f"Validation error: {exc.errors()}",
+                caught_exception=exc,
+            )
+        except Exception:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": "Validation error handling failed"
+                    }
+                },
+                status_code=422
+            )
+        finally:
+            _exception_handler_depth.value -= 1
 
 
 @app.exception_handler(json.JSONDecodeError)
 async def json_decode_error_handler(request: Request, exc: json.JSONDecodeError):
-    return await _log_and_return_error_response(
-        request,
-        400,
-        AnthropicErrorType.INVALID_REQUEST,
-        "Invalid JSON format.",
-        caught_exception=exc,
-    )
+    # Recursion protection
+    if not hasattr(_exception_handler_depth, 'value'):
+        _exception_handler_depth.value = 0
+    
+    with _exception_handler_lock:
+        if _exception_handler_depth.value >= 3:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": "JSON decode error - recursion protection activated"
+                    }
+                },
+                status_code=400
+            )
+        
+        _exception_handler_depth.value += 1
+        try:
+            return await _log_and_return_error_response(
+                request,
+                400,
+                AnthropicErrorType.INVALID_REQUEST,
+                "Invalid JSON format.",
+                caught_exception=exc,
+            )
+        except Exception:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": "JSON decode error handling failed"
+                    }
+                },
+                status_code=400
+            )
+        finally:
+            _exception_handler_depth.value -= 1
 
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
-    return await _log_and_return_error_response(
-        request,
-        500,
-        AnthropicErrorType.API_ERROR,
-        "An unexpected internal server error occurred.",
-        caught_exception=exc,
-    )
+    # Recursion protection
+    if not hasattr(_exception_handler_depth, 'value'):
+        _exception_handler_depth.value = 0
+    
+    with _exception_handler_lock:
+        if _exception_handler_depth.value >= 3:  # Allow max 3 levels of recursion
+            # Emergency fallback - return minimal response without logging
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": "Internal server error - recursion protection activated"
+                    }
+                },
+                status_code=500
+            )
+        
+        _exception_handler_depth.value += 1
+        try:
+            return await _log_and_return_error_response(
+                request,
+                500,
+                AnthropicErrorType.API_ERROR,
+                "An unexpected internal server error occurred.",
+                caught_exception=exc,
+            )
+        except Exception as nested_exc:
+            # If error handling itself fails, return minimal response
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": "Internal server error - error handling failed"
+                    }
+                },
+                status_code=500
+            )
+        finally:
+            _exception_handler_depth.value -= 1
 
 
 @app.middleware("http")
