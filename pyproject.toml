@@ -1,5 +1,5 @@
 [project]
-name = "claude-code-provider-proxy"
+name = "claude-code-provider-balancer"
 version = "0.1.0"
 description = "Proxy that translates between Anthropic API and OpenAI/LiteLLM"
 readme = "README.md"
@@ -13,6 +13,7 @@ dependencies = [
     "openai>=1.68.2",
     "pydantic-settings>=2.8.1",
     "tiktoken>=0.9.0",
+    "pyyaml>=6.0.0",
 ]
 
 [tool.pytest.ini_options]
@@ -42,4 +43,3 @@ known-first-party = ["claude_proxy"]
 strict = true
 ignore_missing_imports = true
 plugins = ['pydantic.mypy']
-

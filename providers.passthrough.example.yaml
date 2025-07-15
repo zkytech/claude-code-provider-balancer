@@ -1,0 +1,107 @@
+# Claude Code Provider Balancer Configuration - Passthrough Mode Examples
+# 透传模式示例配置文件
+
+providers:
+  # 示例1：完全透传模式 - 所有模型请求都透传原始名称
+  - name: "full_passthrough"
+    type: "anthropic"
+    base_url: "https://api.anthropic.com"
+    auth_type: "api_key"
+    auth_value: "sk-ant-your-key-here"
+    big_model: "passthrough"     # 大模型请求透传
+    small_model: "passthrough"   # 小模型请求透传
+    enabled: true
+    
+  # 示例2：部分透传模式 - 只有大模型透传，小模型使用固定配置
+  - name: "big_model_passthrough"
+    type: "anthropic"
+    base_url: "https://claude-api-provider.com"
+    auth_type: "api_key"
+    auth_value: "sk-ant-another-key"
+    big_model: "passthrough"                    # 大模型透传
+    small_model: "claude-3-5-haiku-20241022"    # 小模型使用固定配置
+    enabled: true
+    
+  # 示例3：小模型透传模式 - 只有小模型透传，大模型使用固定配置
+  - name: "small_model_passthrough"
+    type: "anthropic"
+    base_url: "https://another-claude-provider.com"
+    auth_type: "auth_token"
+    auth_value: "your-auth-token-here"
+    big_model: "claude-3-5-sonnet-20241022"     # 大模型使用固定配置
+    small_model: "passthrough"                  # 小模型透传
+    enabled: true
+    
+  # 示例4：OpenAI兼容服务商的透传模式
+  - name: "openai_passthrough"
+    type: "openai"
+    base_url: "https://api.openrouter.ai/v1"
+    auth_type: "api_key"
+    auth_value: "sk-or-your-openrouter-key"
+    big_model: "passthrough"     # 支持各种大模型透传
+    small_model: "passthrough"   # 支持各种小模型透传
+    enabled: true
+    
+  # 示例5：DeepSeek透传模式
+  - name: "deepseek_passthrough"
+    type: "openai"
+    base_url: "https://api.deepseek.com/v1"
+    auth_type: "api_key"
+    auth_value: "sk-your-deepseek-key"
+    big_model: "passthrough"     # 可以透传不同版本的deepseek模型
+    small_model: "deepseek-chat" # 小模型使用标准配置
+    enabled: true
+    
+  # 示例6：传统模式（非透传）- 作为对比
+  - name: "traditional_mode"
+    type: "anthropic"
+    base_url: "https://traditional-provider.com"
+    auth_type: "api_key"
+    auth_value: "sk-traditional-key"
+    big_model: "claude-3-5-sonnet-20241022"     # 大模型固定配置
+    small_model: "claude-3-5-haiku-20241022"    # 小模型固定配置
+    enabled: false  # 默认禁用，需要时启用
+
+# 全局设置
+settings:
+  # 故障服务商的冷却时间（秒）
+  failure_cooldown: 60
+  # 请求超时时间（秒）
+  request_timeout: 30
+  # 日志级别
+  log_level: "DEBUG"
+  # 服务器配置
+  host: "127.0.0.1"
+  port: 8080
+  # 应用信息
+  app_name: "Claude Code Provider Balancer"
+  app_version: "0.3.0"
+
+# 透传模式使用说明：
+# 
+# 1. 完全透传模式 (full_passthrough):
+#    - 客户端请求 "claude-3-5-sonnet-20241022" → 转发 "claude-3-5-sonnet-20241022"
+#    - 客户端请求 "claude-3-opus-20240229" → 转发 "claude-3-opus-20240229"
+#    - 客户端请求 "claude-3-5-haiku-20241022" → 转发 "claude-3-5-haiku-20241022"
+#    - 客户端请求 "custom-model" → 转发 "custom-model"
+#
+# 2. 大模型透传模式 (big_model_passthrough):
+#    - 客户端请求 "claude-3-5-sonnet-20241022" → 转发 "claude-3-5-sonnet-20241022"
+#    - 客户端请求 "claude-3-opus-20240229" → 转发 "claude-3-opus-20240229"
+#    - 客户端请求 "claude-3-5-haiku-20241022" → 转发 "claude-3-5-haiku-20241022" (固定)
+#    - 客户端请求 "unknown-model" → 转发 "unknown-model" (作为大模型处理)
+#
+# 3. 小模型透传模式 (small_model_passthrough):
+#    - 客户端请求 "claude-3-5-sonnet-20241022" → 转发 "claude-3-5-sonnet-20241022" (固定)
+#    - 客户端请求 "claude-3-5-haiku-20241022" → 转发 "claude-3-5-haiku-20241022"
+#    - 客户端请求 "claude-3-haiku-custom" → 转发 "claude-3-haiku-custom"
+#
+# 4. 测试命令示例:
+#    curl -X POST http://localhost:8080/v1/messages \
+#      -H "Content-Type: application/json" \
+#      -H "x-api-key: your-key" \
+#      -d '{
+#        "model": "claude-3-5-sonnet-20241022",
+#        "max_tokens": 100,
+#        "messages": [{"role": "user", "content": "Hello"}]
+#      }'

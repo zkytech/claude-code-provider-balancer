@@ -21,6 +21,7 @@ import fastapi
 import openai
 import tiktoken
 import uvicorn
+import httpx
 from dotenv import load_dotenv
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -33,29 +34,49 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 
+from provider_manager import ProviderManager, Provider, ProviderType
+
 load_dotenv()
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+    """Application settings loaded from environment variables and provider config."""
 
     model_config = SettingsConfigDict(env_file="../../.env", extra="ignore")
 
-    openai_api_key: str
-    big_model_name: str
-    small_model_name: str
-    base_url: str
-    log_level: str
-    log_file_path: str
-    port: int
+    # Optional environment overrides
+    log_level: str = "INFO"
+    log_file_path: str = ""
+    providers_config_path: str = "providers.yaml"
     referrer_url: str = "http://localhost:8082/claude_proxy"
-    app_name: str = "AnthropicProxy"
-    app_version: str = "0.2.0"
-    host: str = "127.0.0.1"
     reload: bool = True
 
+    # These will be loaded from provider config
+    host: str = "127.0.0.1"
+    port: int = 8080
+    app_name: str = "Claude Code Provider Balancer"
+    app_version: str = "0.3.0"
 
-settings = Settings()
+
+# Initialize provider manager and settings
+try:
+    provider_manager = ProviderManager()
+    settings = Settings()
+    
+    # Override with provider config settings if available
+    provider_settings = provider_manager.settings
+    if provider_settings:
+        settings.host = provider_settings.get('host', settings.host)
+        settings.port = provider_settings.get('port', settings.port)
+        settings.log_level = provider_settings.get('log_level', settings.log_level)
+        settings.app_name = provider_settings.get('app_name', settings.app_name)
+        settings.app_version = provider_settings.get('app_version', settings.app_version)
+except Exception as e:
+    # Fallback to basic settings if provider config fails
+    print(f"Warning: Failed to load provider configuration: {e}")
+    print("Using basic settings...")
+    provider_manager = None
+    settings = Settings()
 
 
 _console = Console()
@@ -438,25 +459,68 @@ def extract_provider_error_details(
     )
 
 
-try:
-    openai_client = openai.AsyncClient(
-        api_key=settings.openai_api_key,
-        base_url=settings.base_url,
-        default_headers={
-            "HTTP-Referer": settings.referrer_url,
-            "X-Title": settings.app_name,
-        },
-        timeout=180.0,
+# Multi-provider client management
+
+async def make_provider_request(provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, stream: bool = False) -> Union[httpx.Response, Dict[str, Any]]:
+    """Make a request to a specific provider"""
+    url = provider_manager.get_request_url(provider, endpoint)
+    headers = provider_manager.get_provider_headers(provider)
+    timeout = provider_manager.get_request_timeout()
+    
+    debug(
+        LogRecord(
+            event="provider_request",
+            message=f"Making request to provider: {provider.name}",
+            request_id=request_id,
+            data={"provider": provider.name, "url": url, "type": provider.type.value}
+        )
     )
-except Exception as e:
+    
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        if stream:
+            response = await client.post(url, json=data, headers=headers)
+            response.raise_for_status()
+            return response
+        else:
+            response = await client.post(url, json=data, headers=headers)
+            response.raise_for_status()
+            return response.json()
+
+async def make_anthropic_request(provider: Provider, messages_data: Dict[str, Any], request_id: str, stream: bool = False) -> Union[httpx.Response, Dict[str, Any]]:
+    """Make a request to an Anthropic-compatible provider"""
+    return await make_provider_request(provider, "v1/messages", messages_data, request_id, stream)
+
+async def make_openai_request(provider: Provider, openai_params: Dict[str, Any], request_id: str, stream: bool = False) -> Any:
+    """Make a request to an OpenAI-compatible provider using openai client"""
+    try:
+        client = openai.AsyncClient(
+            api_key=provider.auth_value,
+            base_url=provider.base_url,
+            default_headers={
+                "HTTP-Referer": settings.referrer_url,
+                "X-Title": settings.app_name,
+            },
+            timeout=provider_manager.get_request_timeout(),
+        )
+        
+        if stream:
+            return await client.chat.completions.create(**openai_params)
+        else:
+            return await client.chat.completions.create(**openai_params)
+    except Exception as e:
+        raise e
+
+if not provider_manager:
     critical(
         LogRecord(
-            event="openai_client_init_failed",
-            message="Failed to initialize OpenAI client",
-        ),
-        exc=e,
+            event="provider_manager_init_failed",
+            message="Failed to initialize provider manager",
+        )
     )
     sys.exit(1)
+
+# Add type check for all provider_manager calls
+assert provider_manager is not None  # This will help with type checking
 
 
 _token_encoder_cache: Dict[str, tiktoken.Encoding] = {}
@@ -1365,38 +1429,36 @@ app = fastapi.FastAPI(
 )
 
 
-def select_target_model(client_model_name: str, request_id: str) -> str:
-    """Selects the target OpenRouter model based on the client's request."""
-    client_model_lower = client_model_name.lower()
-    target_model: str
-
-    if "opus" in client_model_lower or "sonnet" in client_model_lower:
-        target_model = settings.big_model_name
-    elif "haiku" in client_model_lower:
-        target_model = settings.small_model_name
-    else:
-        target_model = settings.small_model_name
-        warning(
-            LogRecord(
-                event=LogEvent.MODEL_SELECTION.value,
-                message=f"Unknown client model '{client_model_name}', defaulting to SMALL model '{target_model}'.",
-                request_id=request_id,
-                data={
-                    "client_model": client_model_name,
-                    "default_target_model": target_model,
-                },
-            )
-        )
-
+def select_target_model_and_provider(client_model_name: str, request_id: str) -> Tuple[str, Provider]:
+    """Selects the target model and provider based on the client's request."""
+    if not provider_manager:
+        raise RuntimeError("Provider manager not initialized")
+    
+    current_provider = provider_manager.get_current_provider()
+    if not current_provider:
+        healthy_providers = provider_manager.get_healthy_providers()
+        if not healthy_providers:
+            raise RuntimeError("No healthy providers available")
+        current_provider = healthy_providers[0]
+        provider_manager.current_provider_index = provider_manager.providers.index(current_provider)
+    
+    target_model = provider_manager.select_model(current_provider, client_model_name)
+    
     debug(
         LogRecord(
             event=LogEvent.MODEL_SELECTION.value,
-            message=f"Client model '{client_model_name}' mapped to target model '{target_model}'.",
+            message=f"Client model '{client_model_name}' mapped to target model '{target_model}' on provider '{current_provider.name}'.",
             request_id=request_id,
-            data={"client_model": client_model_name, "target_model": target_model},
+            data={
+                "client_model": client_model_name, 
+                "target_model": target_model,
+                "provider": current_provider.name,
+                "provider_type": current_provider.type.value
+            },
         )
     )
-    return target_model
+
+    return target_model, current_provider
 
 
 def _build_anthropic_error_response(
@@ -1507,7 +1569,7 @@ async def create_message_proxy(
         )
 
     is_stream = anthropic_request.stream or False
-    target_model_name = select_target_model(anthropic_request.model, request_id)
+    target_model_name, current_provider = select_target_model_and_provider(anthropic_request.model, request_id)
 
     estimated_input_tokens = count_tokens_for_anthropic_request(
         messages=anthropic_request.messages,
@@ -1525,6 +1587,8 @@ async def create_message_proxy(
             data={
                 "client_model": anthropic_request.model,
                 "target_model": target_model_name,
+                "provider": current_provider.name,
+                "provider_type": current_provider.type.value,
                 "stream": is_stream,
                 "estimated_input_tokens": estimated_input_tokens,
                 "client_ip": request.client.host if request.client else "unknown",
@@ -1533,141 +1597,240 @@ async def create_message_proxy(
         )
     )
 
-    try:
-        openai_messages = convert_anthropic_to_openai_messages(
-            anthropic_request.messages, anthropic_request.system, request_id=request_id
-        )
-        openai_tools = convert_anthropic_tools_to_openai(anthropic_request.tools)
-        openai_tool_choice = convert_anthropic_tool_choice_to_openai(
-            anthropic_request.tool_choice, request_id
-        )
-    except Exception as e:
+    # Multi-provider request handling with retry logic
+    if not provider_manager:
         return await _log_and_return_error_response(
             request,
-            500,
+            503,
             AnthropicErrorType.API_ERROR,
-            "Error during request conversion.",
-            caught_exception=e,
+            "Provider manager not available.",
+            caught_exception=None,
         )
+    
+    max_retries = len(provider_manager.get_healthy_providers())
+    
+    for attempt in range(max_retries):
+        try:
+            if current_provider.type == ProviderType.ANTHROPIC:
+                # Direct Anthropic API request
+                anthropic_data = anthropic_request.model_dump(exclude_unset=True)
+                anthropic_data["model"] = target_model_name
+                
+                if is_stream:
+                    debug(
+                        LogRecord(
+                            LogEvent.STREAMING_REQUEST.value,
+                            f"Initiating streaming request to Anthropic provider: {current_provider.name}",
+                            request_id,
+                        )
+                    )
+                    anthropic_response = await make_anthropic_request(
+                        current_provider, anthropic_data, request_id, stream=True
+                    )
+                    # Handle Anthropic streaming response directly
+                    async def anthropic_stream_generator():
+                        if hasattr(anthropic_response, 'aiter_lines'):
+                            async for line in anthropic_response.aiter_lines():
+                                if line.strip():
+                                    yield f"{line}\n"
+                        else:
+                            # Fallback for different response types
+                            yield "data: [DONE]\n\n"
+                    
+                    provider_manager.mark_provider_success(current_provider)
+                    return StreamingResponse(
+                        anthropic_stream_generator(),
+                        media_type="text/event-stream",
+                    )
+                else:
+                    debug(
+                        LogRecord(
+                            LogEvent.ANTHROPIC_REQUEST.value,
+                            f"Sending non-streaming request to Anthropic provider: {current_provider.name}",
+                            request_id,
+                        )
+                    )
+                    anthropic_response_data = await make_anthropic_request(
+                        current_provider, anthropic_data, request_id, stream=False
+                    )
+                    
+                    duration_ms = (time.monotonic() - request.state.start_time_monotonic) * 1000
+                    info(
+                        LogRecord(
+                            event=LogEvent.REQUEST_COMPLETED.value,
+                            message=f"Non-streaming request completed successfully via provider: {current_provider.name}",
+                            request_id=request_id,
+                            data={
+                                "status_code": 200,
+                                "duration_ms": duration_ms,
+                                "provider": current_provider.name,
+                            },
+                        )
+                    )
+                    
+                    provider_manager.mark_provider_success(current_provider)
+                    return JSONResponse(content=anthropic_response_data)
+            
+            else:  # OpenAI-compatible provider
+                try:
+                    openai_messages = convert_anthropic_to_openai_messages(
+                        anthropic_request.messages, anthropic_request.system, request_id=request_id
+                    )
+                    openai_tools = convert_anthropic_tools_to_openai(anthropic_request.tools)
+                    openai_tool_choice = convert_anthropic_tool_choice_to_openai(
+                        anthropic_request.tool_choice, request_id
+                    )
+                except Exception as e:
+                    return await _log_and_return_error_response(
+                        request,
+                        500,
+                        AnthropicErrorType.API_ERROR,
+                        "Error during request conversion.",
+                        caught_exception=e,
+                    )
 
-    openai_params: Dict[str, Any] = {
-        "model": target_model_name,
-        "messages": cast(List[ChatCompletionMessageParam], openai_messages),
-        "max_tokens": anthropic_request.max_tokens,
-        "stream": is_stream,
-    }
-    if anthropic_request.temperature is not None:
-        openai_params["temperature"] = anthropic_request.temperature
-    if anthropic_request.top_p is not None:
-        openai_params["top_p"] = anthropic_request.top_p
-    if anthropic_request.stop_sequences:
-        openai_params["stop"] = anthropic_request.stop_sequences
-    if openai_tools:
-        openai_params["tools"] = cast(
-            Optional[List[ChatCompletionToolParam]], openai_tools
-        )
-    if openai_tool_choice:
-        openai_params["tool_choice"] = openai_tool_choice
-    if anthropic_request.metadata and anthropic_request.metadata.get("user_id"):
-        openai_params["user"] = str(anthropic_request.metadata.get("user_id"))
+                openai_params: Dict[str, Any] = {
+                    "model": target_model_name,
+                    "messages": cast(List[ChatCompletionMessageParam], openai_messages),
+                    "max_tokens": anthropic_request.max_tokens,
+                    "stream": is_stream,
+                }
+                if anthropic_request.temperature is not None:
+                    openai_params["temperature"] = anthropic_request.temperature
+                if anthropic_request.top_p is not None:
+                    openai_params["top_p"] = anthropic_request.top_p
+                if anthropic_request.stop_sequences:
+                    openai_params["stop"] = anthropic_request.stop_sequences
+                if openai_tools:
+                    openai_params["tools"] = cast(
+                        Optional[List[ChatCompletionToolParam]], openai_tools
+                    )
+                if openai_tool_choice:
+                    openai_params["tool_choice"] = openai_tool_choice
+                if anthropic_request.metadata and anthropic_request.metadata.get("user_id"):
+                    openai_params["user"] = str(anthropic_request.metadata.get("user_id"))
 
-    debug(
-        LogRecord(
-            LogEvent.OPENAI_REQUEST.value,
-            "Prepared OpenAI request parameters",
-            request_id,
-            {"params": openai_params},
-        )
-    )
-
-    try:
-        if is_stream:
-            debug(
-                LogRecord(
-                    LogEvent.STREAMING_REQUEST.value,
-                    "Initiating streaming request to OpenAI-compatible API",
-                    request_id,
+                debug(
+                    LogRecord(
+                        LogEvent.OPENAI_REQUEST.value,
+                        f"Prepared OpenAI request parameters for provider: {current_provider.name}",
+                        request_id,
+                        {"params": openai_params},
+                    )
                 )
-            )
-            openai_stream_response = await openai_client.chat.completions.create(
-                **openai_params
-            )
-            return StreamingResponse(
-                handle_anthropic_streaming_response_from_openai_stream(
-                    openai_stream_response,
-                    anthropic_request.model,
-                    estimated_input_tokens,
-                    request_id,
-                    request.state.start_time_monotonic,
-                ),
-                media_type="text/event-stream",
-            )
-        else:
-            debug(
-                LogRecord(
-                    LogEvent.OPENAI_REQUEST.value,
-                    "Sending non-streaming request to OpenAI-compatible API",
-                    request_id,
-                )
-            )
-            openai_response_obj = await openai_client.chat.completions.create(
-                **openai_params
-            )
 
-            debug(
-                LogRecord(
-                    LogEvent.OPENAI_RESPONSE.value,
-                    "Received OpenAI response",
-                    request_id,
-                    {"response": openai_response_obj.model_dump()},
-                )
-            )
+                if is_stream:
+                    debug(
+                        LogRecord(
+                            LogEvent.STREAMING_REQUEST.value,
+                            f"Initiating streaming request to OpenAI-compatible provider: {current_provider.name}",
+                            request_id,
+                        )
+                    )
+                    openai_stream_response = await make_openai_request(
+                        current_provider, openai_params, request_id, stream=True
+                    )
+                    provider_manager.mark_provider_success(current_provider)
+                    return StreamingResponse(
+                        handle_anthropic_streaming_response_from_openai_stream(
+                            openai_stream_response,
+                            anthropic_request.model,
+                            estimated_input_tokens,
+                            request_id,
+                            request.state.start_time_monotonic,
+                        ),
+                        media_type="text/event-stream",
+                    )
+                else:
+                    debug(
+                        LogRecord(
+                            LogEvent.OPENAI_REQUEST.value,
+                            f"Sending non-streaming request to OpenAI-compatible provider: {current_provider.name}",
+                            request_id,
+                        )
+                    )
+                    openai_response_obj = await make_openai_request(
+                        current_provider, openai_params, request_id, stream=False
+                    )
 
-            anthropic_response_obj = convert_openai_to_anthropic_response(
-                openai_response_obj, anthropic_request.model, request_id=request_id
-            )
-            duration_ms = (time.monotonic() - request.state.start_time_monotonic) * 1000
-            info(
+                    debug(
+                        LogRecord(
+                            LogEvent.OPENAI_RESPONSE.value,
+                            f"Received OpenAI response from provider: {current_provider.name}",
+                            request_id,
+                            {"response": openai_response_obj.model_dump()},
+                        )
+                    )
+
+                    anthropic_response_obj = convert_openai_to_anthropic_response(
+                        openai_response_obj, anthropic_request.model, request_id=request_id
+                    )
+                    duration_ms = (time.monotonic() - request.state.start_time_monotonic) * 1000
+                    info(
+                        LogRecord(
+                            event=LogEvent.REQUEST_COMPLETED.value,
+                            message=f"Non-streaming request completed successfully via provider: {current_provider.name}",
+                            request_id=request_id,
+                            data={
+                                "status_code": 200,
+                                "duration_ms": duration_ms,
+                                "input_tokens": anthropic_response_obj.usage.input_tokens,
+                                "output_tokens": anthropic_response_obj.usage.output_tokens,
+                                "stop_reason": anthropic_response_obj.stop_reason,
+                                "provider": current_provider.name,
+                            },
+                        )
+                    )
+                    debug(
+                        LogRecord(
+                            LogEvent.ANTHROPIC_RESPONSE.value,
+                            f"Prepared Anthropic response from provider: {current_provider.name}",
+                            request_id,
+                            {"response": anthropic_response_obj.model_dump(exclude_unset=True)},
+                        )
+                    )
+                    
+                    provider_manager.mark_provider_success(current_provider)
+                    return JSONResponse(
+                        content=anthropic_response_obj.model_dump(exclude_unset=True)
+                    )
+
+        except Exception as e:
+            warning(
                 LogRecord(
-                    event=LogEvent.REQUEST_COMPLETED.value,
-                    message="Non-streaming request completed successfully",
+                    event="provider_request_failed",
+                    message=f"Request failed for provider {current_provider.name}: {str(e)}",
                     request_id=request_id,
-                    data={
-                        "status_code": 200,
-                        "duration_ms": duration_ms,
-                        "input_tokens": anthropic_response_obj.usage.input_tokens,
-                        "output_tokens": anthropic_response_obj.usage.output_tokens,
-                        "stop_reason": anthropic_response_obj.stop_reason,
-                    },
+                    data={"provider": current_provider.name, "attempt": attempt + 1}
+                ),
+                exc=e
+            )
+            
+            # Try next provider
+            next_provider = provider_manager.switch_to_next_provider()
+            if next_provider:
+                current_provider = next_provider
+                target_model_name = provider_manager.select_model(current_provider, anthropic_request.model)
+                info(
+                    LogRecord(
+                        event="provider_switched",
+                        message=f"Switched to provider: {current_provider.name}",
+                        request_id=request_id,
+                        data={"new_provider": current_provider.name, "new_model": target_model_name}
+                    )
                 )
-            )
-            debug(
-                LogRecord(
-                    LogEvent.ANTHROPIC_RESPONSE.value,
-                    "Prepared Anthropic response",
-                    request_id,
-                    {"response": anthropic_response_obj.model_dump(exclude_unset=True)},
-                )
-            )
-            return JSONResponse(
-                content=anthropic_response_obj.model_dump(exclude_unset=True)
-            )
+            else:
+                # No more healthy providers
+                break
 
-    except openai.APIError as e:
-        err_type, err_msg, err_status, prov_details = (
-            _get_anthropic_error_details_from_exc(e)
-        )
-        return await _log_and_return_error_response(
-            request, err_status, err_type, err_msg, prov_details, e
-        )
-    except Exception as e:
-        return await _log_and_return_error_response(
-            request,
-            500,
-            AnthropicErrorType.API_ERROR,
-            "An unexpected error occurred while processing the request.",
-            caught_exception=e,
-        )
+    # All providers failed
+    return await _log_and_return_error_response(
+        request,
+        503,
+        AnthropicErrorType.API_ERROR,
+        "All providers are currently unavailable. Please try again later.",
+        caught_exception=None,
+    )
 
 
 @app.post(
@@ -1728,6 +1891,53 @@ async def root_health_check() -> JSONResponse:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )
+
+
+@app.get("/providers", tags=["Health"])
+async def get_providers_status() -> JSONResponse:
+    """Get status of all configured providers."""
+    if not provider_manager:
+        return JSONResponse(
+            {
+                "error": "Provider manager not initialized",
+                "status": "error"
+            },
+            status_code=500
+        )
+    
+    status = provider_manager.get_status()
+    return JSONResponse(status)
+
+
+@app.post("/providers/reload", tags=["Health"])
+async def reload_providers_config() -> JSONResponse:
+    """Reload providers configuration from file."""
+    if not provider_manager:
+        return JSONResponse(
+            {
+                "error": "Provider manager not initialized",
+                "status": "error"
+            },
+            status_code=500
+        )
+    
+    try:
+        provider_manager.reload_config()
+        return JSONResponse(
+            {
+                "message": "Provider configuration reloaded successfully",
+                "status": "ok",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    except Exception as e:
+        return JSONResponse(
+            {
+                "error": f"Failed to reload configuration: {str(e)}",
+                "status": "error"
+            },
+            status_code=500
+        )
 
 
 @app.exception_handler(openai.APIError)
@@ -1792,28 +2002,51 @@ async def logging_middleware(
 
 
 if __name__ == "__main__":
-    config_details_text = Text.assemble(
-      ("   Version       : ", "default"),
-      (f"v{settings.app_version}", "bold cyan"),
-      ("\n   Base URL      : ", "default"),
-      (settings.base_url, "bold white"),
-      ("\n   Big Model     : ", "default"),
-      (settings.big_model_name, "magenta"),
-      ("\n   Small Model   : ", "default"),
-      (settings.small_model_name, "green"),
-      ("\n   Log Level     : ", "default"),
-      (settings.log_level.upper(), "yellow"),
-      ("\n   Log File      : ", "default"),
-      (settings.log_file_path or "Disabled", "dim"),
-      ("\n   Listening on  : ", "default"),
-      (f"http://{settings.host}:{settings.port}", "bold white"),
-      ("\n   Reload        : ", "default"),
-      ("Enabled", "bold orange1") if settings.reload else ("Disabled", "dim")
-    )
+    if provider_manager:
+        # Display provider information
+        providers_text = ""
+        healthy_count = len(provider_manager.get_healthy_providers())
+        total_count = len(provider_manager.providers)
+        
+        for i, provider in enumerate(provider_manager.providers):
+            status_icon = "✓" if provider.is_healthy(provider_manager.get_failure_cooldown()) else "✗"
+            provider_line = f"\n   [{status_icon}] {provider.name} ({provider.type.value}): {provider.base_url}"
+            providers_text += provider_line
+        
+        config_details_text = Text.assemble(
+          ("   Version       : ", "default"),
+          (f"v{settings.app_version}", "bold cyan"),
+          ("\n   Providers     : ", "default"),
+          (f"{healthy_count}/{total_count} healthy", "bold green" if healthy_count > 0 else "bold red"),
+          (providers_text, "default"),
+          ("\n   Log Level     : ", "default"),
+          (settings.log_level.upper(), "yellow"),
+          ("\n   Log File      : ", "default"),
+          (settings.log_file_path or "Disabled", "dim"),
+          ("\n   Listening on  : ", "default"),
+          (f"http://{settings.host}:{settings.port}", "bold white"),
+          ("\n   Reload        : ", "default"),
+          ("Enabled", "bold orange1") if settings.reload else ("Disabled", "dim")
+        )
+        
+        title = "Claude Code Provider Balancer Configuration"
+    else:
+        config_details_text = Text.assemble(
+          ("   Version       : ", "default"),
+          (f"v{settings.app_version}", "bold cyan"),
+          ("\n   Status        : ", "default"),
+          ("Provider manager failed to initialize", "bold red"),
+          ("\n   Log Level     : ", "default"),
+          (settings.log_level.upper(), "yellow"),
+          ("\n   Listening on  : ", "default"),
+          (f"http://{settings.host}:{settings.port}", "bold white"),
+        )
+        title = "Claude Code Provider Balancer Configuration (ERROR)"
+    
     _console.print(
       Panel(
         config_details_text,
-        title="Anthropic Proxy Configuration",
+        title=title,
         border_style="blue",
         expand=False,
       )
