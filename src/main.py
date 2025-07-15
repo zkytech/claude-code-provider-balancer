@@ -302,10 +302,18 @@ _logger = logging.getLogger(settings.app_name)
 
 if settings.log_file_path:
     try:
-        log_dir = os.path.dirname(settings.log_file_path)
+        # 如果是相对路径，相对于项目根目录（src的上级目录）
+        if not os.path.isabs(settings.log_file_path):
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(current_dir)
+            log_file_path = os.path.join(project_root, settings.log_file_path)
+        else:
+            log_file_path = settings.log_file_path
+        
+        log_dir = os.path.dirname(log_file_path)
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
-        file_handler = logging.FileHandler(settings.log_file_path, mode="a")
+        file_handler = logging.FileHandler(log_file_path, mode="a")
         file_handler.setFormatter(JSONFormatter())
         _logger.addHandler(file_handler)
     except Exception as e:
