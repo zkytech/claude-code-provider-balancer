@@ -17,7 +17,7 @@ Key features:
 - **Dual authentication**: Supports both `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`
 - **Dynamic model selection**: Maps Claude models to provider-specific models
 - **Real-time configuration**: Reload provider config without restart
-- **Comprehensive logging**: Detailed request/response tracking
+- **Comprehensive logging**: Detailed request/response tracking with color support
 - **Token counting**: Built-in token estimation
 - **Streaming support**: Full support for streaming responses
 
@@ -75,6 +75,7 @@ settings:
   failure_cooldown: 60  # seconds
   request_timeout: 30   # seconds
   log_level: "DEBUG"
+  log_color: true      # enable colored console output
   host: "127.0.0.1"
   port: 8080
 ```
@@ -160,6 +161,38 @@ python src/main.py
 # In another terminal, run tests
 python tests/test_api.py
 ```
+
+### Colored Logging
+
+The balancer supports colored console output to improve development experience:
+
+- **DEBUG**: Cyan
+- **INFO**: Green  
+- **WARNING**: Yellow
+- **ERROR**: Red
+- **CRITICAL**: Magenta
+
+Colors are automatically enabled for TTY terminals and can be controlled via configuration:
+
+```yaml
+settings:
+  log_color: true  # Enable colored output (default: true)
+```
+
+Test the color functionality:
+
+```bash
+# Test log colors
+python test_log_colors.py
+
+# Test server startup colors
+python test_server_colors.py
+```
+
+Colors are automatically disabled for:
+- Non-TTY environments (pipes, redirects)
+- File logging (to keep log files clean)
+- When explicitly disabled in configuration
 
 ## License
 

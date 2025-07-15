@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     # Optional environment overrides
     log_level: str = "INFO"
     log_file_path: str = ""
+    log_color: bool = True
     providers_config_path: str = "providers.yaml"
     referrer_url: str = "http://localhost:8082/claude_proxy"
     reload: bool = True
@@ -70,6 +71,7 @@ try:
         settings.host = provider_settings.get('host', settings.host)
         settings.port = provider_settings.get('port', settings.port)
         settings.log_level = provider_settings.get('log_level', settings.log_level)
+        settings.log_color = provider_settings.get('log_color', settings.log_color)
         settings.app_name = provider_settings.get('app_name', settings.app_name)
         settings.app_version = provider_settings.get('app_version', settings.app_version)
 except Exception as e:
@@ -86,6 +88,97 @@ _error_console = Console(stderr=True, style="bold red")
 # Recursion protection for exception handling
 _exception_handler_lock = threading.RLock()
 _exception_handler_depth = threading.local()
+
+
+@dataclasses.dataclass
+class LogError:
+    name: str
+    message: str
+    stack_trace: Optional[str] = None
+    args: Optional[Tuple[Any, ...]] = None
+
+
+@dataclasses.dataclass
+class LogRecord:
+    event: str
+    message: str
+    request_id: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[LogError] = None
+
+
+class ColoredConsoleFormatter(logging.Formatter):
+    """Console formatter with color support based on log level."""
+    
+    # ANSI color codes
+    COLORS = {
+        'DEBUG': '\033[36m',    # Cyan
+        'INFO': '\033[32m',     # Green
+        'WARNING': '\033[33m',  # Yellow
+        'ERROR': '\033[31m',    # Red
+        'CRITICAL': '\033[95m', # Magenta
+    }
+    RESET = '\033[0m'
+    
+    def format(self, record: logging.LogRecord) -> str:
+        # Get the base JSON output
+        log_dict = self._get_log_dict(record)
+        
+        # Check if we should use colors (only for TTY output and when enabled)
+        # Use globals() to get the current settings value at runtime
+        current_settings = globals().get('settings')
+        use_colors = (
+            current_settings is not None 
+            and getattr(current_settings, 'log_color', True)
+            and hasattr(sys.stdout, 'isatty') 
+            and sys.stdout.isatty()
+        )
+        
+        if use_colors:
+            level_color = self.COLORS.get(record.levelname, '')
+            formatted_json = json.dumps(log_dict, ensure_ascii=False)
+            return f"{level_color}{formatted_json}{self.RESET}"
+        else:
+            return json.dumps(log_dict, ensure_ascii=False)
+    
+    def _get_log_dict(self, record: logging.LogRecord) -> dict:
+        """Extract log dictionary from record, similar to JSONFormatter logic."""
+        header = {
+            "timestamp": datetime.fromtimestamp(
+                record.created, timezone.utc
+            ).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+        }
+        log_payload = getattr(record, "log_record", None)
+        if isinstance(log_payload, LogRecord):
+            header["detail"] = dataclasses.asdict(log_payload)
+        else:
+            header["message"] = record.getMessage()
+            if record.exc_info:
+                exc_type, exc_value, exc_tb = record.exc_info
+                header["error"] = {
+                    "name": exc_type.__name__ if exc_type else "UnknownError",
+                    "message": str(exc_value),
+                    "stack_trace": "".join(
+                        traceback.format_exception(exc_type, exc_value, exc_tb)
+                    ),
+                    "args": exc_value.args if hasattr(exc_value, "args") else [],
+                }
+        
+        # Remove stack_trace for console output
+        if (
+            "detail" in header
+            and "error" in header["detail"]
+            and header["detail"]["error"]
+        ):
+            if "stack_trace" in header["detail"]["error"]:
+                del header["detail"]["error"]["stack_trace"]
+        elif "error" in header and header["error"]:
+            if "stack_trace" in header["error"]:
+                del header["error"]["stack_trace"]
+        
+        return header
 
 
 class JSONFormatter(logging.Formatter):
@@ -131,42 +224,44 @@ class ConsoleJSONFormatter(JSONFormatter):
         return json.dumps(log_dict)
 
 
-dictConfig(
-    {
-        "version": 1,
-        "disable_existing_loggers": False,
-        "formatters": {
-            "json": {"()": JSONFormatter},
-            "console_json": {"()": ConsoleJSONFormatter},
+# Create the logging configuration dictionary
+log_config = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "json": {"()": JSONFormatter},
+        "console_json": {"()": ConsoleJSONFormatter},
+        "colored_console": {"()": ColoredConsoleFormatter},
+    },
+    "handlers": {
+        "default": {
+            "class": "logging.StreamHandler",
+            "formatter": "colored_console",
+            "stream": "ext://sys.stdout",
         },
-        "handlers": {
-            "default": {
-                "class": "logging.StreamHandler",
-                "formatter": "console_json",
-                "stream": "ext://sys.stdout",
-            },
+    },
+    "loggers": {
+        "": {"handlers": ["default"], "level": "WARNING"},
+        settings.app_name: {
+            "handlers": ["default"],
+            "level": settings.log_level.upper(),
+            "propagate": False,
         },
-        "loggers": {
-            "": {"handlers": ["default"], "level": "WARNING"},
-            settings.app_name: {
-                "handlers": ["default"],
-                "level": settings.log_level.upper(),
-                "propagate": False,
-            },
-            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
-            "uvicorn.error": {
-                "handlers": ["default"],
-                "level": "INFO",
-                "propagate": False,
-            },
-            "uvicorn.access": {
-                "handlers": ["default"],
-                "level": "INFO",
-                "propagate": False,
-            },
+        "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+        "uvicorn.error": {
+            "handlers": ["default"],
+            "level": "INFO",
+            "propagate": False,
         },
-    }
-)
+        "uvicorn.access": {
+            "handlers": ["default"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}
+
+dictConfig(log_config)
 
 
 class LogEvent(enum.Enum):
@@ -199,21 +294,7 @@ class LogEvent(enum.Enum):
     PROVIDER_ERROR_DETAILS = "provider_error_details"
 
 
-@dataclasses.dataclass
-class LogError:
-    name: str
-    message: str
-    stack_trace: Optional[str] = None
-    args: Optional[Tuple[Any, ...]] = None
 
-
-@dataclasses.dataclass
-class LogRecord:
-    event: str
-    message: str
-    request_id: Optional[str] = None
-    data: Optional[Dict[str, Any]] = None
-    error: Optional[LogError] = None
 
 
 _logger = logging.getLogger(settings.app_name)
@@ -2283,6 +2364,6 @@ if __name__ == "__main__":
         host=settings.host,
         port=settings.port,
         reload=settings.reload,
-        log_config=None,
+        log_config=log_config,
         access_log=False,
     )

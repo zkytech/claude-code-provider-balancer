@@ -70,6 +70,8 @@ settings:
   request_timeout: 30
   # 日志级别
   log_level: "DEBUG"
+  # 日志颜色（终端控制台输出时是否启用颜色）
+  log_color: true
   # 服务器配置
   host: "127.0.0.1"
   port: 8080
