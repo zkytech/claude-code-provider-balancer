@@ -50,7 +50,7 @@ providers:
     big_model: "claude-3-5-sonnet-20241022"
     small_model: "claude-3-5-haiku-20241022"
     enabled: true
-    
+
   # Custom Claude Code provider with auth_token
   - name: "claude_provider_custom"
     type: "anthropic"
@@ -60,7 +60,7 @@ providers:
     big_model: "claude-3-5-sonnet-20241022"
     small_model: "claude-3-5-haiku-20241022"
     enabled: true
-    
+
   # OpenAI-compatible provider (e.g., OpenRouter)
   - name: "openrouter"
     type: "openai"
@@ -158,7 +158,7 @@ Run the included test suite:
 python src/main.py
 
 # In another terminal, run tests
-python test_api.py
+python tests/test_api.py
 ```
 
 ## License
