@@ -1,12 +1,15 @@
 """
 Provider Manager for Claude Code Provider Balancer
-Manages multiple Claude Code and OpenAI-compatible providers with load balancing and failure recovery.
+Manages multiple Claude Code and OpenAI-compatible providers with simplified model routing.
 """
 
 import os
 import time
 import yaml
-from typing import List, Optional, Dict, Any
+import re
+import random
+import threading
+from typing import List, Optional, Dict, Any, Tuple
 from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
@@ -22,6 +25,20 @@ class AuthType(str, Enum):
     AUTH_TOKEN = "auth_token"
 
 
+class SelectionStrategy(str, Enum):
+    PRIORITY = "priority"
+    ROUND_ROBIN = "round_robin"
+    RANDOM = "random"
+
+
+@dataclass
+class ModelRoute:
+    provider: str
+    model: str
+    priority: int
+    enabled: bool = True
+
+
 @dataclass
 class Provider:
     name: str
@@ -29,9 +46,8 @@ class Provider:
     base_url: str
     auth_type: AuthType
     auth_value: str
-    big_model: str
-    small_model: str
     enabled: bool = True
+    proxy: Optional[str] = None
     failure_count: int = 0
     last_failure_time: float = 0
     
@@ -63,18 +79,37 @@ class ProviderManager:
         
         self.config_path = Path(config_path)
         self.providers: List[Provider] = []
-        self.current_provider_index: int = 0
         self.settings: Dict[str, Any] = {}
+        
+        # 简化的配置
+        self.model_routes: Dict[str, List[ModelRoute]] = {}
+        self.selection_strategy: SelectionStrategy = SelectionStrategy.PRIORITY
+        
+        # 用于round_robin策略的索引记录
+        self._round_robin_indices: Dict[str, int] = {}
+        
+        # 请求活跃状态跟踪
+        self._last_request_time: float = 0
+        self._last_successful_provider: Optional[str] = None  # 记录最后成功的provider名称
+        self._idle_recovery_interval: float = 300  # 默认空闲5分钟后才考虑恢复失败的provider
+        
         self.load_config()
     
     def load_config(self):
-        """Load providers configuration from YAML file"""
+        """Load simplified configuration from YAML file"""
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
             
             self.settings = config.get('settings', {})
+            self.selection_strategy = SelectionStrategy(
+                self.settings.get('selection_strategy', 'priority')
+            )
             
+            # 加载智能恢复配置
+            self._idle_recovery_interval = self.settings.get('idle_recovery_interval', 300)
+            
+            # 加载服务商配置（简化版）
             providers_config = config.get('providers', [])
             self.providers = []
             
@@ -86,11 +121,13 @@ class ProviderManager:
                         base_url=provider_config['base_url'],
                         auth_type=AuthType(provider_config['auth_type']),
                         auth_value=provider_config['auth_value'],
-                        big_model=provider_config['big_model'],
-                        small_model=provider_config['small_model'],
-                        enabled=provider_config.get('enabled', True)
+                        enabled=provider_config.get('enabled', True),
+                        proxy=provider_config.get('proxy')
                     )
                     self.providers.append(provider)
+            
+            # 加载模型路由配置
+            self._load_model_routes(config.get('model_routes', {}))
             
             if not self.providers:
                 raise ValueError("No enabled providers found in configuration")
@@ -98,68 +135,181 @@ class ProviderManager:
         except Exception as e:
             raise RuntimeError(f"Failed to load provider configuration: {e}")
     
+    def _load_model_routes(self, routes_config: Dict[str, Any]):
+        """加载模型路由配置"""
+        self.model_routes = {}
+        
+        for model_pattern, routes in routes_config.items():
+            route_list = []
+            for route_config in routes:
+                if isinstance(route_config, dict):
+                    route = ModelRoute(
+                        provider=route_config['provider'],
+                        model=route_config['model'],
+                        priority=route_config['priority'],
+                        enabled=route_config.get('enabled', True)
+                    )
+                    route_list.append(route)
+            self.model_routes[model_pattern] = route_list
+    
+    def _get_provider_by_name(self, name: str) -> Optional[Provider]:
+        """根据名称获取服务商"""
+        for provider in self.providers:
+            if provider.name == name:
+                return provider
+        return None
+    
+    def _matches_pattern(self, model_name: str, pattern: str) -> bool:
+        """检查模型名是否匹配给定的模式"""
+        model_lower = model_name.lower()
+        pattern_lower = pattern.lower()
+        
+        # 支持通配符匹配
+        if '*' in pattern:
+            regex_pattern = pattern_lower.replace('*', '.*')
+            return bool(re.search(regex_pattern, model_lower))
+        else:
+            # 精确匹配
+            return pattern_lower == model_lower
+    
+    def select_model_and_provider_options(self, requested_model: str) -> List[Tuple[str, Provider]]:
+        """
+        简化的模型选择逻辑
+        返回按优先级排序的 (target_model, provider) 列表
+        """
+        # 1. 精确匹配
+        if requested_model in self.model_routes:
+            options = self._build_options_from_routes(self.model_routes[requested_model], requested_model)
+            if options:
+                return self._apply_selection_strategy(options, requested_model)
+        
+        # 2. 通配符匹配
+        for pattern, routes in self.model_routes.items():
+            if self._matches_pattern(requested_model, pattern):
+                options = self._build_options_from_routes(routes, requested_model)
+                if options:
+                    return self._apply_selection_strategy(options, requested_model)
+        
+        # 3. 没有匹配的路由
+        return []
+    
+    def _build_options_from_routes(self, routes: List[ModelRoute], requested_model: str) -> List[Tuple[str, Provider, int]]:
+        """从路由配置构建可用选项"""
+        options = []
+        cooldown = self.get_failure_cooldown()
+        
+        for route in routes:
+            if not route.enabled:
+                continue
+                
+            provider = self._get_provider_by_name(route.provider)
+            if not provider or not provider.enabled or not provider.is_healthy(cooldown):
+                continue
+            
+            # 处理模型名称
+            target_model = route.model
+            if target_model == "passthrough":
+                target_model = requested_model
+            
+            options.append((target_model, provider, route.priority))
+        
+        return options
+    
+    def _apply_selection_strategy(self, options: List[Tuple[str, Provider, int]], requested_model: str) -> List[Tuple[str, Provider]]:
+        """根据选择策略对选项进行排序和选择"""
+        if not options:
+            return []
+        
+        # 检查是否处于活跃期间，如果是则应用粘滞逻辑
+        current_time = time.time()
+        is_idle_period = (current_time - self._last_request_time) > self._idle_recovery_interval
+        
+        if not is_idle_period and self._last_successful_provider:
+            # 活跃期间：优先使用粘滞provider
+            sticky_option = None
+            other_options = []
+            
+            for model, provider, priority in options:
+                if provider.name == self._last_successful_provider:
+                    sticky_option = (model, provider, priority)
+                else:
+                    other_options.append((model, provider, priority))
+            
+            # 如果找到了粘滞provider，将其放在第一位
+            if sticky_option:
+                sorted_other_options = sorted(other_options, key=lambda x: x[2])
+                final_options = [sticky_option] + sorted_other_options
+                # print(f"[DEBUG] Sticky logic applied - prioritizing {self._last_successful_provider}")
+                return [(model, provider) for model, provider, priority in final_options]
+        
+        if self.selection_strategy == SelectionStrategy.PRIORITY:
+            # 按优先级排序（数字越小优先级越高）
+            sorted_options = sorted(options, key=lambda x: x[2])
+            return [(model, provider) for model, provider, priority in sorted_options]
+        
+        elif self.selection_strategy == SelectionStrategy.ROUND_ROBIN:
+            # Round robin选择
+            sorted_options = sorted(options, key=lambda x: x[2])
+            key = f"{requested_model}_{len(sorted_options)}"
+            
+            if key not in self._round_robin_indices:
+                self._round_robin_indices[key] = 0
+            
+            current_index = self._round_robin_indices[key]
+            self._round_robin_indices[key] = (current_index + 1) % len(sorted_options)
+            
+            # 将当前选择的放在第一位，其他保持优先级顺序
+            selected = sorted_options.pop(current_index)
+            result = [selected] + sorted_options
+            return [(model, provider) for model, provider, priority in result]
+        
+        elif self.selection_strategy == SelectionStrategy.RANDOM:
+            # 随机选择，但仍然返回所有选项作为fallback
+            sorted_options = sorted(options, key=lambda x: x[2])
+            if len(sorted_options) > 1:
+                # 从前3个优先级中随机选择
+                top_options = sorted_options[:min(3, len(sorted_options))]
+                selected = random.choice(top_options)
+                remaining = [opt for opt in sorted_options if opt != selected]
+                result = [selected] + remaining
+                return [(model, provider) for model, provider, priority in result]
+            return [(model, provider) for model, provider, priority in sorted_options]
+        
+        # 默认按优先级排序
+        sorted_options = sorted(options, key=lambda x: x[2])
+        return [(model, provider) for model, provider, priority in sorted_options]
+    
     def get_failure_cooldown(self) -> int:
         """Get failure cooldown time from settings"""
         return self.settings.get('failure_cooldown', 60)
     
     def get_request_timeout(self) -> int:
         """Get request timeout from settings"""
-        return self.settings.get('request_timeout', 30)
+        return self.settings.get('request_timeout', 300)
     
     def get_healthy_providers(self) -> List[Provider]:
         """Get list of healthy (non-failed) providers"""
         cooldown = self.get_failure_cooldown()
-        return [p for p in self.providers if p.enabled and p.is_healthy(cooldown)]
+        
+        # 简化逻辑：只返回健康的providers，粘滞逻辑已移至选择策略中
+        healthy_providers = [p for p in self.providers if p.enabled and p.is_healthy(cooldown)]
+        # Removed debug print - this would be too noisy in production
+        return healthy_providers
     
-    def get_current_provider(self) -> Optional[Provider]:
-        """Get current provider for load balancing"""
-        healthy_providers = self.get_healthy_providers()
-        
-        if not healthy_providers:
-            return None
-        
-        # 如果当前provider还健康，继续使用
-        if (self.current_provider_index < len(self.providers) and 
-            self.providers[self.current_provider_index] in healthy_providers):
-            return self.providers[self.current_provider_index]
-        
-        # 否则选择第一个健康的provider
-        for i, provider in enumerate(self.providers):
-            if provider in healthy_providers:
-                self.current_provider_index = i
+    def mark_request_start(self):
+        """标记请求开始，更新活跃状态"""
+        self._last_request_time = time.time()
+    
+    def mark_provider_success(self, provider_name: str):
+        """标记provider成功，更新粘滞状态"""
+        self._last_successful_provider = provider_name
+    
+    def get_provider_by_name(self, name: str) -> Optional[Provider]:
+        """根据名称获取provider"""
+        for provider in self.providers:
+            if provider.name == name:
                 return provider
-        
         return None
-    
-    def switch_to_next_provider(self) -> Optional[Provider]:
-        """Switch to next healthy provider after current one fails"""
-        if not self.providers:
-            return None
-        
-        # 标记当前provider失败
-        if self.current_provider_index < len(self.providers):
-            current_provider = self.providers[self.current_provider_index]
-            current_provider.mark_failure()
-        
-        # 寻找下一个健康的provider
-        healthy_providers = self.get_healthy_providers()
-        if not healthy_providers:
-            return None
-        
-        # 从当前位置开始找下一个健康的
-        start_index = (self.current_provider_index + 1) % len(self.providers)
-        for i in range(len(self.providers)):
-            check_index = (start_index + i) % len(self.providers)
-            provider = self.providers[check_index]
-            if provider in healthy_providers:
-                self.current_provider_index = check_index
-                return provider
-        
-        return None
-    
-    def mark_provider_success(self, provider: Provider):
-        """Mark a provider as successful"""
-        provider.mark_success()
     
     def get_provider_headers(self, provider: Provider, original_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         """Get authentication headers for a provider, optionally merging with original headers"""
@@ -174,49 +324,34 @@ class ProviderManager:
                 if key.lower() not in ['authorization', 'x-api-key', 'host', 'content-length']:
                     headers[key] = value
         
-        if provider.auth_type == AuthType.API_KEY:
+        # 检查是否使用passthrough模式
+        if provider.auth_value == "passthrough":
+            # 透传模式：使用原始请求的认证头
+            if original_headers:
+                # 保留原始请求的Authorization和x-api-key头部（不区分大小写查找）
+                for key, value in original_headers.items():
+                    if key.lower() == "authorization":
+                        headers["Authorization"] = value
+                    elif key.lower() == "x-api-key":
+                        headers["x-api-key"] = value
+            # 为Anthropic类型的provider添加版本头
             if provider.type == ProviderType.ANTHROPIC:
-                headers["x-api-key"] = provider.auth_value
                 headers["anthropic-version"] = "2023-06-01"
-            else:  # OpenAI compatible
+        else:
+            # 正常模式：使用配置的认证值
+            if provider.auth_type == AuthType.API_KEY:
+                if provider.type == ProviderType.ANTHROPIC:
+                    headers["x-api-key"] = provider.auth_value
+                    headers["anthropic-version"] = "2023-06-01"
+                else:  # OpenAI compatible
+                    headers["Authorization"] = f"Bearer {provider.auth_value}"
+            elif provider.auth_type == AuthType.AUTH_TOKEN:
+                # 对于使用auth_token的服务商
                 headers["Authorization"] = f"Bearer {provider.auth_value}"
-        elif provider.auth_type == AuthType.AUTH_TOKEN:
-            # 对于使用auth_token的服务商
-            headers["Authorization"] = f"Bearer {provider.auth_value}"
-            if provider.type == ProviderType.ANTHROPIC:
-                headers["anthropic-version"] = "2023-06-01"
-        
-        # 为anyrouter等服务商添加更多类似Claude Code的头部（如果原始头部中没有的话）
-        if provider.name == "anyrouter":
-            if "User-Agent" not in headers:
-                headers["User-Agent"] = "claude-cli/1.0.52 (external, cli)"
-            if "Accept" not in headers:
-                headers["Accept"] = "application/json"
-            if "Accept-Encoding" not in headers:
-                headers["Accept-Encoding"] = "gzip, deflate, br"
+                if provider.type == ProviderType.ANTHROPIC:
+                    headers["anthropic-version"] = "2023-06-01"
         
         return headers
-    
-    def select_model(self, provider: Provider, requested_model: str) -> str:
-        """Select appropriate model based on requested Claude model"""
-        # 判断是大模型还是小模型的逻辑
-        requested_lower = requested_model.lower()
-        
-        # Opus和Sonnet被认为是大模型
-        if any(keyword in requested_lower for keyword in ['opus', 'sonnet']):
-            target_model = provider.big_model
-        # Haiku被认为是小模型
-        elif 'haiku' in requested_lower:
-            target_model = provider.small_model
-        else:
-            # 默认使用大模型
-            target_model = provider.big_model
-        
-        # 如果配置的模型名为"passthrough"，则透传原始请求的模型名
-        if target_model == "passthrough":
-            return requested_model
-        
-        return target_model
     
     def get_request_url(self, provider: Provider, endpoint: str) -> str:
         """Get full request URL for a provider"""
@@ -225,17 +360,14 @@ class ProviderManager:
         return f"{base_url}/{endpoint}"
     
     def get_status(self) -> Dict[str, Any]:
-        """Get status of all providers"""
+        """Get status of all providers and model routes"""
         status = {
             "total_providers": len(self.providers),
             "healthy_providers": len(self.get_healthy_providers()),
-            "current_provider": None,
+            "selection_strategy": self.selection_strategy.value,
+            "total_model_routes": len(self.model_routes),
             "providers": []
         }
-        
-        current = self.get_current_provider()
-        if current:
-            status["current_provider"] = current.name
         
         cooldown = self.get_failure_cooldown()
         for provider in self.providers:
@@ -247,8 +379,7 @@ class ProviderManager:
                 "healthy": provider.is_healthy(cooldown),
                 "failure_count": provider.failure_count,
                 "last_failure_time": provider.last_failure_time,
-                "big_model": provider.big_model,
-                "small_model": provider.small_model
+                "proxy": provider.proxy
             }
             status["providers"].append(provider_status)
         
@@ -257,3 +388,7 @@ class ProviderManager:
     def reload_config(self):
         """Reload configuration from file"""
         self.load_config()
+    
+    def shutdown(self):
+        """Shutdown the provider manager"""
+        pass

@@ -1,80 +1,101 @@
-# Claude Code Provider Balancer Configuration
-# 支持多个Claude Code服务商和OpenAI兼容服务商
+# Claude Code Provider Balancer - Simplified Configuration
+# 清晰的模型路由配置
 
+# 服务商基础配置（只定义连接信息）
 providers:
-  # Anthropic官方API
+  - name: "yourapi"
+    type: "anthropic"
+    base_url: "https://yourapi.cn/v1"
+    auth_type: "auth_token"
+    auth_value: "sk-xxxxxfakekeyxxxx"
+    enabled: true
+
   - name: "anthropic_official"
     type: "anthropic"
     base_url: "https://api.anthropic.com"
     auth_type: "api_key"
-    auth_value: "sk-ant-your-key-here"
-    big_model: "claude-3-5-sonnet-20241022"
-    small_model: "claude-3-5-haiku-20241022"
+    auth_value: "passthrough"
+    proxy: "http://127.0.0.1:10808"
     enabled: true
-    
-  # 使用auth_token的Claude Code服务商示例
-  - name: "claude_provider_1"
-    type: "anthropic"
-    base_url: "https://claude-api-provider-1.com"
-    auth_type: "auth_token"
-    auth_value: "your-auth-token-here"
-    big_model: "claude-3-5-sonnet-20241022"
-    small_model: "claude-3-5-haiku-20241022"
-    enabled: true
-    
-  # 另一个Claude Code服务商示例
-  - name: "claude_provider_2" 
-    type: "anthropic"
-    base_url: "https://claude-api-provider-2.com"
-    auth_type: "api_key"
-    auth_value: "sk-ant-another-key"
-    big_model: "claude-3-5-sonnet-20241022"
-    small_model: "claude-3-5-haiku-20241022"
-    enabled: true
-    
-  # OpenRouter作为OpenAI兼容服务商
+
   - name: "openrouter"
     type: "openai"
     base_url: "https://openrouter.ai/api/v1"
     auth_type: "api_key"
-    auth_value: "sk-or-your-openrouter-key"
-    big_model: "google/gemini-2.5-pro-preview"
-    small_model: "google/gemini-2.0-flash-lite-001"
+    auth_value: "sk-or-v1-xxxxfakekeyxxxx"
     enabled: true
-    
-  # 其他OpenAI兼容服务商示例
-  - name: "deepseek"
-    type: "openai"
-    base_url: "https://api.deepseek.com/v1"
-    auth_type: "api_key"
-    auth_value: "sk-your-deepseek-key"
-    big_model: "deepseek-chat"
-    small_model: "deepseek-chat"
-    enabled: true
-    
-  # 透传模式示例 - 不修改客户端请求的模型名称
-  - name: "passthrough_provider"
-    type: "anthropic"
-    base_url: "https://api.claude-provider.com"
-    auth_type: "api_key"
-    auth_value: "sk-your-key-here"
-    big_model: "passthrough"     # 使用"passthrough"来透传原始模型名
-    small_model: "passthrough"   # 两个都设置为passthrough，或者只设置其中一个
-    enabled: true
+
+# 模型路由配置（核心逻辑）
+model_routes:
+  # 精确匹配大模型
+  "claude-3-5-sonnet-20241022":
+    - provider: "yourapi"
+      model: "claude-3-5-sonnet-20241022"
+      priority: 1
+    - provider: "anthropic_official"
+      model: "claude-3-5-sonnet-20241022"
+      priority: 2
+    - provider: "openrouter"
+      model: "anthropic/claude-sonnet-4"
+      priority: 3
+
+  # 精确匹配小模型（yourapi不支持，所以不在列表中）
+  "claude-3-5-haiku-20241022":
+    - provider: "anthropic_official"
+      model: "claude-3-5-haiku-20241022"
+      priority: 1
+    - provider: "openrouter"
+      model: "anthropic/claude-3.5-haiku"
+      priority: 2
+
+  # 通配符匹配 - 所有sonnet模型
+  "*sonnet*":
+    - provider: "yourapi"
+      model: "passthrough"  # 透传原始模型名
+      priority: 1
+    - provider: "anthropic_official"
+      model: "passthrough"
+      priority: 2
+    - provider: "openrouter"
+      model: "anthropic/claude-sonnet-4"  # 映射到openrouter的模型名
+      priority: 3
+
+  # 通配符匹配 - 所有haiku模型
+  "*haiku*":
+    - provider: "anthropic_official"
+      model: "passthrough"
+      priority: 1
+    - provider: "openrouter"
+      model: "anthropic/claude-3.5-haiku"
+      priority: 2
+
+  # 通配符匹配 - 所有opus模型
+  "*opus*":
+    - provider: "yourapi"
+      model: "passthrough"
+      priority: 1
+    - provider: "anthropic_official"
+      model: "passthrough"
+      priority: 2
 
 # 全局设置
 settings:
+  # 模型选择策略
+  selection_strategy: "priority"  # priority | round_robin | random
+  
   # 故障服务商的冷却时间（秒）
   failure_cooldown: 60
   # 请求超时时间（秒）
   request_timeout: 30
-  # 日志级别
+  
+  # 日志设置
   log_level: "DEBUG"
-  # 日志颜色（终端控制台输出时是否启用颜色）
   log_color: true
+  
   # 服务器配置
   host: "127.0.0.1"
   port: 8080
+  
   # 应用信息
   app_name: "Claude Code Provider Balancer"
-  app_version: "0.3.0"
+  app_version: "0.5.0"
