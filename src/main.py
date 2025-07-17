@@ -147,7 +147,7 @@ _exception_handler_lock = threading.RLock()
 _exception_handler_depth = threading.local()
 
 # 请求去重状态管理
-_pending_requests: Dict[str, asyncio.Future] = {}
+_pending_requests: Dict[str, Tuple[asyncio.Future, str]] = {}
 _request_cleanup_lock = threading.RLock()
 
 def _generate_request_signature(data: Dict[str, Any]) -> str:
@@ -188,7 +188,7 @@ def _complete_and_cleanup_request(signature: str, result: Any):
             # 设置 Future 结果并清理
             with _request_cleanup_lock:
                 if signature in _pending_requests:
-                    future = _pending_requests[signature]
+                    future, _ = _pending_requests[signature]
                     if not future.done():
                         future.set_result(result)
                     del _pending_requests[signature]
@@ -205,23 +205,24 @@ def _complete_and_cleanup_request(signature: str, result: Any):
 async def _handle_duplicate_request(signature: str, request_id: str) -> Optional[Any]:
     """处理重复请求，如果是重复请求则等待原请求完成"""
     future_to_wait = None
+    original_request_id = None
 
     with _request_cleanup_lock:
         if signature in _pending_requests:
             # 这是重复请求，获取 Future 但不在锁内等待
-            future_to_wait = _pending_requests[signature]
+            future_to_wait, original_request_id = _pending_requests[signature]
             info(
                 LogRecord(
                     LogEvent.REQUEST_RECEIVED.value,
                     "Duplicate request detected, waiting for original request to complete",
                     request_id,
-                    {"signature": signature[:16] + "..."},
+                    {"original_request_id": original_request_id, "signature": signature[:16] + "..."},
                 )
             )
         else:
             # 这是新请求，创建 Future 并记录
             future = asyncio.Future()
-            _pending_requests[signature] = future
+            _pending_requests[signature] = (future, request_id)
             return None  # 表示这是新请求，继续处理
 
     # 在锁外等待原请求完成
@@ -233,7 +234,7 @@ async def _handle_duplicate_request(signature: str, request_id: str) -> Optional
                     LogEvent.REQUEST_COMPLETED.value,
                     "Duplicate request completed via original request",
                     request_id,
-                    {"signature": signature[:16] + "..."},
+                    {"original_request_id": original_request_id, "signature": signature[:16] + "..."},
                 )
             )
             return result
@@ -244,7 +245,7 @@ async def _handle_duplicate_request(signature: str, request_id: str) -> Optional
                     LogEvent.REQUEST_FAILED.value,
                     "Duplicate request failed via original request",
                     request_id,
-                    {"signature": signature[:16] + "...", "error": str(e)},
+                    {"original_request_id": original_request_id, "signature": signature[:16] + "...", "error": str(e)},
                 )
             )
             raise e
