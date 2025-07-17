@@ -8,7 +8,7 @@ This is a **Claude Code Provider Balancer** - a FastAPI-based proxy service that
 
 ## Key Features
 
-- **Multi-Provider Support**: Supports both Anthropic API-compatible and OpenAI-compatible providers
+- **Multi-Provider Support**: Supports Anthropic API-compatible, OpenAI-compatible, and Zed providers
 - **Intelligent Load Balancing**: Priority-based, round-robin, and random selection strategies
 - **Automatic Failover**: Seamless switching to healthy providers when failures occur
 - **Health Monitoring**: Tracks provider status with configurable cooldown periods
@@ -19,6 +19,7 @@ This is a **Claude Code Provider Balancer** - a FastAPI-based proxy service that
 - **Token Counting**: Built-in token estimation functionality
 - **Streaming Support**: Full support for streaming responses with proper error handling
 - **Request Deduplication**: Prevents duplicate requests with intelligent caching
+- **Zed Integration**: Advanced thread management with context-aware rotation and mode selection
 
 ## Architecture
 
@@ -114,12 +115,16 @@ uv add --group dev package_name
 ```yaml
 providers:
   - name: "provider_name"
-    type: "anthropic"  # or "openai"
+    type: "anthropic"  # or "openai" or "zed"
     base_url: "https://api.example.com"
     auth_type: "api_key"  # or "auth_token"
     auth_value: "your-api-key"
     enabled: true
     proxy: "http://proxy:8080"  # optional
+    zed_config:  # Zed-specific configuration
+      default_mode: "normal"  # normal | burn
+      max_context_tokens: 120000
+      thread_ttl: 3600
 
 model_routes:
   "claude-3-5-sonnet-20241022":
@@ -203,7 +208,7 @@ The system has comprehensive streaming support with proper error detection:
 
 1. **Request Validation**: Pydantic models ensure data integrity
 2. **Provider Selection**: Choose optimal provider based on model and health
-3. **Format Conversion**: Convert between Anthropic and OpenAI formats as needed
+3. **Format Conversion**: Convert between Anthropic, OpenAI, and Zed formats as needed
 4. **Response Handling**: Stream or return complete responses
 5. **Error Handling**: Graceful fallback to alternative providers
 
@@ -310,3 +315,60 @@ uvicorn src.main:app --host 0.0.0.0 --port 8080 --workers 4
 - **Configuration Updates**: Use `/providers/reload` for zero-downtime updates
 
 This load balancer provides a robust, production-ready solution for managing multiple Claude Code providers with intelligent failover and comprehensive monitoring capabilities.
+
+## Zed Provider Integration
+
+The system includes advanced support for Zed providers, offering:
+
+### Zed-Specific Features
+
+- **Thread Management**: Automatic thread creation and rotation based on context limits
+- **Mode Selection**: Smart selection between normal and burn modes
+- **Context Optimization**: Intelligent context window management
+- **Cost Control**: Automatic cost optimization through mode selection
+
+### Zed Configuration Example
+
+```yaml
+providers:
+  - name: "zed_provider"
+    type: "zed"
+    base_url: "https://zed-api.example.com"
+    auth_type: "api_key"
+    auth_value: "your-zed-api-key"
+    enabled: true
+    zed_config:
+      default_mode: "normal"
+      auto_burn_mode_triggers:
+        - "complex_coding_task"
+        - "multi_step_analysis"
+      context_management:
+        max_context_tokens: 120000
+        rotation_threshold: 0.8
+        summarization_method: "ai"
+      thread_management:
+        ttl: 3600
+        auto_rotate: true
+        task_based_isolation: true
+```
+
+### Zed Request Format
+
+Zed uses a unique nested request structure:
+
+```json
+{
+    "thread_id": "uuid",
+    "prompt_id": "uuid", 
+    "intent": "user_prompt",
+    "mode": "normal",
+    "provider": "anthropic",
+    "provider_request": {
+        "model": "claude-sonnet-4",
+        "messages": [...],
+        "max_tokens": 8192
+    }
+}
+```
+
+For detailed Zed integration documentation, see [docs/zed-provider-support.md](docs/zed-provider-support.md).

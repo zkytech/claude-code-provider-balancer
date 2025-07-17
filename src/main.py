@@ -152,7 +152,25 @@ _request_cleanup_lock = threading.RLock()
 
 def _generate_request_signature(data: Dict[str, Any]) -> str:
     """为请求生成唯一签名用于去重"""
-    # 提取关键字段用于签名，排除 stream 字段让流式和非流式请求共享去重
+    
+    # 检查是否为流式请求
+    is_stream = data.get("stream", False)
+    
+    # 流式请求禁用去重，因为StreamingResponse不能被重复消费
+    if is_stream:
+        import uuid
+        unique_stream_signature = f"stream_{uuid.uuid4().hex}"
+        debug(
+            LogRecord(
+                "streaming_dedup_disabled",
+                f"Streaming request deduplication disabled, using unique signature",
+                None,
+                {"signature": unique_stream_signature[:16] + "..."},
+            )
+        )
+        return unique_stream_signature
+    
+    # 非流式请求正常去重
     signature_data = {
         "model": data.get("model", ""),
         "messages": data.get("messages", []),
@@ -181,6 +199,7 @@ def _cleanup_completed_request(signature: str):
         if signature in _pending_requests:
             del _pending_requests[signature]
 
+
 def _complete_and_cleanup_request(signature: str, result: Any):
     """完成请求并清理去重状态"""
     if signature:
@@ -188,12 +207,51 @@ def _complete_and_cleanup_request(signature: str, result: Any):
             # 设置 Future 结果并清理
             with _request_cleanup_lock:
                 if signature in _pending_requests:
-                    future, _ = _pending_requests[signature]
+                    future, original_request_id = _pending_requests[signature]
                     if not future.done():
                         future.set_result(result)
                     del _pending_requests[signature]
+                    
+                    # 根据结果类型确定清理原因
+                    if isinstance(result, Exception):
+                        cleanup_reason = "request_failed"
+                        message = f"Request failed and cleaned up (duplicate request cleared): {str(result)}"
+                    elif isinstance(result, str):
+                        if "streaming" in result:
+                            cleanup_reason = "streaming_completed"
+                            message = f"Streaming request completed and cleaned up (duplicate request cleared)"
+                        else:
+                            cleanup_reason = "request_completed"
+                            message = f"Request completed and cleaned up (duplicate request cleared)"
+                    else:
+                        cleanup_reason = "request_completed"
+                        message = f"Request completed and cleaned up (duplicate request cleared)"
+                    
+                    info(
+                        LogRecord(
+                            "request_cleanup",
+                            message,
+                            original_request_id,
+                            {
+                                "request_signature": signature[:16] + "...",
+                                "result_type": type(result).__name__,
+                                "pending_requests_count": len(_pending_requests),
+                                "cleanup_reason": cleanup_reason
+                            },
+                        )
+                    )
+                else:
+                    # 这种情况是正常的，因为非重复请求不会在pending_requests中
+                    debug(
+                        LogRecord(
+                            "request_cleanup_skip",
+                            f"No pending request found for signature (non-duplicate request)",
+                            None,
+                            {"signature": signature[:16] + "..."},
+                        )
+                    )
         except Exception as e:
-            debug(
+            error(
                 LogRecord(
                     "request_cleanup_error",
                     f"Error during request cleanup: {str(e)}",
@@ -1590,6 +1648,7 @@ async def handle_anthropic_streaming_response_from_openai_stream(
     Consumes an OpenAI stream and yields Anthropic-compatible SSE events.
     BUGFIX: Correctly handles content block indexing for mixed text/tool_use.
     """
+    import asyncio
 
     anthropic_message_id = f"msg_stream_{request_id}_{uuid.uuid4().hex[:8]}"
 
@@ -1619,6 +1678,26 @@ async def handle_anthropic_streaming_response_from_openai_stream(
     stream_status_code = 200
     stream_final_message = "Streaming request completed successfully."
     stream_log_event = LogEvent.REQUEST_COMPLETED.value
+    
+    # 添加超时控制
+    streaming_start_time = time.time()
+    last_activity = time.time()
+    # 从配置获取超时设置，如果provider_manager不可用则使用默认值
+    streaming_timeout = provider_manager.settings.get('streaming_timeout', 120) if provider_manager else 120
+    streaming_activity_timeout = provider_manager.settings.get('streaming_activity_timeout', 60) if provider_manager else 60
+    
+    info(
+        LogRecord(
+            "openai_streaming_start",
+            f"Starting OpenAI stream conversion with timeout protection",
+            request_id,
+            {
+                "anthropic_message_id": anthropic_message_id,
+                "streaming_timeout": streaming_timeout,
+                "streaming_activity_timeout": streaming_activity_timeout
+            },
+        )
+    )
 
     try:
         message_start_event_data = {
@@ -1638,11 +1717,47 @@ async def handle_anthropic_streaming_response_from_openai_stream(
         yield f"event: ping\ndata: {json.dumps({'type': 'ping'})}\n\n"
 
         async for chunk in openai_stream:
+            # 检查超时
+            current_time = time.time()
+            if current_time - streaming_start_time > streaming_timeout:
+                info(
+                    LogRecord(
+                        "openai_streaming_timeout",
+                        f"OpenAI stream timeout",
+                        request_id,
+                        {
+                            "timeout_duration": streaming_timeout,
+                            "elapsed_time": current_time - streaming_start_time,
+                            "phase": "openai_streaming"
+                        },
+                    )
+                )
+                raise asyncio.TimeoutError(f"OpenAI streaming timeout after {streaming_timeout}s")
+            
+            # 检查活动超时
+            if current_time - last_activity > streaming_activity_timeout:
+                info(
+                    LogRecord(
+                        "openai_streaming_activity_timeout",
+                        f"OpenAI stream activity timeout",
+                        request_id,
+                        {
+                            "activity_timeout": streaming_activity_timeout,
+                            "inactive_duration": current_time - last_activity,
+                            "elapsed_time": current_time - streaming_start_time
+                        },
+                    )
+                )
+                raise asyncio.TimeoutError(f"OpenAI streaming activity timeout after {streaming_activity_timeout}s of inactivity")
+            
             if not chunk.choices:
                 continue
 
             delta = chunk.choices[0].delta
             openai_finish_reason = chunk.choices[0].finish_reason
+            
+            # 更新活动时间
+            last_activity = current_time
 
             if delta.content:
                 output_token_count += len(enc.encode(delta.content))
@@ -1796,6 +1911,21 @@ async def handle_anthropic_streaming_response_from_openai_stream(
         yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
 
         # 流式传输成功完成，调用成功回调
+        total_time = time.time() - streaming_start_time
+        info(
+            LogRecord(
+                "openai_streaming_completed",
+                f"OpenAI stream conversion completed successfully",
+                request_id,
+                {
+                    "output_tokens": output_token_count,
+                    "stop_reason": final_anthropic_stop_reason,
+                    "streaming_duration": total_time,
+                    "anthropic_message_id": anthropic_message_id
+                },
+            )
+        )
+        
         if success_callback:
             success_callback()
 
@@ -2189,9 +2319,43 @@ async def create_message_proxy(
                     first_lines = []
                     line_iterator = anthropic_response.aiter_lines()
 
-                    # 预读前几行检查错误
-                    for _ in range(5):  # 检查前5行
+                    # 预读前几行检查错误（添加超时保护）
+                    import asyncio
+                    
+                    preread_start_time = time.time()
+                    preread_timeout = provider_manager.settings.get('streaming_timeout', 120) if provider_manager else 120
+                    
+                    info(
+                        LogRecord(
+                            "streaming_preread_start",
+                            f"Starting pre-read phase for provider: {current_provider.name}",
+                            request_id,
+                            {
+                                "provider": current_provider.name,
+                                "preread_timeout": preread_timeout
+                            },
+                        )
+                    )
+                    
+                    for i in range(5):  # 检查前5行
                         try:
+                            # 添加超时检查
+                            if time.time() - preread_start_time > preread_timeout:
+                                info(
+                                    LogRecord(
+                                        "streaming_preread_timeout",
+                                        f"Pre-read timeout for provider: {current_provider.name}",
+                                        request_id,
+                                        {
+                                            "provider": current_provider.name,
+                                            "timeout_duration": preread_timeout,
+                                            "elapsed_time": time.time() - preread_start_time,
+                                            "preread_lines": i
+                                        },
+                                    )
+                                )
+                                raise asyncio.TimeoutError(f"Pre-read timeout after {preread_timeout}s")
+                            
                             line = await line_iterator.__anext__()
                             first_lines.append(line)
                             if line.strip() == "event: error":
@@ -2219,15 +2383,28 @@ async def create_message_proxy(
 
                     # Handle Anthropic streaming response directly
                     async def anthropic_stream_generator():
+                        import asyncio
+                        
                         try:
                             line_count = 0
                             byte_count = 0
-                            debug(
+                            start_time = time.time()
+                            last_activity = time.time()
+                            # 从配置文件获取超时设置
+                            streaming_timeout = provider_manager.settings.get('streaming_timeout', 120) if provider_manager else 120
+                            streaming_activity_timeout = provider_manager.settings.get('streaming_activity_timeout', 30) if provider_manager else 30
+                            
+                            info(
                                 LogRecord(
                                     "streaming_start",
                                     f"Starting stream generation for provider: {current_provider.name}",
                                     request_id,
-                                    {"provider": current_provider.name, "is_fallback": attempt > 0},
+                                    {
+                                        "provider": current_provider.name, 
+                                        "is_fallback": attempt > 0,
+                                        "streaming_timeout": streaming_timeout,
+                                        "streaming_activity_timeout": streaming_activity_timeout
+                                    },
                                 )
                             )
 
@@ -2238,8 +2415,26 @@ async def create_message_proxy(
 
                             # 首先输出预读的行
                             for line in first_lines:
+                                # 检查超时
+                                if time.time() - start_time > streaming_timeout:
+                                    info(
+                                        LogRecord(
+                                            "streaming_timeout",
+                                            f"Stream timeout during pre-read lines for provider: {current_provider.name}",
+                                            request_id,
+                                            {
+                                                "provider": current_provider.name,
+                                                "timeout_duration": streaming_timeout,
+                                                "elapsed_time": time.time() - start_time,
+                                                "phase": "pre_read"
+                                            },
+                                        )
+                                    )
+                                    raise asyncio.TimeoutError(f"Streaming timeout after {streaming_timeout}s during pre-read")
+                                
                                 line_count += 1
                                 byte_count += len(line)
+                                last_activity = time.time()
 
                                 # 保存前几行和后几行用于调试
                                 if len(first_few_lines) < 5:
@@ -2251,9 +2446,44 @@ async def create_message_proxy(
 
                             # 然后处理剩余的响应
                             async for line in line_iterator:
+                                # 检查超时
+                                current_time = time.time()
+                                if current_time - start_time > streaming_timeout:
+                                    info(
+                                        LogRecord(
+                                            "streaming_timeout",
+                                            f"Stream timeout during streaming for provider: {current_provider.name}",
+                                            request_id,
+                                            {
+                                                "provider": current_provider.name,
+                                                "timeout_duration": streaming_timeout,
+                                                "elapsed_time": current_time - start_time,
+                                                "phase": "streaming"
+                                            },
+                                        )
+                                    )
+                                    raise asyncio.TimeoutError(f"Streaming timeout after {streaming_timeout}s")
+                                
+                                # 检查活动超时（无新数据）
+                                if current_time - last_activity > streaming_activity_timeout:
+                                    info(
+                                        LogRecord(
+                                            "streaming_activity_timeout",
+                                            f"Stream activity timeout for provider: {current_provider.name}",
+                                            request_id,
+                                            {
+                                                "provider": current_provider.name,
+                                                "activity_timeout": streaming_activity_timeout,
+                                                "inactive_duration": current_time - last_activity,
+                                                "elapsed_time": current_time - start_time
+                                            },
+                                        )
+                                    )
+                                    raise asyncio.TimeoutError(f"Streaming activity timeout after {streaming_activity_timeout}s of inactivity")
                                 # 不要过滤空行！SSE 格式需要空行作为事件分隔符
                                 line_count += 1
                                 byte_count += len(line)
+                                last_activity = current_time
 
                                 # 错误检测已经在预检查阶段完成，这里不需要重复检查
 
@@ -2309,6 +2539,9 @@ async def create_message_proxy(
                                 )
 
                             # 只有在流式传输完全成功后才标记成功
+                            end_time = time.time()
+                            total_time = end_time - start_time
+                            
                             current_provider.mark_success()
                             if provider_manager:
                                 provider_manager.mark_provider_success(current_provider.name)
@@ -2324,18 +2557,26 @@ async def create_message_proxy(
                                         "bytes_streamed": byte_count,
                                         "is_fallback": attempt > 0,
                                         "attempt_number": attempt + 1,
-                                        "fallback_reason": "provider_failure" if attempt > 0 else "primary_success"
+                                        "fallback_reason": "provider_failure" if attempt > 0 else "primary_success",
+                                        "streaming_duration": total_time
                                     },
                                 )
                             )
                         except Exception as e:
                             # 流式传输过程中出现异常
+                            elapsed_time = time.time() - start_time
+                            
                             error(
                                 LogRecord(
                                     "streaming_error",
                                     f"Streaming failed for provider: {current_provider.name}",
                                     request_id,
-                                    data={"provider": current_provider.name, "error": str(e)},
+                                    data={
+                                        "provider": current_provider.name, 
+                                        "error": str(e), 
+                                        "elapsed_time": elapsed_time,
+                                        "error_type": type(e).__name__
+                                    },
                                 ),
                                 exc=e
                             )
@@ -2398,6 +2639,8 @@ async def create_message_proxy(
                     current_provider.mark_success()
                     if provider_manager:
                         provider_manager.mark_provider_success(current_provider.name)
+                    
+                    # 非流式请求完成
                     response = JSONResponse(content=anthropic_response_data)
                     return await _complete_request_and_cleanup(response)
 
@@ -2611,15 +2854,15 @@ async def create_message_proxy(
 
                 # 根据错误类型选择合适的Anthropic错误类型
                 if http_status_code == 400:
-                    anthropic_error_type = AnthropicErrorType.INVALID_REQUEST_ERROR
+                    anthropic_error_type = AnthropicErrorType.INVALID_REQUEST
                 elif http_status_code == 401:
-                    anthropic_error_type = AnthropicErrorType.AUTHENTICATION_ERROR
+                    anthropic_error_type = AnthropicErrorType.AUTHENTICATION
                 elif http_status_code == 403:
-                    anthropic_error_type = AnthropicErrorType.PERMISSION_ERROR
+                    anthropic_error_type = AnthropicErrorType.PERMISSION
                 elif http_status_code == 404:
-                    anthropic_error_type = AnthropicErrorType.NOT_FOUND_ERROR
+                    anthropic_error_type = AnthropicErrorType.NOT_FOUND
                 elif http_status_code == 429:
-                    anthropic_error_type = AnthropicErrorType.RATE_LIMIT_ERROR
+                    anthropic_error_type = AnthropicErrorType.RATE_LIMIT
                 else:
                     anthropic_error_type = AnthropicErrorType.API_ERROR
 
