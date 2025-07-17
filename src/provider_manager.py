@@ -13,6 +13,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
+import httpx
 
 
 class ProviderType(str, Enum):
@@ -389,6 +390,102 @@ class ProviderManager:
         """Reload configuration from file"""
         self.load_config()
     
+    def should_failover_on_error(self, error: Exception, http_status_code: Optional[int] = None, error_type: Optional[str] = None) -> bool:
+        """
+        判断是否应该对错误进行failover重试
+        
+        Args:
+            error: 捕获的异常
+            http_status_code: HTTP状态码（如果有）
+            error_type: 错误类型字符串（如果有）
+            
+        Returns:
+            bool: True表示应该failover，False表示直接返回给客户端
+        """
+        # 获取配置中的failover错误类型和HTTP状态码
+        failover_error_types = self.settings.get('failover_error_types', [])
+        failover_http_codes = self.settings.get('failover_http_codes', [])
+        
+        # 1. 检查HTTP状态码
+        if http_status_code and http_status_code in failover_http_codes:
+            return True
+        
+        # 2. 检查明确的错误类型
+        if error_type and error_type in failover_error_types:
+            return True
+        
+        # 3. 检查异常类型
+        error_class_name = error.__class__.__name__.lower()
+        error_message = str(error).lower()
+        
+        # 网络连接错误
+        if isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout)):
+            return "connection_error" in failover_error_types or "connect_timeout" in failover_error_types
+        
+        # 读取超时错误
+        if isinstance(error, httpx.ReadTimeout):
+            return "read_timeout" in failover_error_types or "timeout_error" in failover_error_types
+        
+        # 池超时错误
+        if isinstance(error, httpx.PoolTimeout):
+            return "pool_timeout" in failover_error_types or "timeout_error" in failover_error_types
+        
+        # 一般超时错误
+        if isinstance(error, httpx.TimeoutException):
+            return "timeout_error" in failover_error_types
+        
+        # SSL错误
+        if "ssl" in error_class_name or "certificate" in error_message:
+            return "ssl_error" in failover_error_types
+        
+        # 检查错误消息中的关键词
+        for error_type_key in failover_error_types:
+            if error_type_key.lower() in error_message:
+                return True
+        
+        # 默认不进行failover（直接返回给客户端）
+        return False
+    
+    def get_error_classification(self, error: Exception, http_status_code: Optional[int] = None) -> tuple[str, bool]:
+        """
+        获取错误分类信息
+        
+        Args:
+            error: 捕获的异常
+            http_status_code: HTTP状态码（如果有）
+            
+        Returns:
+            tuple: (error_type, should_failover)
+        """
+        # 确定错误类型
+        if isinstance(error, httpx.ConnectError):
+            error_type = "connection_error"
+        elif isinstance(error, httpx.ReadTimeout):
+            error_type = "read_timeout"
+        elif isinstance(error, httpx.ConnectTimeout):
+            error_type = "connect_timeout"
+        elif isinstance(error, httpx.PoolTimeout):
+            error_type = "pool_timeout"
+        elif isinstance(error, httpx.TimeoutException):
+            error_type = "timeout_error"
+        elif http_status_code == 500:
+            error_type = "internal_server_error"
+        elif http_status_code == 502:
+            error_type = "bad_gateway"
+        elif http_status_code == 503:
+            error_type = "service_unavailable"
+        elif http_status_code == 504:
+            error_type = "gateway_timeout"
+        elif http_status_code == 429:
+            error_type = "rate_limit_exceeded"
+        else:
+            error_type = "unknown_error"
+        
+        # 判断是否应该failover
+        should_failover = self.should_failover_on_error(error, http_status_code, error_type)
+        
+        return error_type, should_failover
+
     def shutdown(self):
         """Shutdown the provider manager"""
         pass

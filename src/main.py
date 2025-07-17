@@ -46,22 +46,22 @@ load_dotenv()
 def _create_body_summary(raw_body: dict) -> dict:
     """Create a summary of the request body for logging purposes."""
     summary = {}
-    
+
     # Include basic request info
     if "model" in raw_body:
         summary["model"] = raw_body["model"]
-    
+
     if "max_tokens" in raw_body:
         summary["max_tokens"] = raw_body["max_tokens"]
-    
+
     if "stream" in raw_body:
         summary["stream"] = raw_body["stream"]
-    
+
     # Summarize messages
     if "messages" in raw_body and isinstance(raw_body["messages"], list):
         messages = raw_body["messages"]
         summary["messages_count"] = len(messages)
-        
+
         # Include role info and content length for each message
         messages_summary = []
         for msg in messages:
@@ -79,9 +79,9 @@ def _create_body_summary(raw_body: dict) -> dict:
                 else:
                     msg_summary["content_type"] = type(content).__name__
             messages_summary.append(msg_summary)
-        
+
         summary["messages"] = messages_summary
-    
+
     # Include other important fields
     for key in ["temperature", "top_p", "top_k", "stop_sequences", "tools", "system"]:
         if key in raw_body:
@@ -93,7 +93,7 @@ def _create_body_summary(raw_body: dict) -> dict:
                 summary[key + "_preview"] = system_content[:100] + "..." if len(system_content) > 100 else system_content
             else:
                 summary[key] = raw_body[key]
-    
+
     return summary
 
 
@@ -121,7 +121,7 @@ class Settings(BaseSettings):
 try:
     provider_manager = ProviderManager()
     settings = Settings()
-    
+
     # Override with provider config settings if available
     provider_settings = provider_manager.settings
     if provider_settings:
@@ -158,16 +158,22 @@ def _generate_request_signature(data: Dict[str, Any]) -> str:
         "messages": data.get("messages", []),
         "system": data.get("system", ""),
         "tools": data.get("tools", []),
-        "max_tokens": data.get("max_tokens", 0),
         "temperature": data.get("temperature", 0),
         # 注意：不包含 stream 字段，让流式和非流式请求共享去重
     }
     
+    # 根据配置决定是否包含 max_tokens 字段
+    include_max_tokens = provider_manager.settings.get("deduplication", {}).get("include_max_tokens_in_signature", True) if provider_manager else True
+    if include_max_tokens:
+        signature_data["max_tokens"] = data.get("max_tokens", 0)
+
     # 将数据转换为可哈希的字符串
     signature_str = json.dumps(signature_data, sort_keys=True, separators=(',', ':'))
-    
+
     # 生成 SHA256 哈希
-    return hashlib.sha256(signature_str.encode('utf-8')).hexdigest()
+    signature_hash = hashlib.sha256(signature_str.encode('utf-8')).hexdigest()
+
+    return signature_hash
 
 def _cleanup_completed_request(signature: str):
     """清理已完成的请求"""
@@ -199,7 +205,7 @@ def _complete_and_cleanup_request(signature: str, result: Any):
 async def _handle_duplicate_request(signature: str, request_id: str) -> Optional[Any]:
     """处理重复请求，如果是重复请求则等待原请求完成"""
     future_to_wait = None
-    
+
     with _request_cleanup_lock:
         if signature in _pending_requests:
             # 这是重复请求，获取 Future 但不在锁内等待
@@ -217,7 +223,7 @@ async def _handle_duplicate_request(signature: str, request_id: str) -> Optional
             future = asyncio.Future()
             _pending_requests[signature] = future
             return None  # 表示这是新请求，继续处理
-    
+
     # 在锁外等待原请求完成
     if future_to_wait:
         try:
@@ -242,7 +248,7 @@ async def _handle_duplicate_request(signature: str, request_id: str) -> Optional
                 )
             )
             raise e
-    
+
     return None
 
 
@@ -265,7 +271,7 @@ class LogRecord:
 
 class ColoredConsoleFormatter(logging.Formatter):
     """Console formatter with color support based on log level."""
-    
+
     # ANSI color codes
     COLORS = {
         'DEBUG': '\033[36m',    # Cyan
@@ -275,28 +281,28 @@ class ColoredConsoleFormatter(logging.Formatter):
         'CRITICAL': '\033[95m', # Magenta
     }
     RESET = '\033[0m'
-    
+
     def format(self, record: logging.LogRecord) -> str:
         # Get the base JSON output
         log_dict = self._get_log_dict(record)
-        
+
         # Check if we should use colors (only for TTY output and when enabled)
         # Use globals() to get the current settings value at runtime
         current_settings = globals().get('settings')
         use_colors = (
-            current_settings is not None 
+            current_settings is not None
             and getattr(current_settings, 'log_color', True)
-            and hasattr(sys.stdout, 'isatty') 
+            and hasattr(sys.stdout, 'isatty')
             and sys.stdout.isatty()
         )
-        
+
         if use_colors:
             level_color = self.COLORS.get(record.levelname, '')
             formatted_json = json.dumps(log_dict, ensure_ascii=False)
             return f"{level_color}{formatted_json}{self.RESET}"
         else:
             return json.dumps(log_dict, ensure_ascii=False)
-    
+
     def _get_log_dict(self, record: logging.LogRecord) -> dict:
         """Extract log dictionary from record, similar to JSONFormatter logic."""
         header = {
@@ -321,7 +327,7 @@ class ColoredConsoleFormatter(logging.Formatter):
                     ),
                     "args": exc_value.args if hasattr(exc_value, "args") else [],
                 }
-        
+
         # Remove stack_trace for console output
         if (
             "detail" in header
@@ -333,7 +339,7 @@ class ColoredConsoleFormatter(logging.Formatter):
         elif "error" in header and header["error"]:
             if "stack_trace" in header["error"]:
                 del header["error"]["stack_trace"]
-        
+
         return header
 
 
@@ -427,11 +433,11 @@ if settings.log_file_path:
             log_file_path = os.path.join(project_root, settings.log_file_path)
         else:
             log_file_path = settings.log_file_path
-        
+
         log_dir = os.path.dirname(log_file_path)
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
-            
+
         # Add file handler to the configuration
         log_config["handlers"]["file"] = {
             "class": "logging.FileHandler",
@@ -439,10 +445,10 @@ if settings.log_file_path:
             "filename": log_file_path,
             "mode": "a",
         }
-        
+
         # Add file handler to the main logger
         log_config["loggers"][settings.app_name]["handlers"].append("file")
-        
+
     except Exception as e:
         _error_console.print(
             f"Failed to configure file logging to {settings.log_file_path}: {e}"
@@ -508,7 +514,7 @@ def _log(level: int, record: LogRecord, exc: Optional[Exception] = None) -> None
                     stack_trace="",
                     args=tuple(),
                 )
-            
+
             if not record.message and str(exc):
                 try:
                     record.message = str(exc)
@@ -760,12 +766,12 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
     url = provider_manager.get_request_url(provider, endpoint)
     headers = provider_manager.get_provider_headers(provider, original_headers)
     timeout = provider_manager.get_request_timeout()
-    
+
     # Configure proxy if specified
     proxy_config = None
     if provider.proxy:
         proxy_config = provider.proxy
-    
+
     debug(
         LogRecord(
             event="provider_request",
@@ -774,7 +780,7 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
             data={"provider": provider.name, "url": url, "type": provider.type.value, "proxy": proxy_config, "headers": {k: v for k, v in headers.items() if k.lower() not in ['authorization', 'x-api-key']}}
         )
     )
-    
+
     async with httpx.AsyncClient(timeout=timeout, proxy=proxy_config) as client:
         if stream:
             response = await client.post(url, json=data, headers=headers)
@@ -787,7 +793,7 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
                     error_text = error_text[:1000]  # 限制长度
                 except Exception:
                     error_text = "Failed to read response text"
-                    
+
                 error(
                     LogRecord(
                         event="provider_http_error",
@@ -807,7 +813,7 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
             return response
         else:
             response = await client.post(url, json=data, headers=headers)
-            
+
             # 记录响应状态和内容类型以便调试
             debug(
                 LogRecord(
@@ -822,7 +828,7 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
                     }
                 )
             )
-            
+
             # 在非流式请求中，检查错误状态并记录详细信息
             if response.status_code >= 400:
                 try:
@@ -832,7 +838,7 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
                     error_text = error_text[:1000]  # 限制长度
                 except Exception:
                     error_text = "Failed to read response text"
-                    
+
                 error(
                     LogRecord(
                         event="provider_http_error",
@@ -848,9 +854,9 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
                         }
                     )
                 )
-            
+
             response.raise_for_status()
-            
+
             try:
                 return response.json()
             except json.JSONDecodeError as e:
@@ -885,19 +891,19 @@ async def make_openai_request(provider: Provider, openai_params: Dict[str, Any],
             "HTTP-Referer": settings.referrer_url,
             "X-Title": settings.app_name,
         }
-        
+
         # 如果提供了原始请求头，合并它们（排除需要替换的头部）
         if original_headers:
             for key, value in original_headers.items():
                 # 跳过需要替换的认证相关头部、host头部和content-length头部
                 if key.lower() not in ['authorization', 'x-api-key', 'host', 'content-length']:
                     default_headers[key] = value
-        
+
         # Configure proxy if specified
         http_client = None
         if provider.proxy:
             http_client = httpx.AsyncClient(proxy=provider.proxy)
-        
+
         # 处理auth_value的passthrough模式
         api_key_value = provider.auth_value
         if provider.auth_value == "passthrough" and original_headers:
@@ -913,11 +919,11 @@ async def make_openai_request(provider: Provider, openai_params: Dict[str, Any],
                 elif key.lower() == "x-api-key":
                     api_key_value = value
                     break
-            
+
             # 如果没有找到有效的认证头，使用一个占位符（openai客户端需要这个参数）
             if api_key_value == "passthrough":
                 api_key_value = "placeholder-key"
-        
+
         client = openai.AsyncClient(
             api_key=api_key_value,
             base_url=provider.base_url,
@@ -925,7 +931,7 @@ async def make_openai_request(provider: Provider, openai_params: Dict[str, Any],
             timeout=provider_manager.get_request_timeout(),
             http_client=http_client,
         )
-        
+
         if stream:
             return await client.chat.completions.create(**openai_params)
         else:
@@ -1787,7 +1793,7 @@ async def handle_anthropic_streaming_response_from_openai_stream(
         }
         yield f"event: message_delta\ndata: {json.dumps(message_delta_event)}\n\n"
         yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
-        
+
         # 流式传输成功完成，调用成功回调
         if success_callback:
             success_callback()
@@ -1861,16 +1867,16 @@ def select_target_model_and_provider_options(client_model_name: str, request_id:
     """Selects multiple target model and provider options based on the client's request."""
     if not provider_manager:
         raise RuntimeError("Provider manager not initialized")
-    
+
     # 使用新的灵活选择方法
     options = provider_manager.select_model_and_provider_options(client_model_name)
-    
+
     if not options:
         return []
-    
+
     # 已经是 (target_model, provider) 格式
     result = options
-    
+
     # 记录选择的选项
     debug(
         LogRecord(
@@ -1890,7 +1896,7 @@ def select_target_model_and_provider_options(client_model_name: str, request_id:
             },
         )
     )
-    
+
     return result
 
 
@@ -1984,7 +1990,7 @@ async def _log_and_return_error_response(
         except Exception:
             # If logging fails, continue with response generation
             pass
-        
+
         return _build_anthropic_error_response(
             anthropic_error_type, error_message, status_code, provider_details
         )
@@ -2015,7 +2021,7 @@ async def create_message_proxy(
     request.state.request_id = request_id
     request.state.start_time_monotonic = time.monotonic()
     request_signature = None  # 用于最终清理
-    
+
     async def _complete_request_and_cleanup(result):
         """完成请求并清理去重状态"""
         _complete_and_cleanup_request(request_signature, result)
@@ -2037,18 +2043,18 @@ async def create_message_proxy(
 
     # 提取原始请求头
     original_headers = dict(request.headers)
-    
+
     # 标记请求开始，用于智能provider恢复
     if provider_manager:
         provider_manager.mark_request_start()
-    
+
     try:
         raw_body = await request.json()
-        
+
         # 生成请求签名并检查是否为重复请求
         request_signature = _generate_request_signature(raw_body)
         duplicate_result = await _handle_duplicate_request(request_signature, request_id)
-        
+
         if duplicate_result is not None:
             # 这是重复请求，返回原请求的结果
             return duplicate_result
@@ -2087,7 +2093,7 @@ async def create_message_proxy(
 
     is_stream = anthropic_request.stream or False
     provider_options = select_target_model_and_provider_options(anthropic_request.model, request_id)
-    
+
     if not provider_options:
         # No healthy providers available
         response = await _log_and_return_error_response(
@@ -2099,7 +2105,7 @@ async def create_message_proxy(
         )
         _complete_and_cleanup_request(request_signature, response)
         return response
-    
+
     # 使用第一个选项开始处理，后面可以fallback到其他选项
     target_model_name, current_provider = provider_options[0]
 
@@ -2141,20 +2147,20 @@ async def create_message_proxy(
         )
         _complete_and_cleanup_request(request_signature, response)
         return response
-    
+
     # 使用available options进行重试，而不是传统的provider切换
     max_retries = len(provider_options)
-    
+
     for attempt in range(max_retries):
         # 使用当前尝试的选项
         target_model_name, current_provider = provider_options[attempt]
-        
+
         try:
             if current_provider.type == ProviderType.ANTHROPIC:
                 # Direct Anthropic API request
                 anthropic_data = anthropic_request.model_dump(exclude_unset=True)
                 anthropic_data["model"] = target_model_name
-                
+
                 if is_stream:
                     debug(
                         LogRecord(
@@ -2169,41 +2175,52 @@ async def create_message_proxy(
                             }
                         )
                     )
-                    print(f"[DEBUG] Making anthropic request to provider: {current_provider.name}, request_id: {request_id}")
                     anthropic_response = await make_anthropic_request(
                         current_provider, anthropic_data, request_id, stream=True, original_headers=original_headers
                     )
-                    print(f"[DEBUG] Got anthropic response from provider: {current_provider.name}, request_id: {request_id}")
-                    
+
                     # 验证流式响应是否有效
                     if not hasattr(anthropic_response, 'aiter_lines'):
                         raise Exception(f"Invalid streaming response from provider {current_provider.name}")
-                    
+
                     # 在开始流式传输之前预检查错误事件
                     # 读取前几行来检测是否有 error event
-                    print(f"[DEBUG] Pre-checking for error events from provider: {current_provider.name}, request_id: {request_id}")
                     first_lines = []
                     line_iterator = anthropic_response.aiter_lines()
-                    
+
                     # 预读前几行检查错误
                     for _ in range(5):  # 检查前5行
                         try:
                             line = await line_iterator.__anext__()
                             first_lines.append(line)
                             if line.strip() == "event: error":
-                                print(f"[DEBUG] Pre-check detected error event from provider: {current_provider.name}, request_id: {request_id}")
+                                # 读取下一行获取错误数据
+                                try:
+                                    data_line = await line_iterator.__anext__()
+                                    first_lines.append(data_line)
+                                    if data_line.startswith("data: "):
+                                        try:
+                                            error_data = json.loads(data_line[6:])  # 去掉 "data: " 前缀
+                                            error_type = error_data.get("error", {}).get("type", "unknown_error")
+                                            # 创建包含错误类型的异常
+                                            error_msg = f"Provider {current_provider.name} returned error event in streaming response: {error_type}"
+                                            streaming_error = Exception(error_msg)
+                                            streaming_error.streaming_error_type = error_type
+                                            raise streaming_error
+                                        except json.JSONDecodeError:
+                                            pass
+                                except StopAsyncIteration:
+                                    pass
                                 raise Exception(f"Provider {current_provider.name} returned error event in streaming response")
                         except StopAsyncIteration:
                             break
-                    
-                    print(f"[DEBUG] Pre-check passed for provider: {current_provider.name}, request_id: {request_id}")
-                    
+
+
                     # Handle Anthropic streaming response directly
                     async def anthropic_stream_generator():
                         try:
                             line_count = 0
                             byte_count = 0
-                            print(f"[DEBUG] Starting stream generation for provider: {current_provider.name}, request_id: {request_id}")
                             debug(
                                 LogRecord(
                                     "streaming_start",
@@ -2212,58 +2229,63 @@ async def create_message_proxy(
                                     {"provider": current_provider.name, "is_fallback": attempt > 0},
                                 )
                             )
-                            
+
                             first_few_lines = []
                             last_few_lines = []
                             raw_lines = []  # 记录原始行数据用于调试
-                            
-                            print(f"[DEBUG] About to start streaming for provider: {current_provider.name}, request_id: {request_id}")
-                            
+
+
                             # 首先输出预读的行
                             for line in first_lines:
                                 line_count += 1
                                 byte_count += len(line)
-                                
+
                                 # 保存前几行和后几行用于调试
                                 if len(first_few_lines) < 5:
                                     first_few_lines.append(line)
                                 raw_lines.append(line)
-                                
+
                                 # 输出预读的行
                                 yield f"{line}\n"
-                            
+
                             # 然后处理剩余的响应
                             async for line in line_iterator:
                                 # 不要过滤空行！SSE 格式需要空行作为事件分隔符
                                 line_count += 1
                                 byte_count += len(line)
-                                
+
                                 # 错误检测已经在预检查阶段完成，这里不需要重复检查
-                                
+
                                 # 记录原始行数据（前10行）用于调试
                                 if len(raw_lines) < 10:
                                     raw_lines.append(repr(line)[:300])  # 使用repr显示原始格式
-                                
+
                                 # 记录前几行用于调试（只记录非空行）
                                 if line.strip() and len(first_few_lines) < 3:
                                     first_few_lines.append(line.strip()[:200])
-                                
+
                                 # 记录最后几行用于调试流结束格式
                                 if line.strip():
                                     last_few_lines.append(line.strip()[:200])
                                     if len(last_few_lines) > 5:
                                         last_few_lines.pop(0)
-                                
+
                                 yield f"{line}\n"
-                            
-                            print(f"[DEBUG] Finished aiter_lines for provider: {current_provider.name}, request_id: {request_id}, lines: {line_count}, bytes: {byte_count}")
-                            
+
+
                             # 错误检测已经在预检查阶段完成，能到这里说明流式传输成功
-                            
+
                             # 记录原始行数据用于对比不同provider的响应格式
                             if raw_lines:
-                                print(f"[DEBUG] Raw streaming lines from {current_provider.name}: {raw_lines}")
-                            
+                                debug(
+                                    LogRecord(
+                                        event=LogEvent.STREAMING_REQUEST.value,
+                                        message=f"Raw streaming lines from {current_provider.name}",
+                                        request_id=request_id,
+                                        data={"provider": current_provider.name, "raw_lines": raw_lines}
+                                    )
+                                )
+
                             # 记录流式数据的开头和结尾部分用于调试
                             if first_few_lines:
                                 debug(
@@ -2274,7 +2296,7 @@ async def create_message_proxy(
                                         {"provider": current_provider.name, "first_lines": first_few_lines},
                                     )
                                 )
-                            
+
                             if last_few_lines:
                                 debug(
                                     LogRecord(
@@ -2284,7 +2306,7 @@ async def create_message_proxy(
                                         {"provider": current_provider.name, "last_lines": last_few_lines},
                                     )
                                 )
-                            
+
                             # 只有在流式传输完全成功后才标记成功
                             current_provider.mark_success()
                             if provider_manager:
@@ -2307,7 +2329,6 @@ async def create_message_proxy(
                             )
                         except Exception as e:
                             # 流式传输过程中出现异常
-                            print(f"[DEBUG] Exception in stream generator for provider: {current_provider.name}, request_id: {request_id}, error: {str(e)}")
                             error(
                                 LogRecord(
                                     "streaming_error",
@@ -2328,7 +2349,7 @@ async def create_message_proxy(
                                 }
                             }
                             yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
-                    
+
                     # 对于流式响应，需要完成去重状态处理
                     async def stream_with_cleanup():
                         """流式生成器包装器，完成后自动清理去重状态"""
@@ -2341,7 +2362,7 @@ async def create_message_proxy(
                             # 流式传输失败，设置失败状态
                             _complete_and_cleanup_request(request_signature, Exception(f"Streaming failed: {str(e)}"))
                             raise
-                    
+
                     streaming_response = StreamingResponse(
                         stream_with_cleanup(),
                         media_type="text/event-stream",
@@ -2358,7 +2379,7 @@ async def create_message_proxy(
                     anthropic_response_data = await make_anthropic_request(
                         current_provider, anthropic_data, request_id, stream=False, original_headers=original_headers
                     )
-                    
+
                     duration_ms = (time.monotonic() - request.state.start_time_monotonic) * 1000
                     info(
                         LogRecord(
@@ -2372,13 +2393,13 @@ async def create_message_proxy(
                             },
                         )
                     )
-                    
+
                     current_provider.mark_success()
                     if provider_manager:
                         provider_manager.mark_provider_success(current_provider.name)
                     response = JSONResponse(content=anthropic_response_data)
                     return await _complete_request_and_cleanup(response)
-            
+
             else:  # OpenAI-compatible provider
                 try:
                     openai_messages = convert_anthropic_to_openai_messages(
@@ -2442,13 +2463,13 @@ async def create_message_proxy(
                     openai_stream_response = await make_openai_request(
                         current_provider, openai_params, request_id, stream=True, original_headers=original_headers
                     )
-                    
+
                     # 定义成功回调函数
                     def on_stream_success():
                         current_provider.mark_success()
                         if provider_manager:
                             provider_manager.mark_provider_success(current_provider.name)
-                    
+
                     # 注意：不在这里 mark_success，而是在流式传输完成后
                     # 对于流式响应，需要完成去重状态处理
                     async def openai_stream_with_cleanup():
@@ -2469,7 +2490,7 @@ async def create_message_proxy(
                             # 流式传输失败，设置失败状态
                             _complete_and_cleanup_request(request_signature, Exception(f"Streaming failed: {str(e)}"))
                             raise
-                    
+
                     streaming_response = StreamingResponse(
                         openai_stream_with_cleanup(),
                         media_type="text/event-stream",
@@ -2523,7 +2544,7 @@ async def create_message_proxy(
                             {"response": anthropic_response_obj.model_dump(exclude_unset=True)},
                         )
                     )
-                    
+
                     current_provider.mark_success()
                     if provider_manager:
                         provider_manager.mark_provider_success(current_provider.name)
@@ -2533,24 +2554,84 @@ async def create_message_proxy(
                     return await _complete_request_and_cleanup(response)
 
         except Exception as e:
+            # 获取HTTP状态码（如果可用）
+            http_status_code = getattr(e, 'status_code', None) or (
+                getattr(e, 'response', None) and getattr(e.response, 'status_code', None)
+            )
+
+            # 使用provider_manager判断是否应该failover
+            # 检查是否是streaming错误事件
+            streaming_error_type = getattr(e, 'streaming_error_type', None)
+            if streaming_error_type:
+                error_type, should_failover = provider_manager.get_error_classification(e, http_status_code)
+                # 对于streaming错误，需要检查错误类型是否应该failover
+                if streaming_error_type in provider_manager.settings.get('failover_error_types', []):
+                    should_failover = True
+                else:
+                    should_failover = False
+            else:
+                error_type, should_failover = provider_manager.get_error_classification(e, http_status_code)
+
             warning(
                 LogRecord(
                     event="provider_request_failed",
                     message=f"Request failed for provider {current_provider.name} (attempt {attempt + 1}/{max_retries}): {str(e)}",
                     request_id=request_id,
                     data={
-                        "provider": current_provider.name, 
+                        "provider": current_provider.name,
                         "target_model": target_model_name,
                         "attempt": attempt + 1,
-                        "remaining_options": max_retries - attempt - 1
+                        "remaining_options": max_retries - attempt - 1,
+                        "error_type": error_type,
+                        "should_failover": should_failover,
+                        "http_status_code": http_status_code
                     }
                 ),
                 exc=e
             )
-            
+
             # 标记当前provider失败
             current_provider.mark_failure()
-            
+
+            # 如果不应该failover，直接返回错误给客户端
+            if not should_failover:
+                info(
+                    LogRecord(
+                        event="error_not_retryable",
+                        message=f"Error type '{error_type}' not configured for failover, returning to client",
+                        request_id=request_id,
+                        data={
+                            "provider": current_provider.name,
+                            "error_type": error_type,
+                            "http_status_code": http_status_code
+                        }
+                    )
+                )
+
+                # 根据错误类型选择合适的Anthropic错误类型
+                if http_status_code == 400:
+                    anthropic_error_type = AnthropicErrorType.INVALID_REQUEST_ERROR
+                elif http_status_code == 401:
+                    anthropic_error_type = AnthropicErrorType.AUTHENTICATION_ERROR
+                elif http_status_code == 403:
+                    anthropic_error_type = AnthropicErrorType.PERMISSION_ERROR
+                elif http_status_code == 404:
+                    anthropic_error_type = AnthropicErrorType.NOT_FOUND_ERROR
+                elif http_status_code == 429:
+                    anthropic_error_type = AnthropicErrorType.RATE_LIMIT_ERROR
+                else:
+                    anthropic_error_type = AnthropicErrorType.API_ERROR
+
+                response = await _log_and_return_error_response(
+                    request,
+                    http_status_code or 500,
+                    anthropic_error_type,
+                    str(e),
+                    caught_exception=e,
+                )
+                _complete_and_cleanup_request(request_signature, response)
+                return response
+
             # 如果还有其他选项，继续尝试下一个
             if attempt < max_retries - 1:
                 next_target_model, next_provider = provider_options[attempt + 1]
@@ -2652,7 +2733,7 @@ async def get_providers_status() -> JSONResponse:
             },
             status_code=500
         )
-    
+
     status = provider_manager.get_status()
     return JSONResponse(status)
 
@@ -2668,7 +2749,7 @@ async def reload_providers_config() -> JSONResponse:
             },
             status_code=500
         )
-    
+
     try:
         provider_manager.reload_config()
         return JSONResponse(
@@ -2693,7 +2774,7 @@ async def openai_api_error_handler(request: Request, exc: openai.APIError):
     # Recursion protection
     if not hasattr(_exception_handler_depth, 'value'):
         _exception_handler_depth.value = 0
-    
+
     with _exception_handler_lock:
         if _exception_handler_depth.value >= 3:
             from fastapi.responses import JSONResponse
@@ -2707,7 +2788,7 @@ async def openai_api_error_handler(request: Request, exc: openai.APIError):
                 },
                 status_code=500
             )
-        
+
         _exception_handler_depth.value += 1
         try:
             err_type, err_msg, err_status, prov_details = _get_anthropic_error_details_from_exc(
@@ -2737,7 +2818,7 @@ async def pydantic_validation_error_handler(request: Request, exc: ValidationErr
     # Recursion protection
     if not hasattr(_exception_handler_depth, 'value'):
         _exception_handler_depth.value = 0
-    
+
     with _exception_handler_lock:
         if _exception_handler_depth.value >= 3:
             from fastapi.responses import JSONResponse
@@ -2751,7 +2832,7 @@ async def pydantic_validation_error_handler(request: Request, exc: ValidationErr
                 },
                 status_code=422
             )
-        
+
         _exception_handler_depth.value += 1
         try:
             return await _log_and_return_error_response(
@@ -2782,7 +2863,7 @@ async def json_decode_error_handler(request: Request, exc: json.JSONDecodeError)
     # Recursion protection
     if not hasattr(_exception_handler_depth, 'value'):
         _exception_handler_depth.value = 0
-    
+
     with _exception_handler_lock:
         if _exception_handler_depth.value >= 3:
             from fastapi.responses import JSONResponse
@@ -2796,7 +2877,7 @@ async def json_decode_error_handler(request: Request, exc: json.JSONDecodeError)
                 },
                 status_code=400
             )
-        
+
         _exception_handler_depth.value += 1
         try:
             return await _log_and_return_error_response(
@@ -2827,7 +2908,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
     # Recursion protection
     if not hasattr(_exception_handler_depth, 'value'):
         _exception_handler_depth.value = 0
-    
+
     with _exception_handler_lock:
         if _exception_handler_depth.value >= 3:  # Allow max 3 levels of recursion
             # Emergency fallback - return minimal response without logging
@@ -2842,7 +2923,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
                 },
                 status_code=500
             )
-        
+
         _exception_handler_depth.value += 1
         try:
             return await _log_and_return_error_response(
@@ -2893,12 +2974,12 @@ if __name__ == "__main__":
         providers_text = ""
         healthy_count = len(provider_manager.get_healthy_providers())
         total_count = len(provider_manager.providers)
-        
+
         for i, provider in enumerate(provider_manager.providers):
             status_icon = "✓" if provider.is_healthy(provider_manager.get_failure_cooldown()) else "✗"
             provider_line = f"\n   [{status_icon}] {provider.name} ({provider.type.value}): {provider.base_url}"
             providers_text += provider_line
-        
+
         config_details_text = Text.assemble(
           ("   Version       : ", "default"),
           (f"v{settings.app_version}", "bold cyan"),
@@ -2914,7 +2995,7 @@ if __name__ == "__main__":
           ("\n   Reload        : ", "default"),
           ("Enabled", "bold orange1") if settings.reload else ("Disabled", "dim")
         )
-        
+
         title = "Claude Code Provider Balancer Configuration"
     else:
         config_details_text = Text.assemble(
@@ -2928,7 +3009,7 @@ if __name__ == "__main__":
           (f"http://{settings.host}:{settings.port}", "bold white"),
         )
         title = "Claude Code Provider Balancer Configuration (ERROR)"
-    
+
     _console.print(
       Panel(
         config_details_text,
@@ -2941,7 +3022,7 @@ if __name__ == "__main__":
 
     # Setup signal handlers for graceful shutdown
     import signal
-    
+
     def shutdown_handler(signum, frame):
         """Handle shutdown signals"""
         from rich.console import Console
@@ -2950,7 +3031,7 @@ if __name__ == "__main__":
         if provider_manager:
             provider_manager.shutdown()
         sys.exit(0)
-    
+
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
 
@@ -2962,7 +3043,7 @@ if __name__ == "__main__":
             # Include both Python files and the providers.yaml config file
             reload_dirs = [str(Path(__file__).parent.parent)]  # Project root directory
             reload_includes = ["*.py", "providers.yaml"]
-        
+
         uvicorn.run(
             "__main__:app",
             host=settings.host,
