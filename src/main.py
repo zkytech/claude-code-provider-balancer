@@ -606,12 +606,8 @@ def warning(record: LogRecord, exc: Optional[Exception] = None):
 
 def error(record: LogRecord, exc: Optional[Exception] = None):
     try:
-        if exc:
-            try:
-                _error_console.print_exception(show_locals=False, width=120)
-            except Exception:
-                # If console printing fails, continue with logging
-                pass
+        # Note: Console traceback printing is disabled to keep console output clean
+        # Full traceback details are still logged to file
         _log(logging.ERROR, record, exc=exc)
     except Exception:
         # Last resort: use standard Python logging
