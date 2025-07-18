@@ -131,6 +131,7 @@ try:
         settings.log_color = provider_settings.get('log_color', settings.log_color)
         settings.app_name = provider_settings.get('app_name', settings.app_name)
         settings.app_version = provider_settings.get('app_version', settings.app_version)
+        settings.reload = provider_settings.get('reload', settings.reload)
 except Exception as e:
     # Fallback to basic settings if provider config fails
     print(f"Warning: Failed to load provider configuration: {e}")
