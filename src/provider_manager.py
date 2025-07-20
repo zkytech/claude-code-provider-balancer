@@ -32,6 +32,12 @@ class SelectionStrategy(str, Enum):
     RANDOM = "random"
 
 
+class StreamingMode(str, Enum):
+    AUTO = "auto"  # Based on provider type (anthropic=direct, openai=background)
+    DIRECT = "direct"  # Direct provider streaming without background collection
+    BACKGROUND = "background"  # Background collection then streaming to client
+
+
 @dataclass
 class ModelRoute:
     provider: str
@@ -49,6 +55,7 @@ class Provider:
     auth_value: str
     enabled: bool = True
     proxy: Optional[str] = None
+    streaming_mode: StreamingMode = StreamingMode.AUTO
     failure_count: int = 0
     last_failure_time: float = 0
     
@@ -67,6 +74,18 @@ class Provider:
         """Mark provider as successful (reset failure count)"""
         self.failure_count = 0
         self.last_failure_time = 0
+    
+    def get_effective_streaming_mode(self) -> StreamingMode:
+        """Get the effective streaming mode based on configuration and provider type"""
+        if self.streaming_mode == StreamingMode.AUTO:
+            # Auto mode: anthropic providers use direct, openai providers use background
+            if self.type == ProviderType.ANTHROPIC:
+                return StreamingMode.DIRECT
+            else:  # ProviderType.OPENAI
+                return StreamingMode.BACKGROUND
+        else:
+            # Use explicitly configured mode
+            return self.streaming_mode
 
 
 class ProviderManager:
@@ -116,6 +135,14 @@ class ProviderManager:
             
             for provider_config in providers_config:
                 if provider_config.get('enabled', True):
+                    # Parse streaming_mode with default to AUTO
+                    streaming_mode_str = provider_config.get('streaming_mode', 'auto')
+                    try:
+                        streaming_mode = StreamingMode(streaming_mode_str)
+                    except ValueError:
+                        print(f"Warning: Invalid streaming_mode '{streaming_mode_str}' for provider '{provider_config['name']}', using 'auto'")
+                        streaming_mode = StreamingMode.AUTO
+                    
                     provider = Provider(
                         name=provider_config['name'],
                         type=ProviderType(provider_config['type']),
@@ -123,7 +150,8 @@ class ProviderManager:
                         auth_type=AuthType(provider_config['auth_type']),
                         auth_value=provider_config['auth_value'],
                         enabled=provider_config.get('enabled', True),
-                        proxy=provider_config.get('proxy')
+                        proxy=provider_config.get('proxy'),
+                        streaming_mode=streaming_mode
                     )
                     self.providers.append(provider)
             
@@ -221,7 +249,7 @@ class ProviderManager:
         if not options:
             return []
         
-        # 检查是否处于活跃期间，如果是则应用粘滞逻辑
+        # 检查是否处于空闲期间，如果是则跳过粘滞逻辑，使用正常的优先级选择
         current_time = time.time()
         is_idle_period = (current_time - self._last_request_time) > self._idle_recovery_interval
         
@@ -285,8 +313,58 @@ class ProviderManager:
         return self.settings.get('failure_cooldown', 60)
     
     def get_request_timeout(self) -> int:
-        """Get request timeout from settings"""
-        return self.settings.get('request_timeout', 300)
+        """Get request timeout from settings (非流式请求)"""
+        timeouts = self.settings.get('timeouts', {})
+        non_streaming = timeouts.get('non_streaming', {})
+        return non_streaming.get('read_timeout', 60)
+    
+    def get_non_streaming_timeouts(self) -> Dict[str, int]:
+        """获取非流式请求超时配置"""
+        timeouts = self.settings.get('timeouts', {})
+        non_streaming = timeouts.get('non_streaming', {})
+        return {
+            'connect_timeout': non_streaming.get('connect_timeout', 30),
+            'read_timeout': non_streaming.get('read_timeout', 60),
+            'pool_timeout': non_streaming.get('pool_timeout', 30)
+        }
+    
+    def get_streaming_timeouts(self) -> Dict[str, int]:
+        """获取流式请求超时配置"""
+        timeouts = self.settings.get('timeouts', {})
+        streaming = timeouts.get('streaming', {})
+        return {
+            'connect_timeout': streaming.get('connect_timeout', 30),
+            'read_timeout': streaming.get('read_timeout', 120),
+            'pool_timeout': streaming.get('pool_timeout', 30),
+            'chunk_timeout': streaming.get('chunk_timeout', 30),
+            'first_chunk_timeout': streaming.get('first_chunk_timeout', 30),
+            'processing_timeout': streaming.get('processing_timeout', 10)
+        }
+    
+    def get_timeouts_for_request(self, is_streaming: bool) -> Dict[str, int]:
+        """根据请求类型获取相应的超时配置"""
+        if is_streaming:
+            return self.get_streaming_timeouts()
+        else:
+            return self.get_non_streaming_timeouts()
+    
+    def get_caching_timeouts(self) -> Dict[str, int]:
+        """获取缓存相关超时配置"""
+        timeouts = self.settings.get('timeouts', {})
+        caching = timeouts.get('caching', {})
+        return {
+            'deduplication_timeout': caching.get('deduplication_timeout', 300),
+            'cache_operation_timeout': caching.get('cache_operation_timeout', 5)
+        }
+    
+    def get_health_check_timeouts(self) -> Dict[str, int]:
+        """获取健康检查超时配置"""
+        timeouts = self.settings.get('timeouts', {})
+        health_check = timeouts.get('health_check', {})
+        return {
+            'timeout': health_check.get('timeout', 10),
+            'connect_timeout': health_check.get('connect_timeout', 5)
+        }
     
     def get_healthy_providers(self) -> List[Provider]:
         """Get list of healthy (non-failed) providers"""
@@ -299,11 +377,20 @@ class ProviderManager:
     
     def mark_request_start(self):
         """标记请求开始，更新活跃状态"""
-        self._last_request_time = time.time()
+        # 不在请求开始时更新时间，而是在请求完成时更新
+        pass
     
     def mark_provider_success(self, provider_name: str):
         """标记provider成功，更新粘滞状态"""
         self._last_successful_provider = provider_name
+        # 在请求成功完成时更新最后请求时间
+        self._last_request_time = time.time()
+    
+    def mark_provider_used(self, provider_name: str):
+        """标记provider被使用（无论成功失败），用于sticky逻辑"""
+        # 只要没有触发failover，就启用sticky
+        self._last_successful_provider = provider_name
+        self._last_request_time = time.time()
     
     def get_provider_by_name(self, name: str) -> Optional[Provider]:
         """根据名称获取provider"""
