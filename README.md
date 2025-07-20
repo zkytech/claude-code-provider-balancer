@@ -1,6 +1,8 @@
-# Claude Code 提供商负载均衡器
+# Claude Code Provider Balancer
 
 基于 FastAPI 的智能代理服务，为多个 Claude Code 提供商和 OpenAI 兼容服务提供负载均衡和故障转移功能。
+
+![Claude Balancer](docs/cover.png)
 
 ## 主要功能
 
