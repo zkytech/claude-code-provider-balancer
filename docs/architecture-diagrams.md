@@ -1,4 +1,4 @@
-# Request Processing Architecture Diagram
+# Claude Code Provider Balancer - Architecture Diagrams
 
 ## System Architecture Overview
 
@@ -10,41 +10,71 @@ graph TB
         C3[Third-party App]
     end
     
-    subgraph "Load Balancer Layer"
-        LB[FastAPI Application<br/>Port 8080]
+    subgraph "FastAPI Application Layer"
+        LB[FastAPI Server<br/>Port 8080]
+        MW[Middleware<br/>Logging & Error Handling]
+        RV[Request Validation<br/>Pydantic Models]
     end
     
-    subgraph "Provider Management"
-        PM[Provider Manager]
-        PC[Provider Config<br/>providers.yaml]
-        HM[Health Monitor]
+    subgraph "Request Processing Pipeline"
+        DD[Deduplication Cache<br/>SHA-256 Signatures]
+        FC[Format Conversion<br/>Anthropic ↔ OpenAI]
+        TC[Token Counting<br/>tiktoken Integration]
     end
     
-    subgraph "Provider Pool"
-        P1[Anthropic API<br/>Provider 1]
-        P2[OpenAI Compatible<br/>Provider 2]
-        P3[Zed Provider<br/>Provider 3]
-        PN[Provider N<br/>...]
+    subgraph "Provider Management Layer"
+        PM[Provider Manager<br/>src/provider_manager.py]
+        PC[Configuration<br/>providers.yaml]
+        HM[Health Monitor<br/>Cooldown & Recovery]
+        LBS[Load Balancing<br/>Priority/RoundRobin/Random]
+    end
+    
+    subgraph "Provider Ecosystem"
+        subgraph "Anthropic Providers"
+            P1[Anthropic Official]
+            P2[GAC Provider]
+            P3[Custom Anthropic]
+        end
+        subgraph "OpenAI Providers"
+            P4[OpenRouter]
+            P5[Azure OpenAI]
+            P6[Custom OpenAI]
+        end
+        subgraph "Zed Providers"
+            P7[Zed AI]
+        end
     end
     
     C1 --> LB
     C2 --> LB
     C3 --> LB
     
-    LB --> PM
+    LB --> MW
+    MW --> RV
+    RV --> DD
+    DD --> FC
+    FC --> TC
+    TC --> PM
+    
     PM --> PC
     PM --> HM
+    PM --> LBS
     
     PM --> P1
     PM --> P2
     PM --> P3
-    PM --> PN
+    PM --> P4
+    PM --> P5
+    PM --> P6
+    PM --> P7
     
     style LB fill:#e1f5fe
     style PM fill:#f3e5f5
-    style P1 fill:#e8f5e8
-    style P2 fill:#fff3e0
-    style P3 fill:#fce4ec
+    style DD fill:#fff3e0
+    style FC fill:#e8f5e8
+    style P1 fill:#c8e6c9
+    style P4 fill:#ffecb3
+    style P7 fill:#fce4ec
 ```
 
 ## Detailed Request Processing Flow
@@ -52,46 +82,73 @@ graph TB
 ```mermaid
 sequenceDiagram
     participant Client
-    participant LoadBalancer as Load Balancer
+    participant FastAPI as FastAPI Server
+    participant Middleware as Middleware Layer
+    participant Dedup as Deduplication Cache
+    participant Converter as Format Converter
     participant ProviderMgr as Provider Manager
     participant Provider1
     participant Provider2
     
-    Client->>LoadBalancer: POST /v1/messages
-    LoadBalancer->>LoadBalancer: Generate Request ID
-    LoadBalancer->>LoadBalancer: Parse & Validate Request
-    LoadBalancer->>LoadBalancer: Check for Duplicates
+    Client->>FastAPI: POST /v1/messages
+    FastAPI->>Middleware: Request Processing
+    Middleware->>Middleware: Log Request & Validate
+    Middleware->>Dedup: Generate Request Signature
     
     alt Duplicate Request Found
-        LoadBalancer->>LoadBalancer: Wait for Original Request
-        LoadBalancer-->>Client: Return Cached Result
+        Dedup->>Dedup: Wait for Existing Request
+        Dedup-->>Client: Return Cached Result
     else New Request
-        LoadBalancer->>ProviderMgr: Get Provider Options
-        ProviderMgr->>ProviderMgr: Filter Healthy Providers
-        ProviderMgr-->>LoadBalancer: Return Provider List
+        Dedup->>Converter: Process New Request
         
-        LoadBalancer->>Provider1: Send Request (Primary)
+        alt OpenAI Provider Selected
+            Converter->>Converter: Convert Anthropic → OpenAI Format
+        else Anthropic Provider Selected
+            Converter->>Converter: Pass Through Format
+        end
+        
+        Converter->>ProviderMgr: Get Provider for Model
+        ProviderMgr->>ProviderMgr: Apply Model Routing Rules
+        ProviderMgr->>ProviderMgr: Filter Healthy Providers
+        ProviderMgr-->>Converter: Return Primary Provider
+        
+        Converter->>Provider1: Send Request (Primary)
         
         alt Provider1 Success
-            Provider1-->>LoadBalancer: Response
-            LoadBalancer->>ProviderMgr: Mark Provider1 Success
-            LoadBalancer-->>Client: Forward Response
-        else Provider1 Failure
-            Provider1-->>LoadBalancer: Error/Timeout
-            LoadBalancer->>ProviderMgr: Mark Provider1 Failure
-            LoadBalancer->>Provider2: Send Request (Fallback)
+            Provider1-->>Converter: Response
             
-            alt Provider2 Success
-                Provider2-->>LoadBalancer: Response
-                LoadBalancer->>ProviderMgr: Mark Provider2 Success
-                LoadBalancer-->>Client: Forward Response
-            else All Providers Failed
-                LoadBalancer-->>Client: 503 Service Unavailable
+            alt OpenAI Response
+                Converter->>Converter: Convert OpenAI → Anthropic Format
+            else Anthropic Response
+                Converter->>Converter: Pass Through Response
+            end
+            
+            Converter->>ProviderMgr: Mark Provider1 Success
+            Converter-->>Client: Forward Response
+            
+        else Provider1 Failure
+            Provider1-->>Converter: Error/Timeout
+            Converter->>ProviderMgr: Classify Error & Mark Failure
+            
+            alt Retriable Error
+                ProviderMgr-->>Converter: Return Fallback Provider
+                Converter->>Provider2: Send Request (Fallback)
+                
+                alt Provider2 Success
+                    Provider2-->>Converter: Response
+                    Converter->>Converter: Format Conversion (if needed)
+                    Converter->>ProviderMgr: Mark Provider2 Success
+                    Converter-->>Client: Forward Response
+                else All Providers Failed
+                    Converter-->>Client: 503 Service Unavailable
+                end
+            else Non-Retriable Error
+                Converter-->>Client: Forward Original Error
             end
         end
     end
     
-    LoadBalancer->>LoadBalancer: Cleanup Request State
+    Middleware->>Middleware: Log Response & Cleanup
 ```
 
 ## Stream vs Non-Stream Processing
@@ -99,76 +156,168 @@ sequenceDiagram
 ```mermaid
 graph TD
     Start[Request Received] --> Parse[Parse Request Body]
-    Parse --> Dup{Duplicate?}
+    Parse --> Dup{Duplicate Check}
     Dup -->|Yes| Wait[Wait for Original]
-    Dup -->|No| Stream{Stream Request?}
+    Dup -->|No| Stream{stream=true?}
     
-    Stream -->|Yes| StreamFlow[Streaming Flow]
-    Stream -->|No| NonStream[Non-Streaming Flow]
+    Stream -->|Yes| StreamFlow[Streaming Processing]
+    Stream -->|No| NonStream[Non-Streaming Processing]
     
     subgraph "Streaming Processing"
-        StreamFlow --> PreCheck[Pre-read Validation]
-        PreCheck --> StreamGen[Stream Generation]
-        StreamGen --> StreamMonitor[Real-time Monitoring]
-        StreamMonitor --> StreamSuccess[Mark Success on Completion]
+        StreamFlow --> StreamDedup[Skip Deduplication<br/>Unique Stream ID]
+        StreamDedup --> StreamProvider[Select Provider]
+        StreamProvider --> StreamReq[Initiate Stream Request]
+        StreamReq --> StreamMonitor[Real-time Stream Monitoring]
+        StreamMonitor --> ClientDisconnect{Client Connected?}
+        ClientDisconnect -->|Yes| StreamChunk[Process Stream Chunk]
+        ClientDisconnect -->|No| StreamAbort[Abort Stream]
+        StreamChunk --> FormatStream[Format Conversion<br/>OpenAI→Anthropic if needed]
+        FormatStream --> StreamResponse[Send to Client]
+        StreamResponse --> StreamMore{More Chunks?}
+        StreamMore -->|Yes| StreamMonitor
+        StreamMore -->|No| StreamComplete[Mark Stream Complete]
+        StreamAbort --> StreamCleanup[Cleanup Stream Resources]
+        StreamComplete --> StreamCleanup
     end
     
     subgraph "Non-Streaming Processing"
-        NonStream --> DirectReq[Direct Request]
-        DirectReq --> DirectResp[Process Response]
-        DirectResp --> DirectSuccess[Mark Success Immediately]
+        NonStream --> NonStreamProvider[Select Provider]
+        NonStreamProvider --> DirectReq[Send Direct Request]
+        DirectReq --> DirectResp[Receive Complete Response]
+        DirectResp --> FormatDirect[Format Conversion if needed]
+        FormatDirect --> DirectSuccess[Mark Success & Send Response]
     end
     
-    StreamSuccess --> Cleanup[Cleanup & Response]
-    DirectSuccess --> Cleanup
-    Wait --> Cleanup
-    Cleanup --> End[Request Complete]
+    StreamCleanup --> FinalCleanup[Final Resource Cleanup]
+    DirectSuccess --> FinalCleanup
+    Wait --> FinalCleanup
+    FinalCleanup --> ProviderUpdate[Update Provider Stats]
+    ProviderUpdate --> End[Request Complete]
     
     style StreamFlow fill:#e3f2fd
     style NonStream fill:#f1f8e9
-    style Cleanup fill:#fff3e0
+    style FinalCleanup fill:#fff3e0
+    style StreamAbort fill:#ffcdd2
+```
+
+## Format Conversion Architecture
+
+```mermaid
+graph TD
+    subgraph "Request Format Conversion"
+        AnthropicReq[Anthropic Request<br/>from Client] --> ModelRoute[Model Route<br/>Lookup]
+        ModelRoute --> ProviderType{Provider Type}
+        
+        ProviderType -->|anthropic| PassThrough[Pass Through<br/>No Conversion]
+        ProviderType -->|openai| ConvertReq[Convert to OpenAI Format]
+        ProviderType -->|zed| ZedConvert[Convert to Zed Format]
+        
+        ConvertReq --> MessageConv[Convert Messages<br/>role, content, tools]
+        MessageConv --> ToolConv[Convert Tool Definitions<br/>function → tools]
+        ToolConv --> SystemConv[Convert System Message<br/>system → messages[0]]
+        SystemConv --> OpenAIReq[OpenAI Compatible Request]
+    end
+    
+    subgraph "Response Format Conversion"
+        OpenAIResp[OpenAI Response] --> RespType{Response Type}
+        AnthropicResp[Anthropic Response] --> DirectResp[Direct Response<br/>to Client]
+        ZedResp[Zed Response] --> ZedRespConv[Convert from Zed]
+        
+        RespType -->|streaming| StreamConv[Stream Conversion]
+        RespType -->|non-streaming| DirectConv[Direct Conversion]
+        
+        StreamConv --> StreamChunkConv[Convert Each Chunk<br/>delta → content_block_delta]
+        StreamChunkConv --> AnthropicStream[Anthropic Stream Format]
+        
+        DirectConv --> ContentConv[Convert Content<br/>choices → content]
+        ContentConv --> UsageConv[Convert Usage<br/>usage → usage]
+        UsageConv --> AnthropicResp2[Anthropic Response Format]
+        
+        ZedRespConv --> AnthropicResp3[Anthropic Response Format]
+    end
+    
+    PassThrough --> DirectProvider[Direct to Provider]
+    OpenAIReq --> OpenAIProvider[OpenAI Provider]
+    ZedConvert --> ZedProvider[Zed Provider]
+    
+    DirectProvider --> AnthropicResp
+    OpenAIProvider --> OpenAIResp
+    ZedProvider --> ZedResp
+    
+    AnthropicStream --> Client[Client Response]
+    AnthropicResp2 --> Client
+    AnthropicResp3 --> Client
+    DirectResp --> Client
+    
+    style ConvertReq fill:#fff3e0
+    style StreamConv fill:#e3f2fd
+    style PassThrough fill:#c8e6c9
+    style Client fill:#e8f5e8
 ```
 
 ## Provider Selection and Failover
 
 ```mermaid
 graph TD
-    ModelReq[Client Model Request] --> ModelMap[Model Route Mapping]
-    ModelMap --> ProviderList[Get Provider Options]
+    ModelReq[Client Model Request<br/>e.g., claude-3-5-sonnet] --> ModelMap[Model Route Mapping<br/>Wildcard Pattern Matching]
+    ModelMap --> ProviderList[Get Provider Options<br/>Priority Sorted List]
     
-    ProviderList --> Health{Check Provider Health}
-    Health -->|Healthy| Priority[Apply Priority/Strategy]
-    Health -->|Unhealthy| Skip[Skip Provider]
+    ProviderList --> HealthCheck[Health Check]
+    HealthCheck --> Healthy{Provider<br/>Health Status}
+    Healthy -->|Healthy| SelectionStrategy[Apply Selection Strategy]
+    Healthy -->|Failed| Cooldown{In Cooldown<br/>Period?}
     
-    Priority --> Attempt1[Attempt Provider 1]
-    Skip --> Priority
+    Cooldown -->|Yes| Skip[Skip Provider]
+    Cooldown -->|No| IdleRecovery[Attempt Idle Recovery]
     
-    Attempt1 --> Success1{Success?}
-    Success1 -->|Yes| MarkSuccess[Mark Provider Success]
-    Success1 -->|No| ClassifyError[Classify Error Type]
+    SelectionStrategy --> Strategy{Strategy Type}
+    Strategy -->|priority| PrioritySelect[Select by Priority<br/>lowest number first]
+    Strategy -->|round_robin| RoundRobinSelect[Round Robin Selection<br/>rotate through providers]
+    Strategy -->|random| RandomSelect[Random Selection<br/>from healthy providers]
     
-    ClassifyError --> Retryable{Retryable Error?}
-    Retryable -->|Yes| MarkFail1[Mark Provider Failed]
-    Retryable -->|No| ReturnError[Return Error to Client]
+    PrioritySelect --> Attempt1[Attempt Primary Provider]
+    RoundRobinSelect --> Attempt1
+    RandomSelect --> Attempt1
+    IdleRecovery --> Attempt1
+    Skip --> NextProvider[Get Next Provider]
     
-    MarkFail1 --> HasMore{More Providers?}
-    HasMore -->|Yes| Attempt2[Attempt Provider 2]
-    HasMore -->|No| AllFailed[All Providers Failed]
+    Attempt1 --> Success1{Request<br/>Success?}
+    Success1 -->|Yes| UpdateSuccess[Update Provider Stats<br/>Mark Success]
+    Success1 -->|No| ErrorClassify[Classify Error Type]
     
-    Attempt2 --> Success2{Success?}
-    Success2 -->|Yes| MarkSuccess
-    Success2 -->|No| MarkFail2[Mark Provider Failed]
+    ErrorClassify --> ErrorType{Error Type}
+    ErrorType -->|4xx Client Error| ClientError[Return Client Error<br/>No Failover]
+    ErrorType -->|5xx Server Error| ServerError{Retryable?}
+    ErrorType -->|Timeout| TimeoutError[Mark Timeout Failure]
+    ErrorType -->|Network Error| NetworkError[Mark Network Failure]
+    ErrorType -->|Overloaded| OverloadError[Mark Overload Failure]
     
-    MarkFail2 --> AllFailed
-    AllFailed --> Return503[Return 503 Error]
+    ServerError -->|Yes| MarkFailure[Mark Provider Failed<br/>Start Cooldown]
+    ServerError -->|No| ClientError
+    TimeoutError --> MarkFailure
+    NetworkError --> MarkFailure
+    OverloadError --> MarkFailure
     
-    MarkSuccess --> ClientResponse[Send Response to Client]
-    ReturnError --> ClientResponse
+    MarkFailure --> HasMore{More Providers<br/>Available?}
+    HasMore -->|Yes| NextProvider
+    HasMore -->|No| AllFailed[All Providers Exhausted]
+    
+    NextProvider --> Attempt2[Attempt Next Provider]
+    Attempt2 --> Success2{Request<br/>Success?}
+    Success2 -->|Yes| UpdateSuccess
+    Success2 -->|No| ErrorClassify
+    
+    AllFailed --> Return503[Return 503<br/>Service Unavailable]
+    
+    UpdateSuccess --> ClientResponse[Send Response to Client]
+    ClientError --> ClientResponse
     Return503 --> ClientResponse
     
-    style MarkSuccess fill:#c8e6c9
+    style UpdateSuccess fill:#c8e6c9
     style AllFailed fill:#ffcdd2
     style Return503 fill:#ffcdd2
+    style ClientError fill:#ffecb3
+    style MarkFailure fill:#fff3e0
 ```
 
 ## Request Deduplication Mechanism
@@ -299,4 +448,127 @@ graph TD
     style Done fill:#e8f5e8
 ```
 
-These diagrams provide a comprehensive visual representation of the request processing architecture, covering all major flows and decision points in the system.
+## Complete Data Flow Architecture
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        CC[Claude Code CLI]
+        HC[HTTP Clients]
+        TA[Third-party Apps]
+    end
+    
+    subgraph "Entry Point"
+        FE[FastAPI Endpoints<br/>/v1/messages<br/>/v1/messages/count_tokens<br/>/providers]
+    end
+    
+    subgraph "Request Processing Pipeline"
+        MW[Middleware Layer<br/>- Logging<br/>- Error Handling<br/>- Client Disconnect Detection]
+        RV[Request Validation<br/>- Pydantic Models<br/>- Schema Enforcement]
+        DD[Deduplication System<br/>- SHA-256 Signatures<br/>- Concurrent Request Handling]
+        TC[Token Counting<br/>- tiktoken Integration<br/>- Usage Estimation]
+    end
+    
+    subgraph "Core Processing Engine"
+        PM[Provider Manager<br/>- Health Monitoring<br/>- Load Balancing<br/>- Failover Logic]
+        MR[Model Router<br/>- Wildcard Matching<br/>- Priority Selection<br/>- Provider Mapping]
+        FC[Format Converter<br/>- Anthropic ↔ OpenAI<br/>- Stream Processing<br/>- Error Translation]
+    end
+    
+    subgraph "Provider Ecosystem"
+        subgraph "Anthropic Compatible"
+            ANT[Anthropic Official]
+            GAC[GAC Provider]
+            CAN[Custom Anthropic]
+        end
+        
+        subgraph "OpenAI Compatible"
+            OPR[OpenRouter]
+            AZO[Azure OpenAI]
+            COA[Custom OpenAI]
+        end
+        
+        subgraph "Specialized"
+            ZED[Zed AI]
+            OTH[Other Providers]
+        end
+    end
+    
+    subgraph "Configuration & State"
+        CFG[providers.yaml<br/>- Provider Settings<br/>- Model Routes<br/>- Global Config]
+        HM[Health Monitor<br/>- Provider Status<br/>- Cooldown Timers<br/>- Recovery Logic]
+        CACHE[Request Cache<br/>- Deduplication<br/>- Response Sharing]
+        LOGS[Logging System<br/>- Structured Logs<br/>- Performance Metrics<br/>- Error Tracking]
+    end
+    
+    CC --> FE
+    HC --> FE
+    TA --> FE
+    
+    FE --> MW
+    MW --> RV
+    RV --> DD
+    DD --> TC
+    TC --> PM
+    
+    PM --> MR
+    MR --> FC
+    
+    PM -.-> CFG
+    PM -.-> HM
+    DD -.-> CACHE
+    MW -.-> LOGS
+    
+    FC --> ANT
+    FC --> GAC
+    FC --> CAN
+    FC --> OPR
+    FC --> AZO
+    FC --> COA
+    FC --> ZED
+    FC --> OTH
+    
+    style FE fill:#e1f5fe
+    style PM fill:#f3e5f5
+    style FC fill:#e8f5e8
+    style DD fill:#fff3e0
+    style ANT fill:#c8e6c9
+    style OPR fill:#ffecb3
+    style ZED fill:#fce4ec
+    style CFG fill:#f1f8e9
+```
+
+## Configuration Hot Reload Flow
+
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant API as FastAPI /providers/reload
+    participant PM as Provider Manager
+    participant Config as providers.yaml
+    participant Providers as Active Providers
+    
+    Admin->>API: POST /providers/reload
+    API->>Config: Read Updated Configuration
+    Config-->>API: Return New Config Data
+    
+    API->>PM: Parse New Configuration
+    PM->>PM: Validate Provider Settings
+    PM->>PM: Validate Model Routes
+    
+    alt Configuration Valid
+        PM->>Providers: Update Provider Pool
+        PM->>PM: Preserve Health Status
+        PM->>PM: Apply New Routes
+        PM-->>API: Success Response
+        API-->>Admin: 200 OK - Reloaded Successfully
+        
+    else Configuration Invalid
+        PM-->>API: Validation Error
+        API-->>Admin: 400 Bad Request - Invalid Config
+    end
+    
+    Note over PM: Service continues running with previous config on error
+```
+
+These diagrams provide a comprehensive visual representation of the Claude Code Provider Balancer architecture, covering all major flows, decision points, and system interactions.

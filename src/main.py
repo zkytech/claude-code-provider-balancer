@@ -1080,6 +1080,17 @@ _init_deduplication_references()
 
 
 if __name__ == "__main__":
+    # Display ASCII art banner
+    banner = """
+ ██████ ██       █████  ██    ██ ██████  ███████     ██████   █████  ██       █████  ███    ██  ██████ ███████ ██████  
+██      ██      ██   ██ ██    ██ ██   ██ ██          ██   ██ ██   ██ ██      ██   ██ ████   ██ ██      ██      ██   ██ 
+██      ██      ███████ ██    ██ ██   ██ █████       ██████  ███████ ██      ███████ ██ ██  ██ ██      █████   ██████  
+██      ██      ██   ██ ██    ██ ██   ██ ██          ██   ██ ██   ██ ██      ██   ██ ██  ██ ██ ██      ██      ██   ██ 
+ ██████ ███████ ██   ██  ██████  ██████  ███████     ██████  ██   ██ ███████ ██   ██ ██   ████  ██████ ███████ ██   ██ 
+"""
+    
+    _console.print(banner, style="bold orange1")
+    
     if provider_manager:
         # Display provider information
         providers_text = ""
@@ -1127,7 +1138,7 @@ if __name__ == "__main__":
             expand=False,
         )
     )
-    _console.print(Rule("Starting Uvicorn server...", style="dim blue"))
+    _console.print(Rule("Starting uvicorn server ...", style="dim blue"))
     
     uvicorn.run(
         "main:app",

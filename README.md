@@ -1,28 +1,29 @@
 # Claude Code Provider Balancer
 
-一个支持多个 Claude Code 服务商和 OpenAI 兼容服务的负载均衡代理服务，具有自动故障转移和重试机制。
+A robust load balancing proxy service for multiple Claude Code providers and OpenAI-compatible services with intelligent failover and automatic retry mechanisms.
 
 ![Claude Proxy Logo](docs/cover.png)
 
-## 概述
+## Overview
 
-Claude Code Provider Balancer 为多个 Claude Code 服务商和 OpenAI 兼容服务提供智能负载均衡和故障转移。当某个服务商不可用时，它会无缝切换到其他服务商，确保您的 Claude Code 应用程序的高可用性。
+Claude Code Provider Balancer provides intelligent load balancing and failover for multiple Claude Code providers and OpenAI-compatible services. When one provider becomes unavailable, it seamlessly switches to other providers, ensuring high availability for your Claude Code applications.
 
-主要特性：
+### Key Features
 
-- **多服务商支持**：支持 Anthropic API 兼容、OpenAI 兼容和计划中的 Zed 服务商
-- **智能负载均衡**：优先级、轮询和随机选择策略
-- **自动故障转移**：当故障发生时自动切换到健康的服务商
-- **健康监控**：跟踪服务商状态，支持可配置的冷却时间
-- **双重认证**：支持 `api_key` 和 `auth_token` 认证方式
-- **动态模型路由**：Claude 模型与服务商特定模型的映射和透传支持
-- **热配置重载**：无需重启即可重新加载服务商配置
-- **全面日志记录**：详细的请求/响应跟踪，支持彩色输出
-- **Token 计数**：内置 token 估算功能
-- **流式支持**：完全支持流式响应，包含错误处理
-- **请求去重**：智能缓存防止重复请求
-- **模块化架构**：缓存、转换、模型验证等功能独立组织
-- **透传模式**：直接将模型名称转发给后端服务商
+- **🔄 Multi-Provider Support**: Anthropic-compatible, OpenAI-compatible, and Zed providers
+- **⚖️ Intelligent Load Balancing**: Priority-based, round-robin, and random selection strategies  
+- **🛡️ Automatic Failover**: Seamless switching to healthy providers when failures occur
+- **📊 Health Monitoring**: Real-time provider status tracking with configurable cooldown periods
+- **🔐 Dual Authentication**: Supports both `api_key` and `auth_token` authentication methods
+- **🎯 Dynamic Model Routing**: Claude models mapped to provider-specific models with passthrough support
+- **🔥 Hot Configuration Reload**: Reload provider configuration without service restart
+- **📝 Comprehensive Logging**: Detailed request/response tracking with colored terminal output
+- **🔢 Token Counting**: Built-in token estimation functionality using tiktoken
+- **🌊 Streaming Support**: Full support for streaming responses with proper error handling
+- **🚫 Request Deduplication**: Intelligent caching prevents duplicate request processing
+- **🏗️ Modular Architecture**: Clean separation of caching, conversion, validation, and logging
+- **⚡ Passthrough Mode**: Direct model name forwarding to backend providers
+- **🎨 Rich Console Output**: Colored logs and status displays for better development experience
 
 ## 示例
 
@@ -142,38 +143,57 @@ settings:
 - **`openai`**: OpenAI 兼容服务商（请求会从 Anthropic 格式转换为 OpenAI 格式）
 - **`zed`**: 计划支持的 Zed 服务商（基于会话的计费模式）
 
-## 🏗️ 系统架构
+## 🏗️ System Architecture
 
-### 核心组件
+### Core Components
 
 ```
 src/
-├── main.py                 # FastAPI 主应用和请求处理
-├── provider_manager.py     # 服务商管理和路由逻辑
-├── caching/               # 请求去重和缓存模块
-│   ├── deduplication.py   # 请求去重逻辑
-│   └── cache_serving.py   # 缓存服务功能
-├── conversion/            # 协议转换模块
-│   ├── token_counting.py  # Token 计数功能
-│   └── format_conversion.py # 请求/响应格式转换
-├── models/                # Pydantic 数据模型
-│   ├── requests.py        # 请求模型定义
-│   ├── responses.py       # 响应模型定义
-│   └── errors.py          # 错误处理模型
-└── log_utils/             # 日志处理模块
-    ├── formatters.py      # 日志格式化器
-    └── handlers.py        # 日志处理器
+├── main.py                    # FastAPI main application and request handling
+├── provider_manager.py        # Provider management and routing logic
+├── models/                    # Pydantic data models
+│   ├── __init__.py           # Model exports
+│   ├── content_blocks.py     # Content block models (text, image, tool use/result)
+│   ├── messages.py           # Message and system content models
+│   ├── tools.py              # Tool definition and choice models
+│   ├── requests.py           # API request validation models
+│   ├── responses.py          # API response models
+│   └── errors.py             # Error handling and Anthropic error formats
+├── conversion/               # Protocol conversion modules
+│   ├── anthropic_to_openai.py  # Anthropic → OpenAI format conversion
+│   ├── openai_to_anthropic.py  # OpenAI → Anthropic format conversion
+│   ├── token_counting.py       # Token estimation using tiktoken
+│   ├── error_handling.py       # Error classification and response formatting
+│   └── helpers.py              # Utility functions for format conversion
+├── caching/                  # Request deduplication and caching
+│   ├── deduplication.py      # Request signature generation and deduplication
+│   └── cache_serving.py      # Cache serving for duplicate requests
+└── log_utils/                # Logging infrastructure
+    ├── formatters.py         # Custom log formatters (colored console, JSON)
+    └── handlers.py           # Logging handlers and utilities
 ```
 
-### 关键技术栈
+### Technology Stack
 
-- **FastAPI** - Web 框架和 API 端点
-- **Pydantic** - 数据验证和序列化
-- **httpx** - HTTP 客户端
-- **OpenAI SDK** - OpenAI 兼容服务商交互
-- **PyYAML** - 配置文件解析
-- **Rich** - 终端输出格式化
-- **Uvicorn** - ASGI 服务器
+- **FastAPI** - Modern web framework for API endpoints with automatic OpenAPI documentation
+- **Pydantic** - Data validation and serialization with type safety
+- **httpx** - Async HTTP client for provider requests
+- **OpenAI SDK** - Official SDK for OpenAI-compatible provider interactions
+- **PyYAML** - Configuration file parsing and management
+- **Rich** - Rich terminal output formatting and colored logs
+- **Uvicorn** - High-performance ASGI server
+- **tiktoken** - OpenAI's tokenizer for accurate token counting
+
+### Architecture Highlights
+
+- **🔄 Request Pipeline**: Middleware → Validation → Deduplication → Format Conversion → Provider Selection
+- **🎯 Provider Management**: Health monitoring, load balancing, automatic failover with cooldown periods
+- **🔀 Format Conversion**: Bidirectional conversion between Anthropic and OpenAI API formats
+- **📦 Modular Design**: Clear separation of concerns with independent, testable components
+- **⚡ Performance**: Async/await throughout, request deduplication, streaming support
+- **🛡️ Error Handling**: Comprehensive error classification and proper HTTP status codes
+
+For detailed architecture diagrams, see [docs/architecture-diagrams.md](docs/architecture-diagrams.md).
 
 ### 3. 启动服务器
 
