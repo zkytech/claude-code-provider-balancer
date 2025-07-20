@@ -1101,6 +1101,17 @@ if __name__ == "__main__":
             provider_line = f"\n   [{status_icon}] {provider.name} ({provider.type.value}): {provider.base_url}"
             providers_text += provider_line
         
+        # Convert absolute log file path to relative for display
+        log_file_display = "Disabled"
+        if settings.log_file_path:
+            try:
+                project_root = Path(__file__).parent.parent
+                log_path = Path(settings.log_file_path)
+                log_file_display = str(log_path.relative_to(project_root))
+            except ValueError:
+                # If path is not relative to project root, show basename
+                log_file_display = Path(settings.log_file_path).name
+        
         config_details_text = Text.assemble(
             ("   Version       : ", "default"),
             (f"v{settings.app_version}", "bold cyan"),
@@ -1110,7 +1121,7 @@ if __name__ == "__main__":
             ("\n   Log Level     : ", "default"),
             (settings.log_level.upper(), "yellow"),
             ("\n   Log File      : ", "default"),
-            (settings.log_file_path or "Disabled", "dim"),
+            (log_file_display, "dim"),
             ("\n   Listening on  : ", "default"),
             (f"http://{settings.host}:{settings.port}", "default"),
             ("\n   Reload        : ", "default"),
