@@ -1089,7 +1089,7 @@ if __name__ == "__main__":
  ██████ ███████ ██   ██  ██████  ██████  ███████     ██████  ██   ██ ███████ ██   ██ ██   ████  ██████ ███████ ██   ██ 
 """
 
-    _console.print(banner, style="bold default")
+    _console.print(banner, style="bold green")
 
     if provider_manager:
         # Display provider information
