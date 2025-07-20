@@ -1088,9 +1088,9 @@ if __name__ == "__main__":
 ██      ██      ██   ██ ██    ██ ██   ██ ██          ██   ██ ██   ██ ██      ██   ██ ██  ██ ██ ██      ██      ██   ██ 
  ██████ ███████ ██   ██  ██████  ██████  ███████     ██████  ██   ██ ███████ ██   ██ ██   ████  ██████ ███████ ██   ██ 
 """
-    
-    _console.print(banner, style="bold orange1")
-    
+
+    _console.print(banner, style="bold default")
+
     if provider_manager:
         # Display provider information
         providers_text = ""
