@@ -231,7 +231,7 @@ class UvicornAccessFormatter(logging.Formatter):
     """Special formatter for uvicorn access logs to match application log colors."""
 
     # light gray for info messages
-    INFO_GRAY = '\033[56m'  # bright blue (more readable than dark gray)
+    INFO_GRAY = '\033[38;5;244m'  # 256-color ANSI equivalent to #767878
     RESET = '\033[0m'
     
     def __init__(self):

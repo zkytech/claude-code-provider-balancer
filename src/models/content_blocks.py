@@ -34,10 +34,16 @@ class ContentBlockToolResult(BaseModel):
     is_error: Optional[bool] = None
 
 
+class ContentBlockThinking(BaseModel):
+    type: Literal["thinking"]
+    thinking: str
+
+
 # Union type for all content blocks
 ContentBlock = Union[
     ContentBlockText, 
     ContentBlockImage, 
     ContentBlockToolUse, 
-    ContentBlockToolResult
+    ContentBlockToolResult,
+    ContentBlockThinking
 ]
