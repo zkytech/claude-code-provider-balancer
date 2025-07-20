@@ -228,9 +228,10 @@ class ConsoleJSONFormatter(JSONFormatter):
 
 
 class UvicornAccessFormatter(logging.Formatter):
-    """Special formatter for uvicorn access logs to make them gray."""
-    
-    GRAY = '\033[90m'  # Dark gray (dim)
+    """Special formatter for uvicorn access logs to match application log colors."""
+
+    # light gray for info messages
+    INFO_GRAY = '\033[56m'  # bright blue (more readable than dark gray)
     RESET = '\033[0m'
     
     def __init__(self):
@@ -249,6 +250,6 @@ class UvicornAccessFormatter(logging.Formatter):
         )
         
         if use_colors:
-            return f"{self.GRAY}{formatted_message}{self.RESET}"
+            return f"{self.INFO_GRAY}{formatted_message}{self.RESET}"
         else:
             return formatted_message
