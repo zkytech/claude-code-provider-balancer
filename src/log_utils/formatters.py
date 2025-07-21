@@ -143,7 +143,7 @@ class ColoredConsoleFormatter(logging.Formatter):
                 message = message[:200] + "..."
             
             simplified = {
-                "time": datetime.fromtimestamp(record.created, timezone.utc).strftime("%H:%M:%S"),
+                "time": datetime.fromtimestamp(record.created).strftime("%H:%M:%S"),
                 "level": record.levelname,
                 "event": log_payload.event,
                 "message": message
@@ -188,7 +188,7 @@ class ColoredConsoleFormatter(logging.Formatter):
         else:
             # For non-structured logs, use basic format
             return {
-                "time": datetime.fromtimestamp(record.created, timezone.utc).strftime("%H:%M:%S"),
+                "time": datetime.fromtimestamp(record.created).strftime("%H:%M:%S"),
                 "level": record.levelname,
                 "message": record.getMessage()
             }
@@ -197,7 +197,7 @@ class ColoredConsoleFormatter(logging.Formatter):
         """Extract log dictionary from record, similar to JSONFormatter logic."""
         header = {
             "timestamp": datetime.fromtimestamp(
-                record.created, timezone.utc
+                record.created
             ).isoformat(),
             "level": record.levelname,
             "logger": record.name,
@@ -237,7 +237,7 @@ class JSONFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         header = {
             "timestamp": datetime.fromtimestamp(
-                record.created, timezone.utc
+                record.created
             ).isoformat(),
             "level": record.levelname,
             "logger": record.name,

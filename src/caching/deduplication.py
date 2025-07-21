@@ -798,38 +798,6 @@ def validate_response_quality(collected_chunks: List[str], provider_name: str, r
     try:
         extracted_content = extract_content_from_sse_chunks(collected_chunks)
         
-        # 检查是否有有效的content
-        content_blocks = extracted_content.get("content", [])
-        if not content_blocks:
-            warning(
-                LogRecord(
-                    "response_quality_check_no_content",
-                    f"No content blocks found in response from provider: {provider_name}",
-                    request_id,
-                    {
-                        "provider": provider_name, 
-                        "extracted_content": extracted_content
-                    }
-                )
-            )
-            return False
-            
-        # 检查是否有实际文本内容
-        total_text_length = sum(len(block.get('text', '')) for block in content_blocks if block.get('type') == 'text')
-        if total_text_length < 5:  # 至少要有一些实际内容
-            warning(
-                LogRecord(
-                    "response_quality_check_empty_text",
-                    f"No meaningful text content found in response from provider: {provider_name}",
-                    request_id,
-                    {
-                        "provider": provider_name,
-                        "content_blocks": content_blocks,
-                        "total_text_length": total_text_length
-                    }
-                )
-            )
-            return False
             
     except Exception as e:
         warning(

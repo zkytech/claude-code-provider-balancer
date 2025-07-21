@@ -408,22 +408,6 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
             
             # Check for HTTP error status codes first
             if response.status_code >= 400:
-                # Log detailed request information for debugging (only to file, not console)
-                debug_info = create_debug_request_info(url, headers, data)
-                error(
-                    LogRecord(
-                        event="provider_request_error_details",
-                        message=f"Provider {provider.name} returned HTTP {response.status_code}",
-                        request_id=request_id,
-                        data={
-                            "provider": provider.name,
-                            "status_code": response.status_code,
-                            "response_headers": dict(response.headers),
-                            "request_details": debug_info,
-                            "response_body": response.text[:1000] if response.text else None  # Limit response body size
-                        }
-                    )
-                )
                 response.raise_for_status()
             
             # Parse response content
@@ -955,6 +939,18 @@ async def create_message_proxy(
                     debug_info = create_debug_request_info(url, headers, request_data)
                 except Exception as debug_error:
                     debug(f"Failed to create debug info: {debug_error}")
+
+                # Extract HTTP response details for comprehensive error logging
+                response_details = None
+                if hasattr(e, 'response') and e.response is not None:
+                    try:
+                        response_details = {
+                            "response_headers": dict(e.response.headers),
+                            "response_body": e.response.text[:1000] if hasattr(e.response, 'text') and e.response.text else None
+                        }
+                    except Exception:
+                        # Ignore errors when extracting response details
+                        pass
                 
                 warning(
                     LogRecord(
@@ -969,14 +965,12 @@ async def create_message_proxy(
                             "error_type": error_type,
                             "should_failover": should_failover,
                             "http_status_code": http_status_code,
-                            "request_details": debug_info
+                            "request_details": debug_info,
+                            "response_details": response_details
                         }
                     ),
                     exc=e
                 )
-                
-                # Mark current provider as failed
-                current_provider.mark_failure()
                 
                 # If we shouldn't failover, return the error immediately
                 if not should_failover:
@@ -998,6 +992,9 @@ async def create_message_proxy(
                     )
                     complete_and_cleanup_request(signature, e, None, False, current_provider.name)
                     return await _log_and_return_error_response(request, e, request_id)
+                
+                # Mark current provider as failed since we are failing over
+                current_provider.mark_failure()
                 
                 # If we have more providers to try, continue to next iteration
                 if attempt < max_attempts - 1:
