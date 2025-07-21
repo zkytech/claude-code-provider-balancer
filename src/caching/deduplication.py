@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from log_utils.handlers import info
+
 # Global references - set by main application
 _provider_manager = None
 _make_anthropic_request = None
@@ -710,7 +712,7 @@ def update_response_cache(signature: str, collected_chunks: List[str], is_stream
     pass
 
 
-def validate_response_quality(collected_chunks: List[str], provider_name: str, request_id: str) -> bool:
+def validate_response_quality(collected_chunks: List[str], provider_name: str, request_id: str, http_status_code: Optional[int] = None) -> bool:
     """增强的响应质量验证，支持Anthropic和OpenAI格式"""
     try:
         from log_utils.handlers import warning, debug, LogRecord
@@ -720,6 +722,18 @@ def validate_response_quality(collected_chunks: List[str], provider_name: str, r
         except ImportError:
             warning = debug = lambda x: None
             LogRecord = dict
+    
+    # Skip quality validation for HTTP error status codes
+    if http_status_code is not None and http_status_code >= 400:
+        info(
+            LogRecord(
+                "response_quality_check_skip_http_error",
+                f"Skipping quality validation due to HTTP error status {http_status_code} from provider: {provider_name}",
+                request_id,
+                {"provider": provider_name, "http_status_code": http_status_code}
+            )
+        )
+        return False
     
     if not collected_chunks:
         warning(
@@ -733,6 +747,24 @@ def validate_response_quality(collected_chunks: List[str], provider_name: str, r
         return False
     
     full_content = "".join(collected_chunks)
+    
+    # Check for HTTP error responses in content (e.g., "503 Service Unavailable")
+    error_indicators = ["503 Service Unavailable", "502 Bad Gateway", "500 Internal Server Error", 
+                       "504 Gateway Timeout", "404 Not Found", "401 Unauthorized", "403 Forbidden"]
+    if any(error_msg in full_content for error_msg in error_indicators):
+        warning(
+            LogRecord(
+                "response_quality_check_http_error_in_content",
+                f"HTTP error detected in response content from provider: {provider_name}",
+                request_id,
+                {
+                    "provider": provider_name, 
+                    "chunk_count": len(collected_chunks),
+                    "content_preview": full_content[:200] + "..." if len(full_content) > 200 else full_content
+                }
+            )
+        )
+        return False
     
     # 基础格式检查：必须包含有效的SSE格式
     if not any(line.startswith("data:") for line in full_content.split('\n')):

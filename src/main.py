@@ -725,7 +725,9 @@ async def create_message_proxy(
                                     yield chunk
                                 
                                 # Stream completed, validate quality and cache if successful
-                                if validate_response_quality(collected_chunks, current_provider.name, request_id):
+                                # Check HTTP status code to skip quality validation on errors
+                                status_code = getattr(response, 'status_code', None)
+                                if validate_response_quality(collected_chunks, current_provider.name, request_id, status_code):
                                     # Quality validation passed, extract content as result
                                     try:
                                         response_content = extract_content_from_sse_chunks(collected_chunks)
@@ -857,7 +859,8 @@ async def create_message_proxy(
                                         break
                             
                             # Stream completed, validate quality and cache if successful
-                            if validate_response_quality(collected_chunks, current_provider.name, request_id):
+                            # For OpenAI streaming, HTTP errors typically raise exceptions before we reach here
+                            if validate_response_quality(collected_chunks, current_provider.name, request_id, None):
                                 try:
                                     response_content = extract_content_from_sse_chunks(collected_chunks)
                                     complete_and_cleanup_request(signature, response_content, collected_chunks, True, current_provider.name)
