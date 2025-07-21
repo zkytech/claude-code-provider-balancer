@@ -1335,7 +1335,7 @@ async def cleanup_requests(force: bool = False):
     return JSONResponse(content={"status": "cleanup completed"})
 
 
-@app.post("/providers/reload", tags=["Health"])
+@app.get("/providers/reload", tags=["Health"])
 async def reload_providers_config() -> JSONResponse:
     """Reload providers configuration from file."""
     global provider_manager
