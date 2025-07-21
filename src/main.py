@@ -805,7 +805,7 @@ async def create_message_proxy(
                                     info(
                                         LogRecord(
                                             "streaming_cancelled",
-                                            "Anthropic streaming request was cancelled",
+                                            "Streaming request was cancelled from Anthropic provider",
                                             request_id,
                                             {
                                                 "provider": current_provider.name,
@@ -997,7 +997,7 @@ async def create_message_proxy(
                                 info(
                                     LogRecord(
                                         "streaming_cancelled",
-                                        "OpenAI streaming request was cancelled",
+                                        "Streaming request was cancelled from OpenAI provider",
                                         request_id,
                                         {
                                             "provider": current_provider.name,
