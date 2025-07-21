@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import uuid
+import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -43,7 +44,7 @@ try:
         generate_request_signature, handle_duplicate_request,
         cleanup_stuck_requests, simulate_testing_delay,
         complete_and_cleanup_request, serve_waiting_duplicate_requests,
-        update_response_cache, validate_response_quality
+        update_response_cache, validate_response_quality, extract_content_from_sse_chunks
     )
     from .conversion import (
         get_token_encoder, count_tokens_for_anthropic_request,
@@ -57,7 +58,8 @@ except ImportError:
     from log_utils import (
         LogRecord, LogEvent, LogError,
         ColoredConsoleFormatter, JSONFormatter, ConsoleJSONFormatter,
-        init_logger, debug, info, warning, error, critical
+        init_logger, debug, info, warning, error, critical,
+        create_debug_request_info
     )
     from models import (
         MessagesRequest, TokenCountRequest, TokenCountResponse,
@@ -67,7 +69,7 @@ except ImportError:
         generate_request_signature, handle_duplicate_request,
         cleanup_stuck_requests, simulate_testing_delay,
         complete_and_cleanup_request, serve_waiting_duplicate_requests,
-        update_response_cache, validate_response_quality
+        update_response_cache, validate_response_quality, extract_content_from_sse_chunks
     )
     from conversion import (
         get_token_encoder, count_tokens_for_anthropic_request,
@@ -305,6 +307,61 @@ app = fastapi.FastAPI(
     description="Intelligent load balancer and failover proxy for Claude Code providers",
 )
 
+# 存储token刷新任务的全局变量
+_token_refresh_tasks = []
+
+@app.on_event("startup")
+async def startup_event():
+    """FastAPI应用启动时的初始化"""
+    global _token_refresh_tasks
+    
+    try:
+        # 导入token刷新模块
+        from .token_refresher import start_token_refresh_loop
+    except ImportError:
+        from token_refresher import start_token_refresh_loop
+    
+    # 为每个启用了auto_refresh的provider启动刷新任务
+    if provider_manager:
+        for provider_config in provider_manager.providers:
+            # 查找原始配置以获取auto_refresh_config
+            try:
+                with open(provider_manager.config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f)
+                
+                for provider_raw in config.get('providers', []):
+                    if provider_raw.get('name') == provider_config.name:
+                        auto_refresh_config = provider_raw.get('auto_refresh_config', {})
+                        if auto_refresh_config.get('enabled', False):
+                            info(f"Starting token refresh for provider: {provider_config.name}")
+                            task = asyncio.create_task(
+                                start_token_refresh_loop(
+                                    provider_config.name, 
+                                    provider_raw, 
+                                    provider_manager
+                                )
+                            )
+                            _token_refresh_tasks.append(task)
+                        break
+            except Exception as e:
+                error(f"Failed to start token refresh for provider {provider_config.name}: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """FastAPI应用关闭时的清理"""
+    global _token_refresh_tasks
+    
+    # 取消所有token刷新任务
+    for task in _token_refresh_tasks:
+        task.cancel()
+    
+    # 等待任务完成取消
+    if _token_refresh_tasks:
+        await asyncio.gather(*_token_refresh_tasks, return_exceptions=True)
+    
+    _token_refresh_tasks.clear()
+    info("Token refresh tasks stopped")
+
 
 async def make_provider_request(provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
     """Make a request to a specific provider"""
@@ -351,6 +408,22 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
             
             # Check for HTTP error status codes first
             if response.status_code >= 400:
+                # Log detailed request information for debugging (only to file, not console)
+                debug_info = create_debug_request_info(url, headers, data)
+                error(
+                    LogRecord(
+                        event="provider_request_error_details",
+                        message=f"Provider {provider.name} returned HTTP {response.status_code}",
+                        request_id=request_id,
+                        data={
+                            "provider": provider.name,
+                            "status_code": response.status_code,
+                            "response_headers": dict(response.headers),
+                            "request_details": debug_info,
+                            "response_body": response.text[:1000] if response.text else None  # Limit response body size
+                        }
+                    )
+                )
                 response.raise_for_status()
             
             # Parse response content
@@ -363,15 +436,34 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
                 error_message = response_data.get("error", {}).get("message", "Unknown error from provider")
                 error_type = response_data.get("error", {}).get("type", "unknown_error")
                 
+                # Log detailed request information for API errors (only to file, not console)
+                debug_info = create_debug_request_info(url, headers, data)
+                error(
+                    LogRecord(
+                        event="provider_api_error_details",
+                        message=f"Provider {provider.name} returned API error: {error_message}",
+                        request_id=request_id,
+                        data={
+                            "provider": provider.name,
+                            "error_type": error_type,
+                            "error_message": error_message,
+                            "status_code": response.status_code,
+                            "response_headers": dict(response.headers),
+                            "request_details": debug_info,
+                            "response_body": response_data
+                        }
+                    )
+                )
+                
                 # Create a mock request for the exception
                 mock_request = httpx.Request("POST", url)
-                error = HTTPStatusError(
+                http_error = HTTPStatusError(
                     message=f"Provider returned error: {error_message}",
                     request=mock_request,
                     response=response
                 )
-                error.error_type = error_type
-                raise error
+                http_error.error_type = error_type
+                raise http_error
                 
             return response_data
 
@@ -648,8 +740,20 @@ async def create_message_proxy(
                                     collected_chunks.append(chunk)
                                     yield chunk
                                 
-                                # Stream completed, now cache the collected chunks
-                                complete_and_cleanup_request(signature, None, collected_chunks, True, current_provider.name)
+                                # Stream completed, validate quality and cache if successful
+                                if validate_response_quality(collected_chunks, current_provider.name, request_id):
+                                    # Quality validation passed, extract content as result
+                                    try:
+                                        response_content = extract_content_from_sse_chunks(collected_chunks)
+                                        complete_and_cleanup_request(signature, response_content, collected_chunks, True, current_provider.name)
+                                    except Exception as e:
+                                        # Content extraction failed
+                                        extraction_error = Exception(f"Response content extraction failed: {str(e)}")
+                                        complete_and_cleanup_request(signature, extraction_error, None, True, current_provider.name)
+                                else:
+                                    # Quality validation failed, mark as error to allow retry
+                                    quality_error = Exception("Response quality validation failed")
+                                    complete_and_cleanup_request(signature, quality_error, None, True, current_provider.name)
                             
                             return StreamingResponse(
                                 stream_anthropic_response(),
@@ -664,7 +768,8 @@ async def create_message_proxy(
                             async def convert_to_stream():
                                 yield f"data: {json.dumps(response_data)}\n\n"
                             
-                            complete_and_cleanup_request(signature, None, collected_chunks, True, current_provider.name)
+                            # For non-streaming responses converted to stream, use the response_data directly
+                            complete_and_cleanup_request(signature, response_data, collected_chunks, True, current_provider.name)
                             return StreamingResponse(
                                 convert_to_stream(),
                                 media_type="text/event-stream",
@@ -767,8 +872,17 @@ async def create_message_proxy(
                                         
                                         break
                             
-                            # Stream completed, now cache the collected chunks
-                            complete_and_cleanup_request(signature, None, collected_chunks, True, current_provider.name)
+                            # Stream completed, validate quality and cache if successful
+                            if validate_response_quality(collected_chunks, current_provider.name, request_id):
+                                try:
+                                    response_content = extract_content_from_sse_chunks(collected_chunks)
+                                    complete_and_cleanup_request(signature, response_content, collected_chunks, True, current_provider.name)
+                                except Exception as e:
+                                    extraction_error = Exception(f"Response content extraction failed: {str(e)}")
+                                    complete_and_cleanup_request(signature, extraction_error, None, True, current_provider.name)
+                            else:
+                                quality_error = Exception("Response quality validation failed")
+                                complete_and_cleanup_request(signature, quality_error, None, True, current_provider.name)
                         
                         # Return immediately without waiting for stream completion
                         # The caching will happen asynchronously in the stream generator
@@ -832,6 +946,16 @@ async def create_message_proxy(
                     should_failover = True
                     error_type = "unknown_error"
                 
+                # Create debug info for request details (will be masked for security)
+                debug_info = None
+                try:
+                    url = provider_manager.get_request_url(current_provider, "v1/messages")
+                    headers = provider_manager.get_provider_headers(current_provider, original_headers)
+                    request_data = clean_request_body if current_provider.type == ProviderType.ANTHROPIC else openai_params
+                    debug_info = create_debug_request_info(url, headers, request_data)
+                except Exception as debug_error:
+                    debug(f"Failed to create debug info: {debug_error}")
+                
                 warning(
                     LogRecord(
                         event="provider_request_failed",
@@ -844,7 +968,8 @@ async def create_message_proxy(
                             "remaining_attempts": max_attempts - attempt - 1,
                             "error_type": error_type,
                             "should_failover": should_failover,
-                            "http_status_code": http_status_code
+                            "http_status_code": http_status_code,
+                            "request_details": debug_info
                         }
                     ),
                     exc=e
@@ -1082,11 +1207,13 @@ _init_deduplication_references()
 if __name__ == "__main__":
     # Display ASCII art banner
     banner = """
- ██████ ██       █████  ██    ██ ██████  ███████     ██████   █████  ██       █████  ███    ██  ██████ ███████ ██████  
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ ▄████▄ ██       ▄███▄  ██    ██ ██████  ███████     ██████   ▄███▄  ██       ▄███▄  ███    ██  ▄████▄ ███████ ██████  
 ██      ██      ██   ██ ██    ██ ██   ██ ██          ██   ██ ██   ██ ██      ██   ██ ████   ██ ██      ██      ██   ██ 
 ██      ██      ███████ ██    ██ ██   ██ █████       ██████  ███████ ██      ███████ ██ ██  ██ ██      █████   ██████  
 ██      ██      ██   ██ ██    ██ ██   ██ ██          ██   ██ ██   ██ ██      ██   ██ ██  ██ ██ ██      ██      ██   ██ 
- ██████ ███████ ██   ██  ██████  ██████  ███████     ██████  ██   ██ ███████ ██   ██ ██   ████  ██████ ███████ ██   ██ 
+ ▀████▀ ███████ ██   ██  ██████  ██████  ███████     ██████  ██   ██ ███████ ██   ██ ██   ████  ▀████▀ ███████ ██   ██ 
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 """
 
     _console.print(banner, style="bold green")

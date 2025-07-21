@@ -7,6 +7,7 @@ import sys
 import traceback
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
+import re
 
 
 @dataclasses.dataclass
@@ -24,6 +25,54 @@ class LogRecord:
     request_id: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
     error: Optional[LogError] = None
+
+
+def mask_sensitive_data(data: Any, mask_char: str = "*") -> Any:
+    """Recursively mask sensitive data in dictionaries, lists, and strings."""
+    if isinstance(data, dict):
+        return {key: mask_sensitive_data(value, mask_char) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [mask_sensitive_data(item, mask_char) for item in data]
+    elif isinstance(data, str):
+        return mask_sensitive_string(data, mask_char)
+    else:
+        return data
+
+
+def mask_sensitive_string(text: str, mask_char: str = "*") -> str:
+    """Mask sensitive information in strings like API keys, tokens, etc."""
+    if not isinstance(text, str):
+        return text
+    
+    # Patterns for sensitive data
+    patterns = [
+        # API Keys (various formats)
+        (r'(sk-[a-zA-Z0-9-_]{20,})', lambda m: m.group(1)[:10] + mask_char * 10),
+        (r'(Bearer\s+[a-zA-Z0-9-_\.]{20,})', lambda m: m.group(1)[:15] + mask_char * 10),
+        (r'([a-zA-Z0-9-_]{32,})', lambda m: m.group(1)[:8] + mask_char * 8 + m.group(1)[-4:] if len(m.group(1)) > 16 else m.group(1)),
+        
+        # Authorization headers
+        (r'("?[Aa]uthorization"?\s*:\s*"?)([^"\s,}]+)', lambda m: m.group(1) + mask_char * 10),
+        (r'("?[Xx]-[Aa]pi-[Kk]ey"?\s*:\s*"?)([^"\s,}]+)', lambda m: m.group(1) + mask_char * 10),
+        
+        # Common sensitive field patterns in JSON
+        (r'("(?:password|secret|token|key|auth)"\s*:\s*")([^"]+)', lambda m: m.group(1) + mask_char * 8),
+    ]
+    
+    masked_text = text
+    for pattern, replacement in patterns:
+        masked_text = re.sub(pattern, replacement, masked_text, flags=re.IGNORECASE)
+    
+    return masked_text
+
+
+def create_debug_request_info(url: str, headers: Dict[str, str], data: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a debug information dict with masked sensitive data for request logging."""
+    return {
+        "url": url,
+        "headers": mask_sensitive_data(headers),
+        "request_body": mask_sensitive_data(data)
+    }
 
 
 class ColoredConsoleFormatter(logging.Formatter):

@@ -26,7 +26,7 @@ TEST_FILES = [
     # 扩展功能测试
     "test_passthrough.py",
     "test_log_colors.py",
-    # "test_concurrent_requests.py",
+    "test_provider_type_switching.py",
     "test_error_handling.py",
 ]
 

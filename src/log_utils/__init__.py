@@ -5,7 +5,10 @@ from .formatters import (
     LogRecord,
     ColoredConsoleFormatter,
     JSONFormatter,
-    ConsoleJSONFormatter
+    ConsoleJSONFormatter,
+    mask_sensitive_data,
+    mask_sensitive_string,
+    create_debug_request_info
 )
 
 from .handlers import (
@@ -30,5 +33,8 @@ __all__ = [
     "info",
     "warning",
     "error",
-    "critical"
+    "critical",
+    "mask_sensitive_data",
+    "mask_sensitive_string",
+    "create_debug_request_info"
 ]

@@ -573,6 +573,14 @@ class ProviderManager:
         
         return error_type, should_failover
 
+    def update_provider_auth(self, provider_name: str, new_auth_value: str):
+        """更新provider的认证值（用于token刷新）"""
+        provider = self.get_provider_by_name(provider_name)
+        if provider:
+            provider.auth_value = new_auth_value
+            return True
+        return False
+
     def shutdown(self):
         """Shutdown the provider manager"""
         pass

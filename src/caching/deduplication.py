@@ -711,7 +711,7 @@ def update_response_cache(signature: str, collected_chunks: List[str], is_stream
 
 
 def validate_response_quality(collected_chunks: List[str], provider_name: str, request_id: str) -> bool:
-    """验证响应质量，检测是否为不完整或格式错误的响应"""
+    """增强的响应质量验证，支持Anthropic和OpenAI格式"""
     try:
         from log_utils.handlers import warning, debug, LogRecord
     except ImportError:
@@ -732,55 +732,52 @@ def validate_response_quality(collected_chunks: List[str], provider_name: str, r
         )
         return False
     
-    # 检查响应是否只有1个chunk且内容过少（可能的错误响应）
-    if len(collected_chunks) == 1:
-        chunk_content = collected_chunks[0]
-        
-        # 检查是否为错误响应格式
-        if ("error" in chunk_content.lower() and len(chunk_content) < 200) or \
-           ("event: error" in chunk_content) or \
-           ("data: {" in chunk_content and "error" in chunk_content and len(chunk_content) < 500):
-            warning(
-                LogRecord(
-                    "response_quality_check_error",
-                    f"Error response detected from provider: {provider_name}",
-                    request_id,
-                    {
-                        "provider": provider_name, 
-                        "chunk_count": len(collected_chunks),
-                        "content_preview": chunk_content[:200] + "..." if len(chunk_content) > 200 else chunk_content
-                    }
-                )
-            )
-            return False
-        
-        # 检查是否为过短的响应（可能不完整）
-        if len(chunk_content) < 100:  # 正常的Claude响应通常会更长
-            warning(
-                LogRecord(
-                    "response_quality_check_short",
-                    f"Suspiciously short response from provider: {provider_name}",
-                    request_id,
-                    {
-                        "provider": provider_name, 
-                        "chunk_count": len(collected_chunks),
-                        "content_length": len(chunk_content),
-                        "content_preview": chunk_content[:100]
-                    }
-                )
-            )
-            return False
-    
-    # 检查响应是否包含常见的完整性标志
     full_content = "".join(collected_chunks)
+    
+    # 基础格式检查：必须包含有效的SSE格式
+    if not any(line.startswith("data:") for line in full_content.split('\n')):
+        warning(
+            LogRecord(
+                "response_quality_check_no_sse",
+                f"No valid SSE format detected from provider: {provider_name}",
+                request_id,
+                {
+                    "provider": provider_name, 
+                    "chunk_count": len(collected_chunks),
+                    "content_preview": full_content[:200] + "..." if len(full_content) > 200 else full_content
+                }
+            )
+        )
+        return False
+    
+    # 检查是否包含明显的错误响应
+    if ("event: error" in full_content) or \
+       ('"error"' in full_content and '"type"' in full_content and len(full_content) < 500):
+        warning(
+            LogRecord(
+                "response_quality_check_error",
+                f"Error response detected from provider: {provider_name}",
+                request_id,
+                {
+                    "provider": provider_name, 
+                    "chunk_count": len(collected_chunks),
+                    "content_preview": full_content[:200] + "..." if len(full_content) > 200 else full_content
+                }
+            )
+        )
+        return False
+    
+    # 检查完整性标志（支持Anthropic和OpenAI格式）
     has_completion_marker = any(marker in full_content for marker in [
-        "event: message_stop",
-        "event: content_block_stop", 
-        "stop_reason",
-        '"type": "message_stop"'
+        "event: message_stop",           # Anthropic
+        "event: content_block_stop",     # Anthropic 
+        "stop_reason",                   # Anthropic
+        '"type": "message_stop"',        # Anthropic
+        '"finish_reason"',               # OpenAI
+        'data: [DONE]'                   # OpenAI
     ])
     
-    if not has_completion_marker and len(collected_chunks) < 3:
+    if not has_completion_marker:
         warning(
             LogRecord(
                 "response_quality_check_incomplete",
@@ -796,6 +793,59 @@ def validate_response_quality(collected_chunks: List[str], provider_name: str, r
         )
         return False
     
+    # 尝试解析为结构化响应并验证内容
+    total_text_length = 0  # 初始化变量
+    try:
+        extracted_content = extract_content_from_sse_chunks(collected_chunks)
+        
+        # 检查是否有有效的content
+        content_blocks = extracted_content.get("content", [])
+        if not content_blocks:
+            warning(
+                LogRecord(
+                    "response_quality_check_no_content",
+                    f"No content blocks found in response from provider: {provider_name}",
+                    request_id,
+                    {
+                        "provider": provider_name, 
+                        "extracted_content": extracted_content
+                    }
+                )
+            )
+            return False
+            
+        # 检查是否有实际文本内容
+        total_text_length = sum(len(block.get('text', '')) for block in content_blocks if block.get('type') == 'text')
+        if total_text_length < 5:  # 至少要有一些实际内容
+            warning(
+                LogRecord(
+                    "response_quality_check_empty_text",
+                    f"No meaningful text content found in response from provider: {provider_name}",
+                    request_id,
+                    {
+                        "provider": provider_name,
+                        "content_blocks": content_blocks,
+                        "total_text_length": total_text_length
+                    }
+                )
+            )
+            return False
+            
+    except Exception as e:
+        warning(
+            LogRecord(
+                "response_quality_check_parse_error",
+                f"Failed to parse response from provider: {provider_name}",
+                request_id,
+                {
+                    "provider": provider_name,
+                    "error": str(e),
+                    "content_preview": full_content[:200] + "..." if len(full_content) > 200 else full_content
+                }
+            )
+        )
+        return False
+    
     debug(
         LogRecord(
             "response_quality_check_passed",
@@ -805,7 +855,8 @@ def validate_response_quality(collected_chunks: List[str], provider_name: str, r
                 "provider": provider_name, 
                 "chunk_count": len(collected_chunks),
                 "has_completion_marker": has_completion_marker,
-                "content_length": len(full_content)
+                "content_length": len(full_content),
+                "total_text_length": total_text_length
             }
         )
     )
