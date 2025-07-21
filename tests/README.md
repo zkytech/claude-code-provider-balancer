@@ -157,7 +157,7 @@ import requests
 import sys
 import os
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:9090"
 
 class TestYourFeature:
     def __init__(self):

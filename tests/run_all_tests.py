@@ -39,7 +39,7 @@ class TestRunner:
         """检查服务器是否运行"""
         try:
             import requests
-            response = requests.get("http://localhost:8080/", timeout=5)
+            response = requests.get("http://localhost:9090/", timeout=5)
             return response.status_code == 200
         except:
             return False

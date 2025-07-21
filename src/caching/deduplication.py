@@ -316,6 +316,9 @@ def complete_and_cleanup_request(signature: str, result: Any, cache_content: Opt
             debug = info = error = lambda x: None
             LogRecord = dict
     
+    # 检查是否是客户端断开导致的完成
+    is_client_disconnect = isinstance(result, Exception) and "Client disconnected" in str(result)
+    
     
     if signature:
         try:
@@ -365,21 +368,57 @@ def complete_and_cleanup_request(signature: str, result: Any, cache_content: Opt
                             # 按时间戳排序，最新的在最后
                             requests_in_group.sort(key=lambda x: x[2])
                             
-                            # 取消较早的请求
-                            for future, req_id, timestamp, is_stream in requests_in_group[:-1]:
+                            # 如果是客户端断开导致的完成，需要特殊处理
+                            if is_client_disconnect:
+                                # 对于客户端断开的情况，只将结果发送给非流式请求
+                                # 流式请求的客户端已经断开，发送结果没有意义
+                                for future, req_id, timestamp, is_stream in requests_in_group:
+                                    try:
+                                        if is_stream:
+                                            # 流式请求的客户端已断开，取消这些请求
+                                            future.cancel()
+                                            cancelled_count += 1
+                                            debug(
+                                                LogRecord(
+                                                    "stream_request_cancelled_due_to_disconnect",
+                                                    f"Cancelled stream request {req_id[:8]} due to original client disconnect",
+                                                    req_id,
+                                                    {"original_request_id": original_req_id, "timestamp": timestamp}
+                                                )
+                                            )
+                                        else:
+                                            # 非流式请求仍然可以接收结果
+                                            # 但将错误转换为适当的响应，而不是客户端断开错误
+                                            timeout_error = Exception("Original streaming request timed out")
+                                            future.set_result(timeout_error)
+                                            served_count += 1
+                                            debug(
+                                                LogRecord(
+                                                    "non_stream_served_after_disconnect",
+                                                    f"Served non-stream request {req_id[:8]} with timeout error after original disconnect",
+                                                    req_id,
+                                                    {"original_request_id": original_req_id, "timestamp": timestamp}
+                                                )
+                                            )
+                                    except Exception:
+                                        pass
+                            else:
+                                # 正常完成的情况，使用原来的逻辑
+                                # 取消较早的请求
+                                for future, req_id, timestamp, is_stream in requests_in_group[:-1]:
+                                    try:
+                                        future.cancel()
+                                        cancelled_count += 1
+                                    except Exception:
+                                        pass
+                                
+                                # 为最新的请求设置结果
+                                latest_future, latest_req_id, latest_timestamp, latest_is_stream = requests_in_group[-1]
                                 try:
-                                    future.cancel()
-                                    cancelled_count += 1
+                                    latest_future.set_result(result)
+                                    served_count += 1
                                 except Exception:
                                     pass
-                            
-                            # 为最新的请求设置结果
-                            latest_future, latest_req_id, latest_timestamp, latest_is_stream = requests_in_group[-1]
-                            try:
-                                latest_future.set_result(result)
-                                served_count += 1
-                            except Exception:
-                                pass
                         
                         # 清理duplicate requests
                         del _duplicate_requests[signature]
@@ -393,7 +432,8 @@ def complete_and_cleanup_request(signature: str, result: Any, cache_content: Opt
                                     {
                                         "signature": signature[:16] + "...",
                                         "served_latest_count": served_count,
-                                        "cancelled_earlier_count": cancelled_count
+                                        "cancelled_earlier_count": cancelled_count,
+                                        "client_disconnect": is_client_disconnect
                                     }
                                 )
                             )
@@ -401,7 +441,10 @@ def complete_and_cleanup_request(signature: str, result: Any, cache_content: Opt
                     # 响应缓存已删除，不再缓存响应内容
                     
                     # 根据结果类型确定清理原因
-                    if isinstance(result, Exception):
+                    if is_client_disconnect:
+                        cleanup_reason = "client_disconnected"
+                        message = f"Request cleaned up due to client disconnect (duplicate request cleared)"
+                    elif isinstance(result, Exception):
                         cleanup_reason = "request_failed"
                         message = f"Request failed and cleaned up (duplicate request cleared): {str(result)}"
                     elif isinstance(result, str):
@@ -424,7 +467,8 @@ def complete_and_cleanup_request(signature: str, result: Any, cache_content: Opt
                                 "request_signature": signature[:16] + "...",
                                 "result_type": type(result).__name__,
                                 "pending_requests_count": len(_pending_requests),
-                                "cleanup_reason": cleanup_reason
+                                "cleanup_reason": cleanup_reason,
+                                "client_disconnect": is_client_disconnect
                             },
                         )
                     )
@@ -725,7 +769,7 @@ def validate_response_quality(collected_chunks: List[str], provider_name: str, r
     
     # Skip quality validation for HTTP error status codes
     if http_status_code is not None and http_status_code >= 400:
-        info(
+        debug(
             LogRecord(
                 "response_quality_check_skip_http_error",
                 f"Skipping quality validation due to HTTP error status {http_status_code} from provider: {provider_name}",

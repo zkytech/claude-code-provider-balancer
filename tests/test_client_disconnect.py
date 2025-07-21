@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from test_utils import get_claude_code_headers
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:9090"
 
 class TestClientDisconnect:
     def __init__(self):

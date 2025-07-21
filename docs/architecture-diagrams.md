@@ -11,7 +11,7 @@ graph TB
     end
     
     subgraph "FastAPI Application Layer"
-        LB[FastAPI Server<br/>Port 8080]
+        LB[FastAPI Server<br/>Port 9090]
         MW[Middleware<br/>Logging & Error Handling]
         RV[Request Validation<br/>Pydantic Models]
     end

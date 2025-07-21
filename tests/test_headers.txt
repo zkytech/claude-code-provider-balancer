@@ -2,7 +2,7 @@
 # Use these headers when testing the balancer to simulate real Claude Code client requests
 
 # For curl commands:
-curl -X POST http://localhost:8080/v1/messages \
+curl -X POST http://localhost:9090/v1/messages \
   -H "x-stainless-retry-count: 0" \
   -H "x-stainless-timeout: 60" \
   -H "x-stainless-lang: js" \
@@ -49,7 +49,7 @@ headers = {
 import httpx
 async with httpx.AsyncClient() as client:
     response = await client.post(
-        "http://localhost:8080/v1/messages",
+        "http://localhost:9090/v1/messages",
         headers=headers,
         json={"model": "claude-3-5-haiku-20241022", "messages": [{"role": "user", "content": "Hello"}], "max_tokens": 100}
     )

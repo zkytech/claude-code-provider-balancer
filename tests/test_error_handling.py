@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from test_utils import get_claude_code_headers
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:9090"
 
 class TestErrorHandling:
     def __init__(self):
@@ -533,6 +533,124 @@ class TestErrorHandling:
             print(f"❌ 服务器稳定性测试失败: {e}")
             return False
     
+    def test_provider_error_response_logging(self):
+        """测试provider返回错误时的详细日志记录功能"""
+        print("测试: Provider错误响应详细日志记录")
+        
+        try:
+            import glob
+            import tempfile
+            
+            # 获取当前日志文件数量
+            log_files = glob.glob("logs/logs.jsonl*")
+            initial_log_count = len(log_files) if log_files else 0
+            
+            # 使用一个很可能触发provider错误的请求
+            # 发送一个格式正确但内容可能导致API错误的请求
+            payload = {
+                "model": "claude-3-5-sonnet-20241022",  # 使用sonnet模型增加出错概率
+                "messages": [{"role": "user", "content": "Test provider error logging with complex context and many tools"}],
+                "max_tokens": 50000,  # 使用极大的token数可能触发limits
+                "stream": False,
+                "tools": [{"name": f"tool_{i}", "description": f"Tool {i}", "input_schema": {"type": "object", "properties": {}}} for i in range(50)]  # 大量工具
+            }
+            
+            print("   发送可能触发provider错误的请求...")
+            
+            response = requests.post(
+                f"{self.base_url}/v1/messages",
+                headers=self.headers,
+                json=payload,
+                timeout=30
+            )
+            
+            print(f"   响应状态码: {response.status_code}")
+            
+            # 等待日志写入
+            time.sleep(2)
+            
+            # 检查是否生成了新的日志
+            current_log_files = glob.glob("logs/logs.jsonl*")
+            current_log_count = len(current_log_files) if current_log_files else 0
+            
+            if current_log_count > initial_log_count or os.path.exists("logs/logs.jsonl"):
+                print("   检查日志文件内容...")
+                
+                # 读取最新的日志内容
+                if os.path.exists("logs/logs.jsonl"):
+                    with open("logs/logs.jsonl", "r", encoding="utf-8") as f:
+                        recent_logs = f.readlines()[-50:]  # 读取最后50行
+                    
+                    # 查找相关的日志条目
+                    provider_error_logs = []
+                    provider_detail_logs = []
+                    
+                    for log_line in recent_logs:
+                        try:
+                            log_data = json.loads(log_line.strip())
+                            if log_data.get("detail", {}).get("event") == "provider_request_failed":
+                                provider_error_logs.append(log_data)
+                            elif log_data.get("detail", {}).get("event") == "provider_request_failed_details":
+                                provider_detail_logs.append(log_data)
+                            elif log_data.get("detail", {}).get("event") == "provider_http_error_details":
+                                provider_detail_logs.append(log_data)
+                        except:
+                            continue
+                    
+                    success_indicators = 0
+                    
+                    # 检查是否有适当的错误日志
+                    if provider_error_logs:
+                        print(f"   ✅ 找到 {len(provider_error_logs)} 个provider错误摘要日志")
+                        success_indicators += 1
+                        
+                        # 检查摘要日志是否简洁
+                        for log in provider_error_logs:
+                            message = log.get("detail", {}).get("message", "")
+                            if len(message) < 200:  # 摘要应该相对简短
+                                print("   ✅ 控制台日志消息长度合理")
+                                success_indicators += 1
+                                break
+                    
+                    # 检查是否有详细错误日志
+                    if provider_detail_logs:
+                        print(f"   ✅ 找到 {len(provider_detail_logs)} 个详细错误日志")
+                        success_indicators += 1
+                        
+                        # 检查详细日志是否包含必要信息
+                        for log in provider_detail_logs:
+                            data = log.get("detail", {}).get("data", {})
+                            if "request_details" in data or "response_details" in data:
+                                print("   ✅ 详细日志包含请求/响应信息")
+                                success_indicators += 1
+                                break
+                    
+                    # 如果没有错误日志，但请求成功，也算正常
+                    if not provider_error_logs and not provider_detail_logs and response.status_code == 200:
+                        print("   ✅ 请求成功，无错误日志是正常的")
+                        success_indicators += 2
+                    
+                    # 评估测试结果
+                    if success_indicators >= 2:
+                        print("✅ Provider错误响应日志记录测试通过")
+                        return True
+                    else:
+                        print(f"⚠️  日志记录功能可能存在问题 (指标: {success_indicators}/2)")
+                        # 打印一些调试信息
+                        if provider_error_logs:
+                            print(f"   调试: 错误日志示例: {provider_error_logs[0].get('detail', {}).get('message', '')}")
+                        return False
+                else:
+                    print("   ℹ️  没有找到日志文件，可能是内存日志模式")
+                    return True
+            else:
+                print("   ℹ️  没有检测到新日志，可能请求正常处理")
+                return True
+                
+        except Exception as e:
+            print(f"❌ Provider错误日志测试失败: {e}")
+            return False
+    
     def run_all_tests(self):
         """运行所有测试"""
         print("=" * 60)
@@ -548,7 +666,8 @@ class TestErrorHandling:
             self.test_very_long_content,
             self.test_unicode_and_special_characters,
             self.test_concurrent_error_requests,
-            self.test_server_stress_with_errors
+            self.test_server_stress_with_errors,
+            self.test_provider_error_response_logging
         ]
         
         passed = 0

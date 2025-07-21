@@ -179,7 +179,7 @@ def on_stream_success():
 
 ```bash
 # 查看所有provider状态
-curl http://localhost:8080/providers
+curl http://localhost:9090/providers
 ```
 
 返回示例：

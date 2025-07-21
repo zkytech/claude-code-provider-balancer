@@ -155,12 +155,12 @@ providers:
 
 1. **查看提供商状态**：
    ```bash
-   curl http://localhost:8080/providers
+   curl http://localhost:9090/providers
    ```
 
 2. **发送测试请求**：
    ```bash
-   curl -X POST http://localhost:8080/v1/messages \
+   curl -X POST http://localhost:9090/v1/messages \
      -H "Content-Type: application/json" \
      -H "x-api-key: your-key" \
      -d '{

@@ -124,3 +124,69 @@ def error(record: LogRecord, exc: Optional[Exception] = None):
 def critical(record: LogRecord, exc: Optional[Exception] = None):
     """Log a critical message."""
     _log(logging.CRITICAL, record, exc=exc)
+
+
+def error_file_only(record: LogRecord, exc: Optional[Exception] = None):
+    """Log an error message only to file, not to console."""
+    try:
+        if _logger is None:
+            init_logger()
+        
+        # Create a copy of the logger with only file handler
+        file_logger = logging.getLogger(f"{_logger.name}.file_only")
+        
+        # Remove all existing handlers to prevent console output
+        file_logger.handlers.clear()
+        file_logger.propagate = False
+        
+        # Add only file handler if it exists in the main logger
+        for handler in _logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                file_logger.addHandler(handler)
+                break
+        
+        # If no file handler found, try to get it from parent logger
+        if not file_logger.handlers and _logger.parent:
+            for handler in _logger.parent.handlers:
+                if isinstance(handler, logging.FileHandler):
+                    file_logger.addHandler(handler)
+                    break
+        
+        # Process the log record similar to _log function
+        if exc:
+            try:
+                record.error = LogError(
+                    name=type(exc).__name__,
+                    message=str(exc),
+                    stack_trace="".join(
+                        traceback.format_exception(type(exc), exc, exc.__traceback__)
+                    ),
+                    args=exc.args if hasattr(exc, "args") else tuple(),
+                )
+            except Exception:
+                record.error = LogError(
+                    name="ProcessingError",
+                    message="Error occurred during exception processing",
+                    stack_trace="",
+                    args=tuple(),
+                )
+
+            if not record.message and str(exc):
+                try:
+                    record.message = str(exc)
+                except Exception:
+                    record.message = "An error occurred but message could not be extracted"
+            elif not record.message:
+                record.message = "An unspecified error occurred"
+
+        # Log only to file
+        if file_logger.handlers:
+            file_logger.error(record.message, extra={"log_record": record})
+        else:
+            # Fallback: if no file handler available, log to main logger with a marker
+            record.message = f"[FILE_ONLY] {record.message}"
+            _log(logging.ERROR, record, exc=exc)
+            
+    except Exception:
+        # Fallback to regular error logging
+        error(record, exc=exc)

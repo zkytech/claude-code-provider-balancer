@@ -270,7 +270,7 @@ settings:
 
   # 服务器配置
   host: "127.0.0.1"
-  port: 8080
+  port: 9090
 
   # 应用信息
   app_name: "ClaudeCode Providers Balancer"

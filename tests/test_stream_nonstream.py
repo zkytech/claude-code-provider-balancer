@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from test_utils import get_claude_code_headers
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:9090"
 
 class TestStreamNonStream:
     def __init__(self):
@@ -248,6 +248,157 @@ class TestStreamNonStream:
         except Exception as e:
             print(f"❌ 早期终止测试失败: {e}")
             return False
+
+    def test_stream_disconnect_with_duplicate_nonstream(self):
+        """测试流式请求客户端断开后，重复的非流式请求能正常处理"""
+        print("测试: 流式客户端断开 + 重复非流式请求")
+        
+        import threading
+        import time
+        
+        # 使用相同的请求内容确保重复检测生效
+        base_payload = {
+            "model": "claude-3-5-haiku-20241022", 
+            "messages": [{"role": "user", "content": "请详细解释人工智能的发展历程，要详细一些"}],
+            "max_tokens": 800,  # 流式请求用800 tokens
+        }
+        
+        # 流式请求
+        stream_payload = {**base_payload, "stream": True}
+        
+        # 非流式请求（max_tokens不同，但内容相同，触发重复检测）
+        nonstream_payload = {**base_payload, "stream": False, "max_tokens": 600}
+        
+        stream_response = None
+        nonstream_response = None
+        stream_error = None
+        nonstream_error = None
+        
+        def make_stream_request():
+            """发送流式请求并早期断开"""
+            nonlocal stream_response, stream_error
+            try:
+                stream_response = requests.post(
+                    f"{self.base_url}/v1/messages",
+                    headers=self.headers,
+                    json=stream_payload,
+                    stream=True,
+                    timeout=30
+                )
+                
+                # 只读取几个chunk就断开连接，模拟客户端超时
+                chunks_received = 0
+                for line in stream_response.iter_lines():
+                    if line:
+                        line_str = line.decode('utf-8')
+                        if line_str.startswith('data: '):
+                            data_str = line_str[6:]
+                            if data_str.strip() == '[DONE]':
+                                break
+                            try:
+                                chunk_data = json.loads(data_str)
+                                if chunk_data.get("type") == "content_block_delta":
+                                    chunks_received += 1
+                                    if chunks_received >= 2:  # 只读取2个chunk就断开
+                                        break
+                            except json.JSONDecodeError:
+                                continue
+                
+                # 主动关闭连接，模拟客户端断开
+                stream_response.close()
+                print(f"   流式请求已断开 (收到 {chunks_received} 个块)")
+                
+            except Exception as e:
+                stream_error = e
+        
+        def make_nonstream_request():
+            """发送非流式重复请求"""
+            nonlocal nonstream_response, nonstream_error
+            try:
+                # 稍等一下让流式请求先开始
+                time.sleep(2)
+                
+                nonstream_response = requests.post(
+                    f"{self.base_url}/v1/messages",
+                    headers=self.headers,
+                    json=nonstream_payload,
+                    timeout=60  # 给足够时间等待
+                )
+                print(f"   非流式请求完成，状态码: {nonstream_response.status_code}")
+                
+            except Exception as e:
+                nonstream_error = e
+        
+        # 同时启动两个请求
+        stream_thread = threading.Thread(target=make_stream_request)
+        nonstream_thread = threading.Thread(target=make_nonstream_request)
+        
+        try:
+            stream_thread.start()
+            nonstream_thread.start()
+            
+            # 等待两个线程完成
+            stream_thread.join(timeout=35)
+            nonstream_thread.join(timeout=65)
+            
+            # 检查结果
+            if stream_error:
+                print(f"   流式请求错误: {stream_error}")
+            
+            if nonstream_error:
+                print(f"❌ 非流式请求错误: {nonstream_error}")
+                return False
+            
+            # 验证非流式请求成功
+            if not nonstream_response:
+                print("❌ 非流式响应为空")
+                return False
+                
+            if nonstream_response.status_code != 200:
+                print(f"❌ 非流式请求失败，状态码: {nonstream_response.status_code}")
+                try:
+                    error_data = nonstream_response.json()
+                    print(f"   错误详情: {error_data}")
+                except:
+                    print(f"   响应内容: {nonstream_response.text[:200]}")
+                return False
+            
+            # 验证响应内容
+            try:
+                nonstream_data = nonstream_response.json()
+                if "content" not in nonstream_data or not nonstream_data["content"]:
+                    print("❌ 非流式响应缺少内容")
+                    return False
+                
+                content = "".join([block["text"] for block in nonstream_data["content"]])
+                if len(content.strip()) == 0:
+                    print("❌ 非流式响应内容为空")
+                    return False
+                
+                print(f"✅ 流式断开+重复非流式测试通过")
+                print(f"   非流式响应长度: {len(content)} 字符")
+                print(f"   响应预览: {content[:100]}...")
+                return True
+                
+            except Exception as e:
+                print(f"❌ 解析非流式响应失败: {e}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ 测试执行异常: {e}")
+            return False
+        finally:
+            # 确保连接被关闭
+            if stream_response:
+                try:
+                    stream_response.close()
+                except:
+                    pass
+            if nonstream_response:
+                try:
+                    nonstream_response.close()
+                except:
+                    pass
     
     def run_all_tests(self):
         """运行所有测试"""
@@ -259,7 +410,8 @@ class TestStreamNonStream:
             self.test_non_stream_request,
             self.test_stream_request,
             self.test_stream_vs_nonstream_consistency,
-            self.test_stream_early_termination
+            self.test_stream_early_termination,
+            self.test_stream_disconnect_with_duplicate_nonstream
         ]
         
         passed = 0

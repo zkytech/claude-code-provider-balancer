@@ -55,7 +55,7 @@ python src/main.py
 uv run src/main.py
 
 # Production mode
-uvicorn src.main:app --host 0.0.0.0 --port 8080
+uvicorn src.main:app --host 0.0.0.0 --port 9090
 ```
 
 ### Testing
@@ -102,22 +102,22 @@ cp providers.example.yaml providers.yaml
 python -c "import yaml; yaml.safe_load(open('providers.yaml'))"
 
 # Hot reload configuration (server must be running)
-curl -X POST http://localhost:8080/providers/reload
+curl -X POST http://localhost:9090/providers/reload
 
 # Check provider status
-curl http://localhost:8080/providers
+curl http://localhost:9090/providers
 ```
 
 ### Development Testing
 
 ```bash
 # Basic connectivity test
-curl -X POST http://localhost:8080/v1/messages \
+curl -X POST http://localhost:9090/v1/messages \
   -H "Content-Type: application/json" \
   -d '{"model":"claude-3-5-sonnet-20241022","messages":[{"role":"user","content":"Hello"}],"max_tokens":100}'
 
 # Test with Claude Code client headers for realistic simulation
-curl -X POST http://localhost:8080/v1/messages \
+curl -X POST http://localhost:9090/v1/messages \
   -H "anthropic-version: 2023-06-01" \
   -H "x-app: cli" \
   -H "user-agent: claude-cli/1.0.56 (external, cli)" \
@@ -125,7 +125,7 @@ curl -X POST http://localhost:8080/v1/messages \
   -d '{"model":"claude-3-5-sonnet-20241022","messages":[{"role":"user","content":"Hello"}],"max_tokens":100}'
 
 # Test token counting endpoint
-curl -X POST http://localhost:8080/v1/messages/count_tokens \
+curl -X POST http://localhost:9090/v1/messages/count_tokens \
   -H "Content-Type: application/json" \
   -d '{"model":"claude-3-5-haiku-20241022","messages":[{"role":"user","content":"Count tokens"}]}'
 ```

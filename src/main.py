@@ -172,7 +172,7 @@ class Settings:
         self.referrer_url: str = "http://localhost:8082/claude_proxy"
         self.reload: bool = True
         self.host: str = "127.0.0.1"
-        self.port: int = 8080
+        self.port: int = 9090
         self.app_name: str = "Claude Code Provider Balancer"
         self.app_version: str = "0.5.0"
         
@@ -408,6 +408,31 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
             
             # Check for HTTP error status codes first
             if response.status_code >= 400:
+                # Get response body for detailed error info
+                try:
+                    error_response_body = response.json()
+                except:
+                    # If response is not JSON, get text content
+                    error_response_body = response.text
+                
+                # Log complete error details to file (not console)
+                debug_info = create_debug_request_info(url, headers, data)
+                from log_utils.handlers import error_file_only
+                error_file_only(
+                    LogRecord(
+                        event="provider_http_error_details",
+                        message=f"Provider {provider.name} returned HTTP {response.status_code}",
+                        request_id=request_id,
+                        data={
+                            "provider": provider.name,
+                            "status_code": response.status_code,
+                            "response_headers": dict(response.headers),
+                            "response_body": error_response_body,
+                            "request_details": debug_info
+                        }
+                    )
+                )
+                
                 response.raise_for_status()
             
             # Parse response content
@@ -568,10 +593,26 @@ async def _log_and_return_error_response(
     """Log error and return formatted error response."""
     error_type, message, _, provider_details = get_anthropic_error_details_from_exc(exc)
     
+    # Add hint about detailed logs in file only for provider-related errors
+    final_message = f"Request failed: {message}"
+    
+    # Only add file hint for provider errors (not client validation errors)
+    is_provider_error = (
+        hasattr(exc, 'response') or  # HTTP errors from providers
+        'provider' in str(exc).lower() or  # Provider-related errors
+        any(keyword in str(exc).lower() for keyword in ['timeout', 'connection', 'network', 'api'])
+    )
+    
+    if is_provider_error:
+        if settings.log_file_path:
+            final_message += f" (详细错误信息请查看日志文件: {settings.log_file_path})"
+        else:
+            final_message += " (详细错误信息请查看日志文件: logs/logs.jsonl)"
+    
     error(
         LogRecord(
             event=LogEvent.REQUEST_FAILURE.value,
-            message=f"Request failed: {message}",
+            message=final_message,
             request_id=request_id,
             data={"status_code": status_code, "error_type": error_type.value},
         ),
@@ -720,26 +761,84 @@ async def create_message_proxy(
                             collected_chunks = []
                             
                             async def stream_anthropic_response():
-                                async for chunk in response.aiter_text():
-                                    collected_chunks.append(chunk)
-                                    yield chunk
-                                
-                                # Stream completed, validate quality and cache if successful
-                                # Check HTTP status code to skip quality validation on errors
-                                status_code = getattr(response, 'status_code', None)
-                                if validate_response_quality(collected_chunks, current_provider.name, request_id, status_code):
-                                    # Quality validation passed, extract content as result
-                                    try:
-                                        response_content = extract_content_from_sse_chunks(collected_chunks)
-                                        complete_and_cleanup_request(signature, response_content, collected_chunks, True, current_provider.name)
-                                    except Exception as e:
-                                        # Content extraction failed
-                                        extraction_error = Exception(f"Response content extraction failed: {str(e)}")
-                                        complete_and_cleanup_request(signature, extraction_error, None, True, current_provider.name)
-                                else:
-                                    # Quality validation failed, mark as error to allow retry
-                                    quality_error = Exception("Response quality validation failed")
-                                    complete_and_cleanup_request(signature, quality_error, None, True, current_provider.name)
+                                client_disconnected = False
+                                try:
+                                    async for chunk in response.aiter_text():
+                                        # Check if client is still connected before sending each chunk
+                                        if await request.is_disconnected():
+                                            info(
+                                                LogRecord(
+                                                    "client_disconnected_detected",
+                                                    "Client disconnected during Anthropic streaming, stopping response",
+                                                    request_id,
+                                                    {
+                                                        "provider": current_provider.name,
+                                                        "chunks_sent": len(collected_chunks),
+                                                        "detection_method": "is_disconnected"
+                                                    }
+                                                )
+                                            )
+                                            client_disconnected = True
+                                            break
+                                        
+                                        collected_chunks.append(chunk)
+                                        yield chunk
+                                        
+                                except (ConnectionError, ConnectionResetError, BrokenPipeError) as e:
+                                    # Client connection was broken during streaming
+                                    info(
+                                        LogRecord(
+                                            "client_connection_error",
+                                            f"Client connection error during Anthropic streaming: {str(e)}",
+                                            request_id,
+                                            {
+                                                "provider": current_provider.name,
+                                                "chunks_sent": len(collected_chunks),
+                                                "error_type": type(e).__name__
+                                            }
+                                        )
+                                    )
+                                    client_disconnected = True
+                                    
+                                except asyncio.CancelledError:
+                                    # Request was cancelled (usually due to client disconnect)
+                                    info(
+                                        LogRecord(
+                                            "streaming_cancelled",
+                                            "Anthropic streaming request was cancelled",
+                                            request_id,
+                                            {
+                                                "provider": current_provider.name,
+                                                "chunks_sent": len(collected_chunks)
+                                            }
+                                        )
+                                    )
+                                    client_disconnected = True
+                                    raise  # Re-raise CancelledError
+                                    
+                                finally:
+                                    # Handle cleanup based on client connection status
+                                    if client_disconnected:
+                                        # Client disconnected, mark request as cancelled
+                                        cancellation_error = Exception("Client disconnected during streaming")
+                                        complete_and_cleanup_request(signature, cancellation_error, None, True, current_provider.name)
+                                    else:
+                                        # Stream completed normally, validate quality and cache if successful
+                                        # Check HTTP status code to skip quality validation on errors
+                                        status_code = getattr(response, 'status_code', None)
+                                        if validate_response_quality(collected_chunks, current_provider.name, request_id, status_code):
+                                            # Quality validation passed, extract content as result
+                                            try:
+                                                response_content = extract_content_from_sse_chunks(collected_chunks)
+                                                complete_and_cleanup_request(signature, response_content, collected_chunks, True, current_provider.name)
+                                            except Exception as e:
+                                                # Content extraction failed
+                                                extraction_error = Exception(f"Response content extraction failed: {str(e)}")
+                                                complete_and_cleanup_request(signature, extraction_error, None, True, current_provider.name)
+                                        else:
+                                            # Quality validation failed, mark as error to allow retry
+                                            quality_error = Exception("Response quality validation failed")
+                                            complete_and_cleanup_request(signature, quality_error, None, True, current_provider.name)
                             
                             return StreamingResponse(
                                 stream_anthropic_response(),
@@ -769,107 +868,165 @@ async def create_message_proxy(
                         async def stream_openai_response():
                             message_id = str(uuid.uuid4())
                             first_chunk = True
+                            client_disconnected = False
                             
-                            async for chunk in response:
-                                chunk_data = chunk.model_dump() if hasattr(chunk, 'model_dump') else chunk
-                                
-                                # Convert OpenAI streaming format to Anthropic format
-                                if chunk_data.get("choices") and len(chunk_data["choices"]) > 0:
-                                    choice = chunk_data["choices"][0]
-                                    delta = choice.get("delta", {})
-                                    
-                                    if first_chunk and delta.get("role") == "assistant":
-                                        # Send message_start event
-                                        message_start = {
-                                            "type": "message_start",
-                                            "message": {
-                                                "id": message_id,
-                                                "type": "message",
-                                                "role": "assistant",
-                                                "content": [],
-                                                "model": chunk_data.get("model", target_model),
-                                                "stop_reason": None,
-                                                "stop_sequence": None,
-                                                "usage": {"input_tokens": 0, "output_tokens": 0}
-                                            }
-                                        }
-                                        formatted_chunk = f"event: message_start\ndata: {json.dumps(message_start)}\n\n"
-                                        collected_chunks.append(formatted_chunk)
-                                        yield formatted_chunk
-                                        
-                                        # Send content_block_start event
-                                        content_block_start = {
-                                            "type": "content_block_start",
-                                            "index": 0,
-                                            "content_block": {"type": "text", "text": ""}
-                                        }
-                                        formatted_chunk = f"event: content_block_start\ndata: {json.dumps(content_block_start)}\n\n"
-                                        collected_chunks.append(formatted_chunk)
-                                        yield formatted_chunk
-                                        first_chunk = False
-                                    
-                                    # Handle content deltas
-                                    if "content" in delta and delta["content"]:
-                                        content_delta = {
-                                            "type": "content_block_delta",
-                                            "index": 0,
-                                            "delta": {
-                                                "type": "text_delta",
-                                                "text": delta["content"]
-                                            }
-                                        }
-                                        formatted_chunk = f"event: content_block_delta\ndata: {json.dumps(content_delta)}\n\n"
-                                        collected_chunks.append(formatted_chunk)
-                                        yield formatted_chunk
-                                    
-                                    # Handle finish_reason
-                                    if choice.get("finish_reason"):
-                                        # Send content_block_stop event
-                                        content_block_stop = {
-                                            "type": "content_block_stop",
-                                            "index": 0
-                                        }
-                                        formatted_chunk = f"event: content_block_stop\ndata: {json.dumps(content_block_stop)}\n\n"
-                                        collected_chunks.append(formatted_chunk)
-                                        yield formatted_chunk
-                                        
-                                        # Send message_delta with stop_reason
-                                        message_delta = {
-                                            "type": "message_delta",
-                                            "delta": {
-                                                "stop_reason": choice["finish_reason"],
-                                                "stop_sequence": None
-                                            }
-                                        }
-                                        
-                                        # Add usage info if available
-                                        if chunk_data.get("usage"):
-                                            message_delta["usage"] = chunk_data["usage"]
-                                        
-                                        formatted_chunk = f"event: message_delta\ndata: {json.dumps(message_delta)}\n\n"
-                                        collected_chunks.append(formatted_chunk)
-                                        yield formatted_chunk
-                                        
-                                        # Send message_stop event
-                                        message_stop = {"type": "message_stop"}
-                                        formatted_chunk = f"event: message_stop\ndata: {json.dumps(message_stop)}\n\n"
-                                        collected_chunks.append(formatted_chunk)
-                                        yield formatted_chunk
-                                        
+                            try:
+                                async for chunk in response:
+                                    # Check if client is still connected before processing each chunk
+                                    if await request.is_disconnected():
+                                        info(
+                                            LogRecord(
+                                                "client_disconnected_detected",
+                                                "Client disconnected during OpenAI streaming, stopping response",
+                                                request_id,
+                                                {
+                                                    "provider": current_provider.name,
+                                                    "chunks_sent": len(collected_chunks),
+                                                    "detection_method": "is_disconnected"
+                                                }
+                                            )
+                                        )
+                                        client_disconnected = True
                                         break
-                            
-                            # Stream completed, validate quality and cache if successful
-                            # For OpenAI streaming, HTTP errors typically raise exceptions before we reach here
-                            if validate_response_quality(collected_chunks, current_provider.name, request_id, None):
-                                try:
-                                    response_content = extract_content_from_sse_chunks(collected_chunks)
-                                    complete_and_cleanup_request(signature, response_content, collected_chunks, True, current_provider.name)
-                                except Exception as e:
-                                    extraction_error = Exception(f"Response content extraction failed: {str(e)}")
-                                    complete_and_cleanup_request(signature, extraction_error, None, True, current_provider.name)
-                            else:
-                                quality_error = Exception("Response quality validation failed")
-                                complete_and_cleanup_request(signature, quality_error, None, True, current_provider.name)
+                                    
+                                    chunk_data = chunk.model_dump() if hasattr(chunk, 'model_dump') else chunk
+                                    
+                                    # Convert OpenAI streaming format to Anthropic format
+                                    if chunk_data.get("choices") and len(chunk_data["choices"]) > 0:
+                                        choice = chunk_data["choices"][0]
+                                        delta = choice.get("delta", {})
+                                        
+                                        if first_chunk and delta.get("role") == "assistant":
+                                            # Send message_start event
+                                            message_start = {
+                                                "type": "message_start",
+                                                "message": {
+                                                    "id": message_id,
+                                                    "type": "message",
+                                                    "role": "assistant",
+                                                    "content": [],
+                                                    "model": chunk_data.get("model", target_model),
+                                                    "stop_reason": None,
+                                                    "stop_sequence": None,
+                                                    "usage": {"input_tokens": 0, "output_tokens": 0}
+                                                }
+                                            }
+                                            formatted_chunk = f"event: message_start\ndata: {json.dumps(message_start)}\n\n"
+                                            collected_chunks.append(formatted_chunk)
+                                            yield formatted_chunk
+                                            
+                                            # Send content_block_start event
+                                            content_block_start = {
+                                                "type": "content_block_start",
+                                                "index": 0,
+                                                "content_block": {"type": "text", "text": ""}
+                                            }
+                                            formatted_chunk = f"event: content_block_start\ndata: {json.dumps(content_block_start)}\n\n"
+                                            collected_chunks.append(formatted_chunk)
+                                            yield formatted_chunk
+                                            first_chunk = False
+                                        
+                                        # Handle content deltas
+                                        if "content" in delta and delta["content"]:
+                                            content_delta = {
+                                                "type": "content_block_delta",
+                                                "index": 0,
+                                                "delta": {
+                                                    "type": "text_delta",
+                                                    "text": delta["content"]
+                                                }
+                                            }
+                                            formatted_chunk = f"event: content_block_delta\ndata: {json.dumps(content_delta)}\n\n"
+                                            collected_chunks.append(formatted_chunk)
+                                            yield formatted_chunk
+                                        
+                                        # Handle finish_reason
+                                        if choice.get("finish_reason"):
+                                            # Send content_block_stop event
+                                            content_block_stop = {
+                                                "type": "content_block_stop",
+                                                "index": 0
+                                            }
+                                            formatted_chunk = f"event: content_block_stop\ndata: {json.dumps(content_block_stop)}\n\n"
+                                            collected_chunks.append(formatted_chunk)
+                                            yield formatted_chunk
+                                            
+                                            # Send message_delta with stop_reason
+                                            message_delta = {
+                                                "type": "message_delta",
+                                                "delta": {
+                                                    "stop_reason": choice["finish_reason"],
+                                                    "stop_sequence": None
+                                                }
+                                            }
+                                            
+                                            # Add usage info if available
+                                            if chunk_data.get("usage"):
+                                                message_delta["usage"] = chunk_data["usage"]
+                                            
+                                            formatted_chunk = f"event: message_delta\ndata: {json.dumps(message_delta)}\n\n"
+                                            collected_chunks.append(formatted_chunk)
+                                            yield formatted_chunk
+                                            
+                                            # Send message_stop event
+                                            message_stop = {"type": "message_stop"}
+                                            formatted_chunk = f"event: message_stop\ndata: {json.dumps(message_stop)}\n\n"
+                                            collected_chunks.append(formatted_chunk)
+                                            yield formatted_chunk
+                                            
+                                            break
+                                            
+                            except (ConnectionError, ConnectionResetError, BrokenPipeError) as e:
+                                # Client connection was broken during streaming
+                                info(
+                                    LogRecord(
+                                        "client_connection_error",
+                                        f"Client connection error during OpenAI streaming: {str(e)}",
+                                        request_id,
+                                        {
+                                            "provider": current_provider.name,
+                                            "chunks_sent": len(collected_chunks),
+                                            "error_type": type(e).__name__
+                                        }
+                                    )
+                                )
+                                client_disconnected = True
+                                
+                            except asyncio.CancelledError:
+                                # Request was cancelled (usually due to client disconnect)
+                                info(
+                                    LogRecord(
+                                        "streaming_cancelled",
+                                        "OpenAI streaming request was cancelled",
+                                        request_id,
+                                        {
+                                            "provider": current_provider.name,
+                                            "chunks_sent": len(collected_chunks)
+                                        }
+                                    )
+                                )
+                                client_disconnected = True
+                                raise  # Re-raise CancelledError
+                                
+                            finally:
+                                # Handle cleanup based on client connection status
+                                if client_disconnected:
+                                    # Client disconnected, mark request as cancelled
+                                    cancellation_error = Exception("Client disconnected during streaming")
+                                    complete_and_cleanup_request(signature, cancellation_error, None, True, current_provider.name)
+                                else:
+                                    # Stream completed normally, validate quality and cache if successful
+                                    # For OpenAI streaming, HTTP errors typically raise exceptions before we reach here
+                                    if validate_response_quality(collected_chunks, current_provider.name, request_id, None):
+                                        try:
+                                            response_content = extract_content_from_sse_chunks(collected_chunks)
+                                            complete_and_cleanup_request(signature, response_content, collected_chunks, True, current_provider.name)
+                                        except Exception as e:
+                                            extraction_error = Exception(f"Response content extraction failed: {str(e)}")
+                                            complete_and_cleanup_request(signature, extraction_error, None, True, current_provider.name)
+                                    else:
+                                        quality_error = Exception("Response quality validation failed")
+                                        complete_and_cleanup_request(signature, quality_error, None, True, current_provider.name)
                         
                         # Return immediately without waiting for stream completion
                         # The caching will happen asynchronously in the stream generator
@@ -947,18 +1104,29 @@ async def create_message_proxy(
                 response_details = None
                 if hasattr(e, 'response') and e.response is not None:
                     try:
+                        # Get full response body for file logging
+                        full_response_body = e.response.text if hasattr(e.response, 'text') else None
+                        # Try to parse as JSON for better formatting
+                        try:
+                            if full_response_body:
+                                full_response_body = json.loads(full_response_body)
+                        except:
+                            pass  # Keep as text if not valid JSON
+                        
                         response_details = {
                             "response_headers": dict(e.response.headers),
-                            "response_body": e.response.text[:1000] if hasattr(e.response, 'text') and e.response.text else None
+                            "response_body": full_response_body
                         }
                     except Exception:
                         # Ignore errors when extracting response details
                         pass
                 
-                warning(
+                # Log detailed error information to file only (not console)
+                from log_utils.handlers import error_file_only
+                error_file_only(
                     LogRecord(
-                        event="provider_request_failed",
-                        message=f"Request failed for provider {current_provider.name} (attempt {attempt + 1}/{max_attempts}): {str(e)}",
+                        event="provider_request_failed_details",
+                        message=f"Detailed error info for provider {current_provider.name} (attempt {attempt + 1}/{max_attempts})",
                         request_id=request_id,
                         data={
                             "provider": current_provider.name,
@@ -969,10 +1137,47 @@ async def create_message_proxy(
                             "should_failover": should_failover,
                             "http_status_code": http_status_code,
                             "request_details": debug_info,
-                            "response_details": response_details
+                            "response_details": response_details,
+                            "full_error": str(e)
                         }
                     ),
                     exc=e
+                )
+                
+                # Log brief summary to console for user visibility
+                error_summary = f"HTTP {http_status_code}" if http_status_code else "Connection error"
+                if hasattr(e, 'response') and e.response and response_details and response_details.get('response_body'):
+                    try:
+                        response_body = response_details['response_body']
+                        if isinstance(response_body, dict) and 'error' in response_body:
+                            error_msg = response_body['error'].get('message', '')[:100]
+                            if error_msg:
+                                error_summary = f"{error_summary}: {error_msg}"
+                    except:
+                        pass
+                
+                # Add hint about detailed logs in file
+                console_message = f"Request failed for provider {current_provider.name} (attempt {attempt + 1}/{max_attempts}): {error_summary}"
+                if settings.log_file_path:
+                    console_message += f" (详细错误信息请查看日志文件: {settings.log_file_path})"
+                else:
+                    console_message += " (详细错误信息请查看日志文件: logs/logs.jsonl)"
+                
+                warning(
+                    LogRecord(
+                        event="provider_request_failed",
+                        message=console_message,
+                        request_id=request_id,
+                        data={
+                            "provider": current_provider.name,
+                            "target_model": target_model,
+                            "attempt": attempt + 1,
+                            "remaining_attempts": max_attempts - attempt - 1,
+                            "error_type": error_type,
+                            "should_failover": should_failover,
+                            "http_status_code": http_status_code
+                        }
+                    )
                 )
                 
                 # If we shouldn't failover, return the error immediately

@@ -72,33 +72,33 @@ python src/main.py
 uv run src/main.py
 
 # 生产模式
-uvicorn src.main:app --host 0.0.0.0 --port 8080
+uvicorn src.main:app --host 0.0.0.0 --port 9090
 ```
 
 ### 配置 Claude Code
 
 ```bash
 # 设置环境变量
-export ANTHROPIC_BASE_URL=http://localhost:8080
+export ANTHROPIC_BASE_URL=http://localhost:9090
 claude
 
 # 或临时使用
-ANTHROPIC_BASE_URL=http://localhost:8080 claude
+ANTHROPIC_BASE_URL=http://localhost:9090 claude
 ```
 
 ## 基本测试
 
 ```bash
 # 发送测试请求
-curl -X POST http://localhost:8080/v1/messages \
+curl -X POST http://localhost:9090/v1/messages \
   -H "Content-Type: application/json" \
   -d '{"model":"claude-3-5-sonnet-20241022","messages":[{"role":"user","content":"你好"}],"max_tokens":100}'
 
 # 检查提供商状态
-curl http://localhost:8080/providers
+curl http://localhost:9090/providers
 
 # 重新加载配置
-curl -X POST http://localhost:8080/providers/reload
+curl -X POST http://localhost:9090/providers/reload
 ```
 
 ## 项目结构
@@ -138,7 +138,7 @@ python tests/test_api.py
 
 ```bash
 # 检查状态
-curl http://localhost:8080/providers
+curl http://localhost:9090/providers
 
 # 查看日志
 tail -f logs/logs.jsonl
@@ -148,7 +148,7 @@ tail -f logs/logs.jsonl
 
 ```bash
 # 检查服务
-curl http://localhost:8080/
+curl http://localhost:9090/
 
 # 验证环境变量
 echo $ANTHROPIC_BASE_URL

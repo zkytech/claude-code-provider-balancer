@@ -210,13 +210,13 @@ When Zed provider fails:
 
 ```bash
 # Check Zed provider status
-curl http://localhost:8080/providers | jq '.providers[] | select(.name=="zed_provider")'
+curl http://localhost:9090/providers | jq '.providers[] | select(.name=="zed_provider")'
 
 # Monitor thread states
-curl http://localhost:8080/zed/threads/status
+curl http://localhost:9090/zed/threads/status
 
 # View cost analysis
-curl http://localhost:8080/zed/cost-analysis
+curl http://localhost:9090/zed/cost-analysis
 ```
 
 ## Best Practices

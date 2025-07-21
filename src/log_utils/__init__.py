@@ -18,7 +18,8 @@ from .handlers import (
     info,
     warning,
     error,
-    critical
+    critical,
+    error_file_only
 )
 
 __all__ = [
@@ -34,6 +35,7 @@ __all__ = [
     "warning",
     "error",
     "critical",
+    "error_file_only",
     "mask_sensitive_data",
     "mask_sensitive_string",
     "create_debug_request_info"
