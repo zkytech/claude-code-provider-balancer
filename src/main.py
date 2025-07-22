@@ -108,6 +108,38 @@ def _create_request_summary(raw_body: dict) -> str:
     return f"{model}: {messages_count} msgs, max_tokens: {max_tokens}{tools_info}{stream_info}"
 
 
+def _initialize_oauth_manager(provider_manager_instance: ProviderManager, is_reload: bool = False) -> bool:
+    """
+    Initialize or re-initialize OAuth manager with provider configuration.
+    
+    Args:
+        provider_manager_instance: The provider manager instance with settings
+        is_reload: Whether this is a config reload (affects logging messages)
+    
+    Returns:
+        bool: True if initialization was successful, False otherwise
+    """
+    try:
+        init_oauth_manager(provider_manager_instance.settings)
+        event_name = "oauth_manager_reinitialized" if is_reload else "oauth_manager_ready"
+        message = "OAuth manager re-initialized after config reload" if is_reload else "OAuth manager initialization completed successfully"
+        
+        info(LogRecord(
+            event=event_name,
+            message=message
+        ))
+        return True
+    except Exception as e:
+        event_name = "oauth_manager_reinit_failed" if is_reload else "oauth_manager_init_failed"
+        message = f"Failed to re-initialize OAuth manager after config reload: {e}" if is_reload else f"Failed to initialize OAuth manager: {str(e)}"
+        
+        error(LogRecord(
+            event=event_name,
+            message=message
+        ))
+        return False
+
+
 def _create_body_summary(raw_body: dict) -> dict:
     """Create a detailed summary of the request body for debugging purposes."""
     summary = {}
@@ -220,18 +252,7 @@ try:
     settings.load_from_provider_config()
     
     # Initialize OAuth manager with config settings
-    try:
-        init_oauth_manager(provider_manager.settings)
-        info(LogRecord(
-            event="oauth_manager_ready",
-            message="OAuth manager initialization completed successfully"
-        ))
-    except Exception as e:
-        error(LogRecord(
-            event="oauth_manager_init_failed",
-            message=f"Failed to initialize OAuth manager: {str(e)}"
-        ))
-        # Continue anyway, but oauth_manager will remain None
+    _initialize_oauth_manager(provider_manager, is_reload=False)
     
     # Set provider manager reference for deduplication module
     from caching.deduplication import set_provider_manager
@@ -1595,17 +1616,7 @@ async def reload_providers_config() -> JSONResponse:
         provider_manager = ProviderManager()
         
         # Re-initialize OAuth manager with new configuration
-        try:
-            init_oauth_manager(provider_manager.settings)
-            info(LogRecord(
-                event="oauth_manager_reinitialized",
-                message="OAuth manager re-initialized after config reload"
-            ))
-        except Exception as oauth_error:
-            warning(LogRecord(
-                event="oauth_manager_reinit_failed",
-                message=f"Failed to re-initialize OAuth manager after config reload: {oauth_error}"
-            ))
+        _initialize_oauth_manager(provider_manager, is_reload=True)
         
         # Update the provider manager reference in deduplication module
         from caching.deduplication import set_provider_manager, set_make_anthropic_request
