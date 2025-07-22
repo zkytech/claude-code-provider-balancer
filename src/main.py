@@ -222,9 +222,15 @@ try:
     # Initialize OAuth manager with config settings
     try:
         init_oauth_manager(provider_manager.settings)
-        info("OAuth manager initialization completed successfully")
+        info(LogRecord(
+            event="oauth_manager_ready",
+            message="OAuth manager initialization completed successfully"
+        ))
     except Exception as e:
-        error(f"Failed to initialize OAuth manager: {str(e)}")
+        error(LogRecord(
+            event="oauth_manager_init_failed",
+            message=f"Failed to initialize OAuth manager: {str(e)}"
+        ))
         # Continue anyway, but oauth_manager will remain None
     
     # Set provider manager reference for deduplication module
@@ -321,8 +327,14 @@ app = fastapi.FastAPI(
 @app.on_event("startup")
 async def startup_event():
     """FastAPI应用启动时的初始化"""
-    info("FastAPI application startup complete")
-    info("OAuth manager ready for Claude Code Official authentication")
+    info(LogRecord(
+        event="fastapi_startup_complete",
+        message="FastAPI application startup complete"
+    ))
+    info(LogRecord(
+        event="oauth_manager_ready",
+        message="OAuth manager ready for Claude Code Official authentication"
+    ))
     
     # Start auto-refresh for any loaded OAuth tokens
     try:
@@ -330,12 +342,18 @@ async def startup_event():
         auto_refresh_enabled = provider_manager.oauth_auto_refresh_enabled if provider_manager else True
         await start_oauth_auto_refresh(auto_refresh_enabled)
     except Exception as e:
-        warning(f"Failed to start OAuth auto-refresh: {e}")
+        warning(LogRecord(
+            event="oauth_auto_refresh_start_failed",
+            message=f"Failed to start OAuth auto-refresh: {e}"
+        ))
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """FastAPI应用关闭时的清理"""
-    info("FastAPI application shutting down")
+    info(LogRecord(
+        event="fastapi_shutdown",
+        message="FastAPI application shutting down"
+    ))
 
 
 async def make_provider_request(provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
@@ -1057,16 +1075,16 @@ async def create_message_proxy(
                     getattr(e, 'response', None) and getattr(e.response, 'status_code', None)
                 )
                 
-                # Special handling for 401 Unauthorized with Claude Code Official
-                if http_status_code == 401 and current_provider.name == "Claude Code Official":
+                # Special handling for 401 Unauthorized and 403 Forbidden with Claude Code Official
+                if http_status_code in [401, 403] and current_provider.name == "Claude Code Official":
                     # Handle OAuth authorization required
                     if provider_manager:
-                        login_url = provider_manager.handle_oauth_authorization_required(current_provider)
+                        login_url = provider_manager.handle_oauth_authorization_required(current_provider, http_status_code)
                         if login_url:
-                            # For OAuth authorization flow, don't failover and return the 401 error directly
+                            # For OAuth authorization flow, don't failover and return the auth error directly
                             # The user needs to complete the OAuth flow
                             complete_and_cleanup_request(signature, e, None, False, current_provider.name)
-                            return await _log_and_return_error_response(request, e, request_id, status_code=401)
+                            return await _log_and_return_error_response(request, e, request_id, status_code=http_status_code)
                 
                 # Use provider_manager to determine if we should failover
                 if provider_manager:
@@ -1084,7 +1102,10 @@ async def create_message_proxy(
                     request_data = clean_request_body if current_provider.type == ProviderType.ANTHROPIC else openai_params
                     debug_info = create_debug_request_info(url, headers, request_data)
                 except Exception as debug_error:
-                    debug(f"Failed to create debug info: {debug_error}")
+                    debug(LogRecord(
+                        event="debug_info_creation_failed",
+                        message=f"Failed to create debug info: {debug_error}"
+                    ))
 
                 # Extract HTTP response details for comprehensive error logging
                 response_details = None
@@ -1373,7 +1394,10 @@ async def generate_oauth_url():
         })
         
     except Exception as e:
-        error(f"Error generating OAuth URL: {str(e)}")
+        error(LogRecord(
+            event="oauth_url_generation_error",
+            message=f"Error generating OAuth URL: {str(e)}"
+        ))
         return JSONResponse(
             status_code=500,
             content={
@@ -1416,7 +1440,10 @@ async def exchange_oauth_code(request: Request) -> JSONResponse:
             if provider_manager and provider_manager.oauth_auto_refresh_enabled:
                 await oauth_manager.start_auto_refresh()
             else:
-                info("Auto-refresh disabled - new token will not be auto-refreshed")
+                info(LogRecord(
+                    event="oauth_auto_refresh_disabled",
+                    message="Auto-refresh disabled - new token will not be auto-refreshed"
+                ))
             
             # Build response with account information
             response_data = {
@@ -1570,9 +1597,15 @@ async def reload_providers_config() -> JSONResponse:
         # Re-initialize OAuth manager with new configuration
         try:
             init_oauth_manager(provider_manager.settings)
-            info("OAuth manager re-initialized after config reload")
+            info(LogRecord(
+                event="oauth_manager_reinitialized",
+                message="OAuth manager re-initialized after config reload"
+            ))
         except Exception as oauth_error:
-            warning(f"Failed to re-initialize OAuth manager after config reload: {oauth_error}")
+            warning(LogRecord(
+                event="oauth_manager_reinit_failed",
+                message=f"Failed to re-initialize OAuth manager after config reload: {oauth_error}"
+            ))
         
         # Update the provider manager reference in deduplication module
         from caching.deduplication import set_provider_manager, set_make_anthropic_request

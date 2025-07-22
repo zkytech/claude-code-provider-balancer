@@ -19,7 +19,7 @@ import httpx
 import oauth_manager as oauth_module
 
 # Import logging utilities
-from log_utils import info, warning, error, debug
+from log_utils import info, warning, error, debug, LogRecord
 
 
 class ProviderType(str, Enum):
@@ -528,8 +528,8 @@ class ProviderManager:
         """Reload configuration from file"""
         self.load_config()
     
-    def handle_oauth_authorization_required(self, provider: Provider) -> str:
-        """Handle 401 authorization required error for OAuth providers"""
+    def handle_oauth_authorization_required(self, provider: Provider, http_status_code: int = 401) -> str:
+        """Handle 401/403 authorization required error for OAuth providers"""
         if provider.name == "Claude Code Official":
             # Check if OAuth manager is available
             if not oauth_module.oauth_manager:
@@ -544,10 +544,11 @@ class ProviderManager:
                 return ""
             
             # Print instructions to console
+            status_text = "401 Unauthorized" if http_status_code == 401 else "403 Forbidden"
             print("\n" + "="*80)
             print("🔐 CLAUDE CODE OFFICIAL AUTHORIZATION REQUIRED")
             print("="*80)
-            print(f"Provider '{provider.name}' returned 401 Unauthorized.")
+            print(f"Provider '{provider.name}' returned {status_text}.")
             print("Please complete the OAuth authorization process:")
             print()
             print("1. 🌐 Click the following URL to generate and get authorization link:")
