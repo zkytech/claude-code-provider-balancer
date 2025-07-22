@@ -31,6 +31,7 @@ from rich.text import Text
 try:
     # Try relative imports first (when run as module)
     from .provider_manager import ProviderManager, Provider, ProviderType, StreamingMode
+    from .oauth_manager import oauth_manager, init_oauth_manager, start_oauth_auto_refresh
     from .log_utils import (
         LogRecord, LogEvent, LogError,
         ColoredConsoleFormatter, JSONFormatter, ConsoleJSONFormatter,
@@ -55,6 +56,7 @@ try:
 except ImportError:
     # Fall back to absolute imports (when run directly)
     from provider_manager import ProviderManager, Provider, ProviderType, StreamingMode
+    from oauth_manager import oauth_manager, init_oauth_manager, start_oauth_auto_refresh
     from log_utils import (
         LogRecord, LogEvent, LogError,
         ColoredConsoleFormatter, JSONFormatter, ConsoleJSONFormatter,
@@ -217,6 +219,14 @@ try:
     # Load settings from provider config file
     settings.load_from_provider_config()
     
+    # Initialize OAuth manager with config settings
+    try:
+        init_oauth_manager(provider_manager.settings)
+        info("OAuth manager initialization completed successfully")
+    except Exception as e:
+        error(f"Failed to initialize OAuth manager: {str(e)}")
+        # Continue anyway, but oauth_manager will remain None
+    
     # Set provider manager reference for deduplication module
     from caching.deduplication import set_provider_manager
     set_provider_manager(provider_manager)
@@ -307,60 +317,25 @@ app = fastapi.FastAPI(
     description="Intelligent load balancer and failover proxy for Claude Code providers",
 )
 
-# 存储token刷新任务的全局变量
-_token_refresh_tasks = []
 
 @app.on_event("startup")
 async def startup_event():
     """FastAPI应用启动时的初始化"""
-    global _token_refresh_tasks
+    info("FastAPI application startup complete")
+    info("OAuth manager ready for Claude Code Official authentication")
     
+    # Start auto-refresh for any loaded OAuth tokens
     try:
-        # 导入token刷新模块
-        from .token_refresher import start_token_refresh_loop
-    except ImportError:
-        from token_refresher import start_token_refresh_loop
-    
-    # 为每个启用了auto_refresh的provider启动刷新任务
-    if provider_manager:
-        for provider_config in provider_manager.providers:
-            # 查找原始配置以获取auto_refresh_config
-            try:
-                with open(provider_manager.config_path, 'r', encoding='utf-8') as f:
-                    config = yaml.safe_load(f)
-                
-                for provider_raw in config.get('providers', []):
-                    if provider_raw.get('name') == provider_config.name:
-                        auto_refresh_config = provider_raw.get('auto_refresh_config', {})
-                        if auto_refresh_config.get('enabled', False):
-                            info(f"Starting token refresh for provider: {provider_config.name}")
-                            task = asyncio.create_task(
-                                start_token_refresh_loop(
-                                    provider_config.name, 
-                                    provider_raw, 
-                                    provider_manager
-                                )
-                            )
-                            _token_refresh_tasks.append(task)
-                        break
-            except Exception as e:
-                error(f"Failed to start token refresh for provider {provider_config.name}: {e}")
+        # Get auto-refresh setting from provider manager
+        auto_refresh_enabled = provider_manager.oauth_auto_refresh_enabled if provider_manager else True
+        await start_oauth_auto_refresh(auto_refresh_enabled)
+    except Exception as e:
+        warning(f"Failed to start OAuth auto-refresh: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """FastAPI应用关闭时的清理"""
-    global _token_refresh_tasks
-    
-    # 取消所有token刷新任务
-    for task in _token_refresh_tasks:
-        task.cancel()
-    
-    # 等待任务完成取消
-    if _token_refresh_tasks:
-        await asyncio.gather(*_token_refresh_tasks, return_exceptions=True)
-    
-    _token_refresh_tasks.clear()
-    info("Token refresh tasks stopped")
+    info("FastAPI application shutting down")
 
 
 async def make_provider_request(provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
@@ -1082,6 +1057,17 @@ async def create_message_proxy(
                     getattr(e, 'response', None) and getattr(e.response, 'status_code', None)
                 )
                 
+                # Special handling for 401 Unauthorized with Claude Code Official
+                if http_status_code == 401 and current_provider.name == "Claude Code Official":
+                    # Handle OAuth authorization required
+                    if provider_manager:
+                        login_url = provider_manager.handle_oauth_authorization_required(current_provider)
+                        if login_url:
+                            # For OAuth authorization flow, don't failover and return the 401 error directly
+                            # The user needs to complete the OAuth flow
+                            complete_and_cleanup_request(signature, e, None, False, current_provider.name)
+                            return await _log_and_return_error_response(request, e, request_id, status_code=401)
+                
                 # Use provider_manager to determine if we should failover
                 if provider_manager:
                     error_type, should_failover = provider_manager.get_error_classification(e, http_status_code)
@@ -1335,17 +1321,289 @@ async def cleanup_requests(force: bool = False):
     return JSONResponse(content={"status": "cleanup completed"})
 
 
+@app.get("/oauth/generate-url", tags=["OAuth"])
+async def generate_oauth_url():
+    """
+    Generate OAuth authorization URL for manual account setup.
+    
+    This endpoint allows users to manually initiate OAuth authorization
+    without waiting for a 401 error. Useful for proactive account setup.
+    """
+    try:
+        if not oauth_manager:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "OAuth manager not initialized"
+                }
+            )
+        
+        # Generate OAuth login URL
+        if not oauth_manager:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "OAuth manager not initialized. Please check server logs."
+                }
+            )
+        
+        login_url = oauth_manager.generate_login_url()
+        
+        if not login_url:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "Failed to generate OAuth URL"
+                }
+            )
+        
+        # Return the URL with instructions
+        return JSONResponse(content={
+            "status": "success",
+            "login_url": login_url,
+            "instructions": {
+                "step_1": "Open the login_url in your browser",
+                "step_2": "Complete OAuth authorization in browser",
+                "step_3": "Copy the authorization code from callback URL",
+                "step_4": "Use POST /oauth/exchange-code with the authorization code and required account_email"
+            },
+            "callback_format": "https://console.anthropic.com/oauth/code/callback?code=YOUR_CODE&state=STATE",
+            "exchange_example": "curl -X POST /oauth/exchange-code -d '{\"code\": \"YOUR_CODE\", \"account_email\": \"user@example.com\"}'",
+            "expires_in_minutes": 10
+        })
+        
+    except Exception as e:
+        error(f"Error generating OAuth URL: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"Internal server error: {str(e)}"
+            }
+        )
+
+
+@app.post("/oauth/exchange-code", tags=["OAuth"])
+async def exchange_oauth_code(request: Request) -> JSONResponse:
+    """Exchange OAuth authorization code for access tokens"""
+    try:
+        body = await request.json()
+        authorization_code = body.get("code")
+        account_email = body.get("account_email")  # Required email parameter
+        
+        if not authorization_code:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Missing authorization code"}
+            )
+        
+        if not account_email:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Missing account_email parameter. Please provide your email address for account identification."}
+            )
+        
+        # Exchange code for tokens (with required account email)
+        if not oauth_manager:
+            return JSONResponse(
+                status_code=500,
+                content={"error": "OAuth manager not initialized. Please check server logs."}
+            )
+        
+        credentials = await oauth_manager.exchange_code(authorization_code, account_email)
+        
+        if credentials:
+            # Start auto-refresh for the new token (if enabled)
+            if provider_manager and provider_manager.oauth_auto_refresh_enabled:
+                await oauth_manager.start_auto_refresh()
+            else:
+                info("Auto-refresh disabled - new token will not be auto-refreshed")
+            
+            # Build response with account information
+            response_data = {
+                "status": "success",
+                "message": "Authorization successful", 
+                "account_email": credentials.account_email,  # Use email as primary identifier
+                "expires_at": credentials.expires_at,
+                "scopes": credentials.scopes
+            }
+            
+            # Add account name if available
+            if credentials.account_name:
+                response_data["account_name"] = credentials.account_name
+            
+            return JSONResponse(content=response_data)
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Failed to exchange authorization code"}
+            )
+    
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"OAuth exchange failed: {str(e)}"}
+        )
+
+
+@app.get("/oauth/status", tags=["OAuth"])
+async def get_oauth_status() -> JSONResponse:
+    """Get comprehensive status of stored OAuth tokens and system state"""
+    try:
+        if not oauth_manager:
+            return JSONResponse(
+                status_code=500,
+                content={"error": "OAuth manager not initialized. Please check server logs."}
+            )
+        
+        tokens_status = oauth_manager.get_tokens_status()
+        
+        # Calculate summary statistics
+        total_tokens = len(tokens_status)
+        healthy_tokens = sum(1 for token in tokens_status if token.get("is_healthy", False))
+        expired_tokens = sum(1 for token in tokens_status if token.get("is_expired", False))
+        expiring_soon = sum(1 for token in tokens_status if token.get("will_expire_soon", False))
+        
+        # Get current time for reference
+        current_time = int(time.time())
+        
+        # Find currently active token
+        active_token = next((token for token in tokens_status if token.get("is_current", False)), None)
+        
+        # System info
+        system_info = {
+            "oauth_manager_status": "active",
+            "current_time": current_time,
+            "current_time_iso": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(current_time)),
+            "timezone": "Local",
+        }
+        
+        # Summary
+        summary = {
+            "total_tokens": total_tokens,
+            "healthy_tokens": healthy_tokens,
+            "expired_tokens": expired_tokens,
+            "expiring_soon": expiring_soon,
+            "current_token_index": oauth_manager.current_token_index if (oauth_manager and total_tokens > 0) else None,
+            "rotation_enabled": total_tokens > 1,
+        }
+        
+        # Active token info (safe)
+        active_info = None
+        if active_token:
+            active_info = {
+                "account_email": active_token["account_email"],
+                "expires_in_human": active_token["expires_in_human"],
+                "is_healthy": active_token["is_healthy"],
+                "scopes": active_token["scopes"]
+            }
+        
+        return JSONResponse(content={
+            "system": system_info,
+            "summary": summary,
+            "active_token": active_info,
+            "tokens": tokens_status
+        })
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get OAuth status: {str(e)}"}
+        )
+
+
+@app.delete("/oauth/tokens/{account_email}", tags=["OAuth"])
+async def remove_oauth_token(account_email: str) -> JSONResponse:
+    """Remove a specific OAuth token"""
+    try:
+        if not oauth_manager:
+            return JSONResponse(
+                status_code=500,
+                content={"error": "OAuth manager not initialized. Please check server logs."}
+            )
+        
+        success = oauth_manager.remove_token(account_email)
+        if success:
+            return JSONResponse(content={
+                "status": "success",
+                "message": f"Token for {account_email} removed"
+            })
+        else:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Token for {account_email} not found"}
+            )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to remove token: {str(e)}"}
+        )
+
+
+@app.delete("/oauth/tokens", tags=["OAuth"])
+async def clear_all_oauth_tokens() -> JSONResponse:
+    """Clear all stored OAuth tokens"""
+    try:
+        if not oauth_manager:
+            return JSONResponse(
+                status_code=500,
+                content={"error": "OAuth manager not initialized. Please check server logs."}
+            )
+        
+        oauth_manager.clear_all_tokens()
+        return JSONResponse(content={
+            "status": "success",
+            "message": "All tokens cleared"
+        })
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to clear tokens: {str(e)}"}
+        )
+
+
 @app.get("/providers/reload", tags=["Health"])
 async def reload_providers_config() -> JSONResponse:
-    """Reload providers configuration from file."""
+    """Reload providers configuration from file and return available providers."""
     global provider_manager
     try:
         provider_manager = ProviderManager()
+        
+        # Re-initialize OAuth manager with new configuration
+        try:
+            init_oauth_manager(provider_manager.settings)
+            info("OAuth manager re-initialized after config reload")
+        except Exception as oauth_error:
+            warning(f"Failed to re-initialize OAuth manager after config reload: {oauth_error}")
+        
         # Update the provider manager reference in deduplication module
         from caching.deduplication import set_provider_manager, set_make_anthropic_request
         set_provider_manager(provider_manager)
         set_make_anthropic_request(make_anthropic_request)
-        return JSONResponse(content={"status": "configuration reloaded successfully"})
+        
+        # Get comprehensive status from provider manager
+        status_data = provider_manager.get_status()
+        
+        # Enhance provider status with model information
+        for provider_status in status_data["providers"]:
+            provider_name = provider_status["name"]
+            
+            # Get models for this provider from model_routes
+            provider_models = []
+            for model_pattern, routes in provider_manager.model_routes.items():
+                for route in routes:
+                    if route.provider == provider_name and route.enabled:
+                        provider_models.append({
+                            "pattern": model_pattern,
+                            "model": route.model,
+                            "priority": route.priority
+                        })
+            
+            provider_status["models"] = provider_models
+        
+        # Return success status with provider information
+        return JSONResponse(content={
+            "status": "configuration reloaded successfully",
+            **status_data
+        })
     except Exception as e:
         return JSONResponse(
             status_code=500,

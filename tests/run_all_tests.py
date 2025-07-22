@@ -23,6 +23,9 @@ TEST_FILES = [
     "test_client_disconnect.py",
     "test_caching_deduplication.py",
     
+    # OAuth认证测试
+    "test_oauth.py",
+    
     # 扩展功能测试
     "test_passthrough.py",
     "test_log_colors.py",

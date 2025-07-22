@@ -41,7 +41,17 @@
    - 缓存过期处理
    - 并发缓存行为
 
-7. **`test_error_handling.py`** - 错误处理和边缘情况测试
+### OAuth认证测试
+7. **`test_oauth.py`** - OAuth 2.0 认证功能测试
+   - OAuth状态端点验证
+   - 真实OAuth授权流程触发
+   - 授权码交换测试
+   - Token管理端点测试
+   - Memory模式认证验证
+   - 使用OAuth token的真实请求测试
+
+### 扩展功能测试  
+8. **`test_error_handling.py`** - 错误处理和边缘情况测试
    - 无效请求处理
    - 特殊字符支持
    - 极端参数值
@@ -75,6 +85,7 @@ python tests/run_all_tests.py
 # 运行特定测试
 python tests/test_stream_nonstream.py
 python tests/test_provider_routing.py
+python tests/test_oauth.py
 python tests/test_caching_deduplication.py
 ```
 
@@ -83,11 +94,38 @@ python tests/test_caching_deduplication.py
 # 只运行核心功能测试
 python tests/run_all_tests.py --tests test_stream_nonstream.py test_provider_routing.py
 
+# 只运行OAuth相关测试
+python tests/run_all_tests.py --tests test_oauth.py
+
 # 列出所有可用测试
 python tests/run_all_tests.py --list
 
 # 检查服务器状态
 python tests/run_all_tests.py --check-server
+```
+
+### OAuth测试特殊说明
+
+OAuth测试包含交互式和自动化测试：
+
+1. **自动化测试** - 验证端点和基础功能
+2. **交互式测试** - 需要真实OAuth授权
+
+#### 完整OAuth测试流程
+```bash
+# 1. 运行OAuth测试（会触发401错误）
+python tests/test_oauth.py
+
+# 2. 复制console中显示的OAuth授权URL，在浏览器中完成授权
+
+# 3. 从callback URL中复制授权码，设置环境变量
+export OAUTH_TEST_CODE="your_authorization_code_here"
+
+# 4. 重新运行测试以测试token交换
+python tests/test_oauth.py
+
+# 5. 测试使用真实token发送请求
+python tests/test_oauth.py
 ```
 
 ## 📊 测试报告
@@ -120,6 +158,7 @@ python tests/run_all_tests.py --check-server
 - [x] **基础API功能** - 请求/响应处理
 - [x] **流式处理** - SSE流式响应
 - [x] **服务商管理** - 路由、负载均衡、故障转移
+- [x] **OAuth认证** - 自动授权流程、token管理、多账号轮换
 - [x] **缓存系统** - 去重、缓存命中、过期处理
 - [x] **错误处理** - 异常情况、边缘情况
 - [x] **网络处理** - 超时、重试、断开连接

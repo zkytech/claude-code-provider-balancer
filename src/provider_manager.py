@@ -15,6 +15,12 @@ from dataclasses import dataclass
 from enum import Enum
 import httpx
 
+# Import OAuth manager for Claude Code Official authentication
+import oauth_manager as oauth_module
+
+# Import logging utilities
+from log_utils import info, warning, error, debug
+
 
 class ProviderType(str, Enum):
     ANTHROPIC = "anthropic"
@@ -113,6 +119,9 @@ class ProviderManager:
         self._last_successful_provider: Optional[str] = None  # 记录最后成功的provider名称
         self._idle_recovery_interval: float = 300  # 默认空闲5分钟后才考虑恢复失败的provider
         
+        # OAuth配置
+        self.oauth_auto_refresh_enabled: bool = True
+        
         self.load_config()
     
     def load_config(self):
@@ -125,6 +134,10 @@ class ProviderManager:
             self.selection_strategy = SelectionStrategy(
                 self.settings.get('selection_strategy', 'priority')
             )
+            
+            # 加载OAuth配置
+            oauth_config = self.settings.get('oauth', {})
+            self.oauth_auto_refresh_enabled = oauth_config.get('enable_auto_refresh', True)
             
             # 加载智能恢复配置
             self._idle_recovery_interval = self.settings.get('idle_recovery_interval', 300)
@@ -405,6 +418,7 @@ class ProviderManager:
             "Content-Type": "application/json"
         }
         
+        
         # 如果提供了原始请求头，先复制它们（排除需要替换的认证头、host头和content-length头）
         if original_headers:
             for key, value in original_headers.items():
@@ -412,7 +426,7 @@ class ProviderManager:
                 if key.lower() not in ['authorization', 'x-api-key', 'host', 'content-length']:
                     headers[key] = value
         
-        # 检查是否使用passthrough模式
+        # 检查auth_value模式
         if provider.auth_value == "passthrough":
             # 透传模式：使用原始请求的认证头
             if original_headers:
@@ -422,6 +436,43 @@ class ProviderManager:
                         headers["Authorization"] = value
                     elif key.lower() == "x-api-key":
                         headers["x-api-key"] = value
+            # 为Anthropic类型的provider添加版本头
+            if provider.type == ProviderType.ANTHROPIC:
+                headers["anthropic-version"] = "2023-06-01"
+        elif provider.auth_value == "oauth":
+            # OAuth模式：从OAuth manager获取token
+            if not oauth_module.oauth_manager:
+                # OAuth manager未初始化，触发OAuth授权流程
+                self.handle_oauth_authorization_required(provider)
+                from httpx import HTTPStatusError
+                import httpx
+                response = httpx.Response(
+                    status_code=401,
+                    text="Unauthorized: OAuth manager not initialized",
+                    request=httpx.Request("POST", "http://example.com")
+                )
+                raise HTTPStatusError("401 Unauthorized", request=response.request, response=response)
+            
+            access_token = oauth_module.oauth_manager.get_current_token()
+            if not access_token:
+                # 触发OAuth授权流程 (永远启用)
+                self.handle_oauth_authorization_required(provider)
+                # 创建一个401错误来触发标准的错误处理流程
+                from httpx import HTTPStatusError
+                import httpx
+                response = httpx.Response(
+                    status_code=401,
+                    text="Unauthorized: No valid token available",
+                    request=httpx.Request("POST", "http://example.com")
+                )
+                raise HTTPStatusError("401 Unauthorized", request=response.request, response=response)
+            
+            # 使用内存中的token
+            if provider.auth_type == AuthType.AUTH_TOKEN:
+                headers["Authorization"] = f"Bearer {access_token}"
+            elif provider.auth_type == AuthType.API_KEY:
+                headers["x-api-key"] = access_token
+            
             # 为Anthropic类型的provider添加版本头
             if provider.type == ProviderType.ANTHROPIC:
                 headers["anthropic-version"] = "2023-06-01"
@@ -476,6 +527,46 @@ class ProviderManager:
     def reload_config(self):
         """Reload configuration from file"""
         self.load_config()
+    
+    def handle_oauth_authorization_required(self, provider: Provider) -> str:
+        """Handle 401 authorization required error for OAuth providers"""
+        if provider.name == "Claude Code Official":
+            # Check if OAuth manager is available
+            if not oauth_module.oauth_manager:
+                print("\n" + "="*80)
+                print("❌ OAUTH MANAGER NOT AVAILABLE")
+                print("="*80)
+                print("The OAuth manager failed to initialize properly.")
+                print("Please check the logs for initialization errors.")
+                print("OAuth authentication is not available at this time.")
+                print("="*80)
+                print()
+                return ""
+            
+            # Print instructions to console
+            print("\n" + "="*80)
+            print("🔐 CLAUDE CODE OFFICIAL AUTHORIZATION REQUIRED")
+            print("="*80)
+            print(f"Provider '{provider.name}' returned 401 Unauthorized.")
+            print("Please complete the OAuth authorization process:")
+            print()
+            print("1. 🌐 Click the following URL to generate and get authorization link:")
+            print(f"   http://localhost:9090/oauth/generate-url")
+            print()
+            print("2. 📝 After successful login, you will be redirected to a callback URL.")
+            print("   Copy the 'code' parameter from the callback URL.")
+            print()
+            print("3. 💻 Run the following command to complete the authorization:")
+            print(f"   curl -X POST http://localhost:9090/oauth/exchange-code -d '{{\"code\": \"YOUR_CODE\", \"account_email\": \"user@example.com\"}}'")
+            print("   Note: account_email is required for account identification and preventing duplicates")
+            print()
+            print("4. 🔄 The system will automatically exchange the code for tokens and start using them.")
+            print("="*80)
+            print()
+            
+            return "http://localhost:9090/oauth/generate-url"
+        
+        return ""
     
     def should_failover_on_error(self, error: Exception, http_status_code: Optional[int] = None, error_type: Optional[str] = None) -> bool:
         """
