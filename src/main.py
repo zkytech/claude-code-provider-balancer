@@ -120,14 +120,22 @@ def _initialize_oauth_manager(provider_manager_instance: ProviderManager, is_rel
         bool: True if initialization was successful, False otherwise
     """
     try:
-        init_oauth_manager(provider_manager_instance.settings)
-        event_name = "oauth_manager_reinitialized" if is_reload else "oauth_manager_ready"
-        message = "OAuth manager re-initialized after config reload" if is_reload else "OAuth manager initialization completed successfully"
+        # Check if OAuth manager already exists with tokens before calling init
+        from oauth_manager import oauth_manager
+        had_existing_tokens = oauth_manager and oauth_manager.token_credentials
         
-        info(LogRecord(
-            event=event_name,
-            message=message
-        ))
+        result_manager = init_oauth_manager(provider_manager_instance.settings)
+        
+        # Only log success if we actually did initialization (not skipped due to existing tokens)
+        if not had_existing_tokens:
+            event_name = "oauth_manager_reinitialized" if is_reload else "oauth_manager_ready"
+            message = "OAuth manager re-initialized after config reload" if is_reload else "OAuth manager initialization completed successfully"
+            
+            info(LogRecord(
+                event=event_name,
+                message=message
+            ))
+        
         return True
     except Exception as e:
         event_name = "oauth_manager_reinit_failed" if is_reload else "oauth_manager_init_failed"
