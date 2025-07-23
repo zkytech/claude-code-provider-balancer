@@ -14,7 +14,7 @@ curl -X POST http://localhost:9090/v1/messages \
   -H "anthropic-dangerous-direct-browser-access: true" \
   -H "anthropic-version: 2023-06-01" \
   -H "x-app: cli" \
-  -H "user-agent: claude-cli/1.0.56 (external, cli)" \
+  -H "user-agent: claude-cli/1.0.57 (external, cli)" \
   -H "content-type: application/json" \
   -H "anthropic-beta: oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14" \
   -H "x-stainless-helper-method: stream" \

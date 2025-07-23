@@ -584,6 +584,16 @@ class OAuthManager:
                     message=f"Token expires at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(credentials.expires_at))}"
                 ))
                 
+                # Start auto-refresh for the new token
+                credentials_index = len(self.token_credentials) - 1  # The newly added token is at the end
+                if credentials_index not in self._refresh_tasks:
+                    task = asyncio.create_task(self._auto_refresh_loop(credentials))
+                    self._refresh_tasks[credentials_index] = task
+                    debug(LogRecord(
+                        event="oauth_auto_refresh_started",
+                        message=f"Started auto-refresh for newly acquired token: {credentials.account_id}"
+                    ))
+                
                 return credentials
                 
         except Exception as e:
@@ -872,7 +882,7 @@ class OAuthManager:
             except asyncio.CancelledError:
                 info(LogRecord(
                     event="oauth_auto_refresh_cancelled",
-                    message=f"Auto-refresh cancelled for {credentials.account_id}"
+                    message=f"Auto-refresh cancelled for {credentials.account_id} (likely due to manual token refresh or shutdown)"
                 ))
                 break
             except Exception as e:
