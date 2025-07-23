@@ -14,7 +14,7 @@ def get_claude_code_headers():
         "anthropic-dangerous-direct-browser-access": "true",
         "anthropic-version": "2023-06-01",
         "x-app": "cli",
-        "user-agent": "claude-cli/1.0.57 (external, cli)",
+        "user-agent": "claude-cli/1.0.58 (external, cli)",
         "content-type": "application/json",
         "anthropic-beta": "oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14",
         "x-stainless-helper-method": "stream",
