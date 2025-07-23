@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 import yaml
+import signal
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -28,59 +29,55 @@ from rich.rule import Rule
 from rich.text import Text
 
 # Import our modular components
-try:
-    # Try relative imports first (when run as module)
-    from .provider_manager import ProviderManager, Provider, ProviderType, StreamingMode
-    from .oauth_manager import oauth_manager, init_oauth_manager, start_oauth_auto_refresh
-    from .log_utils import (
-        LogRecord, LogEvent, LogError,
-        ColoredConsoleFormatter, JSONFormatter, ConsoleJSONFormatter,
-        init_logger, debug, info, warning, error, critical
-    )
-    from .models import (
-        MessagesRequest, TokenCountRequest, TokenCountResponse,
-        MessagesResponse, AnthropicErrorResponse
-    )
-    from .caching import (
-        generate_request_signature, handle_duplicate_request,
-        cleanup_stuck_requests, simulate_testing_delay,
-        complete_and_cleanup_request, serve_waiting_duplicate_requests,
-        update_response_cache, validate_response_quality, extract_content_from_sse_chunks
-    )
-    from .conversion import (
-        get_token_encoder, count_tokens_for_anthropic_request,
-        convert_anthropic_to_openai_messages, convert_anthropic_tools_to_openai,
-        convert_anthropic_tool_choice_to_openai, convert_openai_to_anthropic_response,
-        get_anthropic_error_details_from_exc, build_anthropic_error_response
-    )
-except ImportError:
-    # Fall back to absolute imports (when run directly)
-    from provider_manager import ProviderManager, Provider, ProviderType, StreamingMode
-    from oauth_manager import oauth_manager, init_oauth_manager, start_oauth_auto_refresh
-    from log_utils import (
-        LogRecord, LogEvent, LogError,
-        ColoredConsoleFormatter, JSONFormatter, ConsoleJSONFormatter,
-        init_logger, debug, info, warning, error, critical,
-        create_debug_request_info
-    )
-    from models import (
-        MessagesRequest, TokenCountRequest, TokenCountResponse,
-        MessagesResponse, AnthropicErrorResponse
-    )
-    from caching import (
-        generate_request_signature, handle_duplicate_request,
-        cleanup_stuck_requests, simulate_testing_delay,
-        complete_and_cleanup_request, serve_waiting_duplicate_requests,
-        update_response_cache, validate_response_quality, extract_content_from_sse_chunks
-    )
-    from conversion import (
-        get_token_encoder, count_tokens_for_anthropic_request,
-        convert_anthropic_to_openai_messages, convert_anthropic_tools_to_openai,
-        convert_anthropic_tool_choice_to_openai, convert_openai_to_anthropic_response,
-        get_anthropic_error_details_from_exc, build_anthropic_error_response
-    )
+# Add current directory to path for direct execution
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+from provider_manager import ProviderManager, Provider, ProviderType
+from oauth_manager import oauth_manager, init_oauth_manager, start_oauth_auto_refresh
+from log_utils import (
+    LogRecord, LogEvent, LogError,
+    ColoredConsoleFormatter, JSONFormatter, ConsoleJSONFormatter,
+    init_logger, debug, info, warning, error, critical
+)
+from models import (
+    MessagesRequest, TokenCountRequest, TokenCountResponse,
+    MessagesResponse, AnthropicErrorResponse
+)
+from caching import (
+    generate_request_signature, handle_duplicate_request,
+    cleanup_stuck_requests, simulate_testing_delay,
+    complete_and_cleanup_request, serve_waiting_duplicate_requests,
+    update_response_cache, validate_response_quality, extract_content_from_sse_chunks
+)
+from conversion import (
+    get_token_encoder, count_tokens_for_anthropic_request,
+    convert_anthropic_to_openai_messages, convert_anthropic_tools_to_openai,
+    convert_anthropic_tool_choice_to_openai, convert_openai_to_anthropic_response,
+    get_anthropic_error_details_from_exc, build_anthropic_error_response
+)
 
 load_dotenv()
+
+# Load global configuration
+def load_global_config(config_path: str = "config.yaml") -> Dict[str, Any]:
+    """Load configuration from config.yaml"""
+    if not os.path.isabs(config_path):
+        # Look for config in project root (one level up from src)
+        current_dir = Path(__file__).parent
+        project_root = current_dir.parent
+        config_path = project_root / config_path
+    
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        print(f"Failed to load config file: {e}")
+        return {}
+
+# Global config instance
+global_config = load_global_config()
 
 # Initialize rich console
 _console = Console()
@@ -210,15 +207,15 @@ class Settings:
         self.log_level: str = "INFO"
         self.log_file_path: str = ""
         self.log_color: bool = True
-        self.providers_config_path: str = "providers.yaml"
+        self.providers_config_path: str = "config.yaml"
         self.referrer_url: str = "http://localhost:8082/claude_proxy"
-        self.reload: bool = True
         self.host: str = "127.0.0.1"
         self.port: int = 9090
         self.app_name: str = "Claude Code Provider Balancer"
         self.app_version: str = "0.5.0"
         
-    def load_from_provider_config(self, config_path: str = "providers.yaml"):
+        
+    def load_from_provider_config(self, config_path: str = "config.yaml"):
         """Load settings from provider configuration file"""
         import yaml
         
@@ -1616,51 +1613,9 @@ async def clear_all_oauth_tokens() -> JSONResponse:
         )
 
 
-@app.get("/providers/reload", tags=["Health"])
-async def reload_providers_config() -> JSONResponse:
-    """Reload providers configuration from file and return available providers."""
-    global provider_manager
-    try:
-        provider_manager = ProviderManager()
-        
-        # Re-initialize OAuth manager with new configuration
-        _initialize_oauth_manager(provider_manager, is_reload=True)
-        
-        # Update the provider manager reference in deduplication module
-        from caching.deduplication import set_provider_manager, set_make_anthropic_request
-        set_provider_manager(provider_manager)
-        set_make_anthropic_request(make_anthropic_request)
-        
-        # Get comprehensive status from provider manager
-        status_data = provider_manager.get_status()
-        
-        # Enhance provider status with model information
-        for provider_status in status_data["providers"]:
-            provider_name = provider_status["name"]
-            
-            # Get models for this provider from model_routes
-            provider_models = []
-            for model_pattern, routes in provider_manager.model_routes.items():
-                for route in routes:
-                    if route.provider == provider_name and route.enabled:
-                        provider_models.append({
-                            "pattern": model_pattern,
-                            "model": route.model,
-                            "priority": route.priority
-                        })
-            
-            provider_status["models"] = provider_models
-        
-        # Return success status with provider information
-        return JSONResponse(content={
-            "status": "configuration reloaded successfully",
-            **status_data
-        })
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Failed to reload configuration: {str(e)}"}
-        )
+
+
+
 
 
 # Exception handlers
@@ -1754,6 +1709,10 @@ if __name__ == "__main__":
                 # If path is not relative to project root, show basename
                 log_file_display = Path(settings.log_file_path).name
         
+        reload_enabled = global_config.get('settings', {}).get('reload', False)
+        reload_status = "enabled" if reload_enabled else "disabled"
+        reload_color = "green" if reload_enabled else "dim"
+        
         config_details_text = Text.assemble(
             ("   Version       : ", "default"),
             (f"v{settings.app_version}", "bold cyan"),
@@ -1764,13 +1723,17 @@ if __name__ == "__main__":
             (settings.log_level.upper(), "yellow"),
             ("\n   Log File      : ", "default"),
             (log_file_display, "dim"),
+            ("\n   Auto Reload   : ", "default"),
+            (reload_status, reload_color),
             ("\n   Listening on  : ", "default"),
-            (f"http://{settings.host}:{settings.port}", "default"),
-            ("\n   Reload        : ", "default"),
-            ("Enabled", "bold orange1") if settings.reload else ("Disabled", "dim")
+            (f"http://{settings.host}:{settings.port}", "default")
         )
         title = "Claude Code Provider Balancer Configuration"
     else:
+        reload_enabled = global_config.get('settings', {}).get('reload', False)
+        reload_status = "enabled" if reload_enabled else "disabled"
+        reload_color = "green" if reload_enabled else "dim"
+        
         config_details_text = Text.assemble(
             ("   Version       : ", "default"),
             (f"v{settings.app_version}", "bold cyan"),
@@ -1778,6 +1741,8 @@ if __name__ == "__main__":
             ("Provider manager failed to initialize", "bold red"),
             ("\n   Log Level     : ", "default"),
             (settings.log_level.upper(), "yellow"),
+            ("\n   Auto Reload   : ", "default"),
+            (reload_status, reload_color),
             ("\n   Listening on  : ", "default"),
             (f"http://{settings.host}:{settings.port}", "default"),
         )
@@ -1793,10 +1758,15 @@ if __name__ == "__main__":
     )
     _console.print(Rule("Starting uvicorn server ...", style="dim blue"))
     
+    # Get reload setting from global config (already retrieved above)
+    reload_enabled = global_config.get('settings', {}).get('reload', False)
+    reload_includes = global_config.get('settings', {}).get('reload_includes', ["config.yaml", "*.py"]) if reload_enabled else None
+    
     uvicorn.run(
         "main:app",
         host=settings.host,
         port=settings.port,
-        reload=settings.reload,
+        reload=reload_enabled,
+        reload_includes=reload_includes,
         log_config=log_config,
     )

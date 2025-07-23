@@ -5,25 +5,8 @@ from typing import Optional
 
 import openai
 
-try:
-    from models import MessagesResponse, ContentBlockText, ContentBlockToolUse, Usage
-except ImportError:
-    # Fallback for nested imports
-    from models.responses import MessagesResponse
-    from models.content_blocks import ContentBlockText, ContentBlockToolUse
-    from models.responses import Usage
-
-try:
-    from log_utils import warning, error, LogRecord, LogEvent
-except ImportError:
-    try:
-        from log_utils.handlers import warning, error, LogRecord, LogEvent
-    except ImportError:
-        # Fallback implementations
-        warning = error = lambda *args, **kwargs: None
-        LogRecord = dict
-        class LogEvent:
-            TOOL_ARGS_PARSE_FAILURE = type('', (), {'value': 'tool_args_parse_failure'})()
+from models import MessagesResponse, ContentBlockText, ContentBlockToolUse, Usage
+from log_utils import warning, error, LogRecord, LogEvent
 
 
 def convert_openai_to_anthropic_response(

@@ -183,7 +183,7 @@ class ColoredConsoleFormatter(logging.Formatter):
                 for field in essential_fields:
                     if field in log_payload.data:
                         simplified[field] = log_payload.data[field]
-            
+                        
             return simplified
         else:
             # For non-structured logs, use basic format

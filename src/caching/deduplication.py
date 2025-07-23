@@ -785,7 +785,11 @@ def validate_response_quality(collected_chunks: List[str], provider_name: str, r
                 "response_quality_check_empty",
                 f"Empty response detected from provider: {provider_name}",
                 request_id,
-                {"provider": provider_name, "chunk_count": 0}
+                {
+                    "provider": provider_name, 
+                    "chunk_count": 0,
+                    "content_preview": ""
+                }
             )
         )
         return False
@@ -863,7 +867,8 @@ def validate_response_quality(collected_chunks: List[str], provider_name: str, r
                     "provider": provider_name, 
                     "chunk_count": len(collected_chunks),
                     "has_completion_marker": has_completion_marker,
-                    "content_length": len(full_content)
+                    "content_length": len(full_content),
+                    "content_preview": full_content[:200] + "..." if len(full_content) > 200 else full_content
                 }
             )
         )

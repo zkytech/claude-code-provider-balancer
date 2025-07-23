@@ -1,0 +1,306 @@
+# Claude Code Provider Balancer Configuration
+# 支持多个Claude Code服务商和OpenAI兼容服务商
+
+providers:
+  # Claude Code 官方授权 (Claude Console API)
+  - name: "Claude Code Official"
+    type: "anthropic"
+    base_url: "https://api.anthropic.com"
+    auth_type: "auth_token"
+    auth_value: "oauth"  # 使用OAuth token认证，支持 "passthrough" | "oauth" | 具体token值
+    proxy: "http://127.0.0.1:10808"
+    enabled: true
+
+  # 使用auth_token的Claude Code服务商示例
+  - name: "GAC"
+    type: "anthropic"
+    base_url: "https://gaccode.com/claudecode"
+    auth_type: "api_key"
+    auth_value: "sk-ant-oat01-570b302608642a61dc7beb4f294b73571e002638cdc51ef22c69e491b6462d96"
+    enabled: true
+
+  - name: "AICODE"
+    type: "anthropic"
+    base_url: "https://api.aicodemirror.com/api/claudecode"
+    auth_type: "api_key"
+    auth_value: "sk-ant-api03-rG0RarALzZRxz469PZ5OXeQh8j9o63f8eYfpMYeCKZQp3rf02A1rJBbEf9jLlipmlm6Wq2_PqL1X42_QryEUSg"
+    enabled: true
+
+  # 另一个Claude Code服务商示例
+  - name: "AnyRouter"
+    type: "anthropic"
+    base_url: "https://anyrouter.top"
+    auth_type: "auth_token"
+    auth_value: "sk-3gZmlzyKnRSCbi1P1FcxMTJbJq1f2mxGiUpeDsToGu99TydP"
+    enabled: false
+
+  # 另一个Claude Code服务商示例
+  - name: "YourAPI"
+    type: "anthropic"
+    base_url: "https://yourapi.cn"
+    auth_type: "auth_token"
+    auth_value: "sk-4tIQV7uNVzlJyC1Ee55d19XutMY4MWxluER8fD98VOKEBmmd"
+    enabled: true
+
+  # WenWen AI作为Claude Code服务商
+  - name: "WenWen"
+    type: "anthropic"
+    base_url: "https://code.wenwen-ai.com"
+    auth_type: "auth_token"
+    auth_value: "sk-Jb5fOJXalPJolNNU7BwV8oNaGc8yRfXiypbFgtnRrTf8y1pK"
+    enabled: true
+
+  # OpenRouter作为OpenAI兼容服务商
+  - name: "OpenRouter"
+    type: "openai"
+    base_url: "https://openrouter.ai/api/v1"
+    auth_type: "api_key"
+    auth_value: "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"
+    enabled: true
+
+# 简化的模型路由配置
+model_routes:
+  # 大模型路由
+  "*sonnet*":
+    - provider: "GAC"
+      model: "passthrough"
+      priority: 1
+    - provider: "Claude Code Official"
+      model: "passthrough"
+      priority: 2
+    - provider: "AICODE"
+      model: "passthrough"
+      priority: 3
+    - provider: "AnyRouter"
+      model: "passthrough"
+      priority: 4
+    - provider: "YourAPI"
+      model: "passthrough"
+      priority: 5
+    - provider: "WenWen"
+      model: "passthrough"
+      priority: 6
+    - provider: "OpenRouter"
+      model: "google/gemini-2.5-pro"
+      priority: 7
+
+  "*opus*":
+    - provider: "GAC"
+      model: "passthrough"
+      priority: 1
+    - provider: "Claude Code Official"
+      model: "passthrough"
+      priority: 2
+    - provider: "AICODE"
+      model: "passthrough"
+      priority: 3
+    - provider: "AnyRouter"
+      model: "passthrough"
+      priority: 4
+    - provider: "YourAPI"
+      model: "passthrough"
+      priority: 5
+    - provider: "WenWen"
+      model: "passthrough"
+      priority: 6
+    - provider: "OpenRouter"
+      model: "google/gemini-2.5-pro"
+      priority: 7
+
+  # 小模型路由
+  "*haiku*":
+    - provider: "GAC"
+      model: "passthrough"
+      priority: 1
+    - provider: "AICODE"
+      model: "passthrough"
+      priority: 2
+    - provider: "AnyRouter"
+      model: "passthrough"
+      priority: 3
+    - provider: "YourAPI"
+      model: "passthrough"
+      priority: 4
+    - provider: "WenWen"
+      model: "passthrough"
+      priority: 5
+    - provider: "Claude Code Official"
+      model: "passthrough"
+      priority: 6
+    - provider: "OpenRouter"
+      model: "anthropic/claude-3.5-haiku"
+      priority: 7
+
+# 全局设置
+settings:
+  # 开发模式自动重载 (监听 .py 和 .yaml 文件变化自动重启)
+  reload: true
+  reload_includes: ["*.py", "config.yaml"]  # 监听的文件类型
+  
+  # 模型选择策略
+  selection_strategy: "priority"  # priority | round_robin | random
+
+  # 超时配置统一管理
+  timeouts:
+    # 非流式请求超时配置
+    non_streaming:
+      # 连接建立超时（秒）
+      connect_timeout: 30
+      # 数据读取超时（秒）- 非流式请求超时较短
+      read_timeout: 120
+      # 连接池超时（秒）
+      pool_timeout: 30
+
+    # 流式请求超时配置
+    streaming:
+      # 连接建立超时（秒）
+      connect_timeout: 30
+      # 数据读取超时（秒）- 流式请求超时较长
+      read_timeout: 120
+      # 连接池超时（秒）
+      pool_timeout: 30
+      # 流数据块间隔超时（秒）- 两个数据块之间的最大等待时间
+      chunk_timeout: 30
+      # 首次响应超时（秒）- 等待第一个数据块的时间
+      first_chunk_timeout: 30
+      # 流处理超时（秒）- 处理每个数据块的最大时间
+      processing_timeout: 10
+
+    # 缓存相关超时配置
+    caching:
+      # 请求去重等待超时（秒）
+      deduplication_timeout: 300
+      # 缓存操作超时（秒）
+      cache_operation_timeout: 5
+
+    # 提供商健康检查超时配置
+    health_check:
+      # 健康检查请求超时（秒）
+      timeout: 10
+      # 健康检查连接超时（秒）
+      connect_timeout: 5
+
+  # 智能恢复设置
+  idle_recovery_interval: 300  # 空闲多长时间（秒）后才恢复失败的provider（默认5分钟）
+
+  # 客户端断开检测设置
+  client_disconnect_watchdog:
+    # 是否启用客户端断开检测
+    enabled: true
+    
+    # 检测方法配置
+    detection_methods:
+      # 连接状态检测 - 最准确，推荐启用
+      connection_state:
+        enabled: true
+        check_interval: 20  # 每20秒检查一次连接状态
+
+      # yield异常捕获 - 在数据传输时检测断开
+      yield_exception:
+        enabled: true
+      
+      # 心跳检测 - 在长时间无数据时主动测试连接
+      heartbeat:
+        enabled: true
+        interval: 60  # 60秒无数据输出时发送心跳
+        comment: ": heartbeat"  # 心跳内容（SSE注释格式）
+      
+      # 超时检测 - 作为兜底机制，延长超时时间避免误报
+      timeout_fallback:
+        enabled: true
+        yield_start_timeout: 120  # 等待第一次yield开始的超时时间（秒）
+        yield_stuck_timeout: 300  # yield长时间卡住的超时时间（秒），作为最后防线
+
+  # 故障服务商的冷却时间（秒）
+  # 请求故障了， 在此时间内不会尝试该服务商
+  # 故障会返回给客户端
+  failure_cooldown: 180
+
+  # 错误处理策略
+  # 只有在以下错误类型时才会尝试failover到其他provider
+  # 其他错误类型会直接返回给客户端
+  failover_error_types:
+    # 网络连接和超时错误
+    - "connection_error"
+    - "timeout_error"
+    - "read_timeout"
+    - "connect_timeout"
+    - "pool_timeout"
+    - "ssl_error"
+
+    # 服务器临时错误
+    - "internal_server_error"
+    - "bad_gateway"
+    - "service_unavailable"
+    - "gateway_timeout"
+    - "too_many_requests"
+    - "rate_limit_exceeded"
+    - "server_overloaded"
+    - "overloaded_error"
+    - "temporary_unavailable"
+
+    # API错误类型
+    - "invalid_request_error"  # 无效请求错误，通常表示API端点不支持
+
+    # 提供商特定的临时错误
+    - "没有可用token"
+    - "无可用模型"
+
+  # HTTP状态码映射到failover错误
+  failover_http_codes:
+    - 402  # Payment Required
+    - 404  # Not Found
+    - 408  # Request Timeout
+    - 500  # Internal Server Error
+    - 502  # Bad Gateway
+    - 503  # Service Unavailable
+    - 504  # Gateway Timeout
+    - 429  # Too Many Requests
+    - 520  # Unknown Error (Cloudflare)
+    - 521  # Web Server Is Down
+    - 522  # Connection Timed Out
+    - 523  # Origin Is Unreachable
+    - 524  # A Timeout Occurred
+
+  # 日志设置
+  log_level: "INFO"  # DEBUG | INFO | WARNING | ERROR | CRITICAL
+  log_color: true
+  log_file_path: "logs/logs.jsonl"
+
+  # 服务器配置
+  host: "127.0.0.1"
+  port: 9090
+
+  # 应用信息
+  app_name: "ClaudeCode Providers Balancer"
+  app_version: "0.1.0"
+  
+  # OAuth Token持久化存储设置
+  oauth:
+    # 是否启用token持久化存储到系统密钥环
+    enable_persistence: true
+    # 系统密钥环服务名称
+    service_name: "claude-code-balancer"
+    # 是否启用access_token自动刷新(过期前5分钟自动刷新)
+    # 只有在美国IP访问时才能启用
+    # 代理设置
+    proxy: "http://127.0.0.1:10808"
+    enable_auto_refresh: true
+    
+
+  # 请求去重设置
+  deduplication:
+    # 是否启用请求去重
+    enabled: true
+    # 是否在签名计算中包含max_tokens参数
+    # 设置为false可以避免Claude Code客户端重试时因max_tokens变化导致的签名不同
+    include_max_tokens_in_signature: false
+
+  # 测试设置（仅用于开发和测试）
+  testing:
+    # 是否启用模拟延迟（用于测试重试机制）
+    simulate_delay: false
+    # 模拟延迟时间（秒）- 设置为10秒，ClaudeCode客户端60秒超时
+    delay_seconds: 10
+    # 只对包含特定关键词的请求启用延迟（可选）
+    delay_trigger_keywords: ["test", "延迟", "delay"]

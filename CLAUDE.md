@@ -30,7 +30,7 @@ The system follows a modular, layered architecture with clear separation of conc
 
 ### Configuration System
 
-The system uses `providers.yaml` for provider configuration with hot-reload capability:
+The system uses `config.yaml` for configuration with hot-reload capability:
 - **Provider definitions** with auth types (`api_key`, `auth_token`) and endpoints
 - **Model routing rules** with priority-based selection and passthrough support
 - **System settings** for timeouts, cooldowns, and logging levels
@@ -49,13 +49,10 @@ The system uses `providers.yaml` for provider configuration with hot-reload capa
 
 ```bash
 # Development mode (recommended)
-python src/main.py
-
-# Using uv (modern Python package manager)
 uv run src/main.py
 
-# Production mode
-uvicorn src.main:app --host 0.0.0.0 --port 9090
+# Alternative Python execution
+python src/main.py
 ```
 
 ### Testing
@@ -96,13 +93,13 @@ mypy src/
 
 ```bash
 # Create config from template
-cp providers.example.yaml providers.yaml
+cp config.example.yaml config.yaml
 
 # Test configuration validity
-python -c "import yaml; yaml.safe_load(open('providers.yaml'))"
+python -c "import yaml; yaml.safe_load(open('config.yaml'))"
 
-# Hot reload configuration (server must be running)
-curl -X POST http://localhost:9090/providers/reload
+# Configuration auto-reloads in development mode
+# No manual reload needed - just edit config.yaml and save
 
 # Check provider status
 curl http://localhost:9090/providers
@@ -152,7 +149,7 @@ curl -X POST http://localhost:9090/v1/messages/count_tokens \
 
 ### Configuration Patterns
 
-When working with `providers.yaml`:
+When working with `config.yaml`:
 ```yaml
 # Provider configuration supports inheritance and environment variables
 providers:

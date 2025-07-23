@@ -15,10 +15,8 @@ from dataclasses import dataclass
 from enum import Enum
 import httpx
 
-# Import OAuth manager for Claude Code Official authentication
+# Import OAuth manager for Claude Code Official authentication  
 import oauth_manager as oauth_module
-
-# Import logging utilities
 from log_utils import info, warning, error, debug, LogRecord
 
 
@@ -95,7 +93,7 @@ class Provider:
 
 
 class ProviderManager:
-    def __init__(self, config_path: str = "providers.yaml"):
+    def __init__(self, config_path: str = "config.yaml"):
         # Determine the absolute path to the config file
         if not os.path.isabs(config_path):
             # If relative path, look for it in project root (one level up from src)
