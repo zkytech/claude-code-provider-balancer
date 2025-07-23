@@ -14,6 +14,7 @@ import yaml
 import signal
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+from contextlib import asynccontextmanager
 
 import fastapi
 import httpx
@@ -360,17 +361,10 @@ dictConfig(log_config)
 _exception_handler_lock = threading.RLock()
 _exception_handler_depth = threading.local()
 
-# FastAPI app
-app = fastapi.FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
-    description="Intelligent load balancer and failover proxy for Claude Code providers",
-)
-
-
-@app.on_event("startup")
-async def startup_event():
-    """FastAPI应用启动时的初始化"""
+@asynccontextmanager
+async def lifespan(app: fastapi.FastAPI):
+    """FastAPI lifespan event handler"""
+    # Startup
     info(LogRecord(
         event="fastapi_startup_complete",
         message="FastAPI application startup complete"
@@ -390,14 +384,23 @@ async def startup_event():
             event="oauth_auto_refresh_start_failed",
             message=f"Failed to start OAuth auto-refresh: {e}"
         ))
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """FastAPI应用关闭时的清理"""
+    
+    yield
+    
+    # Shutdown
     info(LogRecord(
         event="fastapi_shutdown",
         message="FastAPI application shutting down"
     ))
+
+
+# FastAPI app
+app = fastapi.FastAPI(
+    title=settings.app_name,
+    version=settings.app_version,
+    description="Intelligent load balancer and failover proxy for Claude Code providers",
+    lifespan=lifespan,
+)
 
 
 async def make_provider_request(provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:

@@ -286,7 +286,7 @@ settings:
     # 系统密钥环服务名称
     service_name: "claude-code-balancer"
     # 是否启用access_token自动刷新(过期前5分钟自动刷新)
-    # 只有在美国IP访问时才能启用
+    # 只有在美国IP访问时才能成功
     # 代理设置
     proxy: "http://127.0.0.1:10808"
     enable_auto_refresh: true
