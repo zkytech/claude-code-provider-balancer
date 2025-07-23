@@ -83,6 +83,24 @@ global_config = load_global_config()
 _console = Console()
 
 
+def _format_duration_for_response(seconds: float) -> str:
+    """Format duration in human readable format for API responses"""
+    if seconds <= 0:
+        return "已过期"
+    elif seconds < 60:
+        return f"{int(seconds)}秒"
+    elif seconds < 3600:
+        return f"{int(seconds/60)}分钟"
+    elif seconds < 86400:
+        hours = int(seconds / 3600)
+        minutes = int((seconds % 3600) / 60)
+        return f"{hours}小时{minutes}分钟"
+    else:
+        days = int(seconds / 86400)
+        hours = int((seconds % 86400) / 3600)
+        return f"{days}天{hours}小时"
+
+
 def _create_request_summary(raw_body: dict) -> str:
     """Create a concise summary of the request for logging."""
     model = raw_body.get("model", "unknown")
@@ -1588,6 +1606,58 @@ async def remove_oauth_token(account_email: str) -> JSONResponse:
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to remove token: {str(e)}"}
+        )
+
+
+@app.post("/oauth/refresh/{account_email}", tags=["OAuth"])
+async def refresh_oauth_token(account_email: str) -> JSONResponse:
+    """Manually refresh OAuth token for a specific account"""
+    try:
+        if not oauth_manager:
+            return JSONResponse(
+                status_code=500,
+                content={"error": "OAuth manager not initialized. Please check server logs."}
+            )
+        
+        # Refresh the token for the specified account
+        refreshed_credentials, error_details = await oauth_manager.refresh_token_by_email(account_email)
+        
+        if not refreshed_credentials:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": f"Token not found or refresh failed for account: {account_email}",
+                    "details": error_details or "Account may not exist, or refresh token may be invalid/expired"
+                }
+            )
+        
+        # Calculate token expiry information
+        current_time = time.time()
+        expires_in_seconds = max(0, refreshed_credentials.expires_at - current_time)
+        expires_in_minutes = round(expires_in_seconds / 60, 1)
+        
+        return JSONResponse(content={
+            "status": "success",
+            "message": f"Token refreshed successfully for account: {account_email}",
+            "account_email": refreshed_credentials.account_email,
+            "account_id": refreshed_credentials.account_id,
+            "expires_at": refreshed_credentials.expires_at,
+            "expires_in_seconds": int(expires_in_seconds),
+            "expires_in_minutes": expires_in_minutes,
+            "expires_in_human": _format_duration_for_response(expires_in_seconds),
+            "access_token_preview": f"{refreshed_credentials.access_token[:8]}...{refreshed_credentials.access_token[-4:]}" if refreshed_credentials.access_token else None,
+            "scopes": refreshed_credentials.scopes,
+            "refreshed_at": int(time.time())
+        })
+        
+    except Exception as e:
+        error(LogRecord(
+            event="oauth_manual_refresh_error",
+            message=f"Error during manual token refresh for {account_email}: {str(e)}"
+        ))
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to refresh token: {str(e)}"}
         )
 
 

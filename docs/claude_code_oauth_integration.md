@@ -129,7 +129,14 @@ GET /oauth/status
 DELETE /oauth/tokens/{account_email}
 ```
 
-#### 4. 清除所有token
+#### 4. 手动刷新token ⚠️ 需要美国IP
+```bash
+POST /oauth/refresh/{account_email}
+```
+
+**注意**: Claude API的token刷新需要美国IP地址访问，如遇到Cloudflare拦截或403错误，请确保使用美国代理。
+
+#### 5. 清除所有token
 ```bash
 DELETE /oauth/tokens
 ```
@@ -167,9 +174,10 @@ DELETE /oauth/tokens
 ### 常见问题
 
 1. **授权码交换失败** - 检查code是否过期（10分钟有效期）
-2. **Token刷新失败** - 确认网络可访问anthropic.com
-3. **重启后丢失token** - 确认`enable_persistence: true`
-4. **Keyring访问失败** - 安装keyring库: `pip install keyring`
+2. **Token刷新失败** - 确认网络可访问anthropic.com，确保使用美国IP地址
+3. **403 Cloudflare错误** - Token刷新被Cloudflare拦截，需要美国IP地址或代理
+4. **重启后丢失token** - 确认`enable_persistence: true`
+5. **Keyring访问失败** - 安装keyring库: `pip install keyring`
 
 ### 调试日志
 

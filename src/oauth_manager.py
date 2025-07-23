@@ -603,8 +603,12 @@ class OAuthManager:
             ))
             return None
     
-    async def refresh_token(self, credentials: TokenCredentials) -> Optional[TokenCredentials]:
-        """Refresh access token using refresh token"""
+    async def refresh_token(self, credentials: TokenCredentials) -> tuple[Optional[TokenCredentials], Optional[str]]:
+        """Refresh access token using refresh token
+        
+        Returns:
+            tuple[Optional[TokenCredentials], Optional[str]]: (credentials, error_message)
+        """
         params = {
             "grant_type": "refresh_token",
             "client_id": CLIENT_ID,
@@ -646,11 +650,12 @@ class OAuthManager:
                 
                 if not response.is_success:
                     error_text = response.text
+                    error_message = f"HTTP {response.status_code}: {error_text}"
                     error(LogRecord(
                         event="oauth_refresh_failed",
-                        message=f"Token refresh failed for {credentials.account_id}: {response.status_code} - {error_text}"
+                        message=f"Token refresh failed for {credentials.account_id}: {error_message}"
                     ))
-                    return None
+                    return None, error_message
                 
                 token_data = response.json()
                 debug(LogRecord(
@@ -678,14 +683,15 @@ class OAuthManager:
                     message=f"New token expires at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(credentials.expires_at))}"
                 ))
                 
-                return credentials
+                return credentials, None
                 
         except Exception as e:
+            error_message = f"Network/Connection error: {str(e)}"
             error(LogRecord(
                 event="oauth_refresh_error",
-                message=f"Error refreshing token for {credentials.account_id}: {str(e)}"
+                message=f"Error refreshing token for {credentials.account_id}: {error_message}"
             ))
-            return None
+            return None, error_message
     
     def get_current_token(self) -> Optional[str]:
         """Get current access token using round-robin strategy"""
@@ -860,7 +866,7 @@ class OAuthManager:
                         message=f"Token for {credentials.account_id} needs refresh"
                     ))
                     
-                    refreshed = await self.refresh_token(credentials)
+                    refreshed, error_details = await self.refresh_token(credentials)
                     if not refreshed:
                         error(LogRecord(
                             event="oauth_auto_refresh_failed",
@@ -892,6 +898,59 @@ class OAuthManager:
                 ))
                 await asyncio.sleep(300)  # Wait 5 minutes before retry
     
+    async def refresh_token_by_email(self, account_email: str) -> tuple[Optional[TokenCredentials], Optional[str]]:
+        """Refresh token for a specific account by email
+        
+        Returns:
+            tuple[Optional[TokenCredentials], Optional[str]]: (credentials, error_message)
+        """
+        target_credentials = None
+        
+        # Find the credentials by account email
+        with self._lock:
+            for creds in self.token_credentials:
+                if (creds.account_email and creds.account_email.lower() == account_email.lower()) or \
+                   (creds.account_id and creds.account_id.lower() == account_email.lower()):
+                    target_credentials = creds
+                    break
+        
+        if not target_credentials:
+            error_msg = f"No token found for account email: {account_email}"
+            warning(LogRecord(
+                event="oauth_refresh_by_email_not_found",
+                message=error_msg
+            ))
+            return None, error_msg
+        
+        if not target_credentials.refresh_token:
+            error_msg = f"No refresh token available for account: {account_email}"
+            warning(LogRecord(
+                event="oauth_refresh_by_email_no_refresh_token",
+                message=error_msg
+            ))
+            return None, error_msg
+        
+        info(LogRecord(
+            event="oauth_refresh_by_email_start",
+            message=f"Starting manual token refresh for account: {account_email}"
+        ))
+        
+        # Refresh the token
+        refreshed_credentials, error_details = await self.refresh_token(target_credentials)
+        
+        if refreshed_credentials:
+            info(LogRecord(
+                event="oauth_refresh_by_email_success",
+                message=f"Successfully refreshed token for account: {account_email}"
+            ))
+            return refreshed_credentials, None
+        else:
+            error(LogRecord(
+                event="oauth_refresh_by_email_failed",
+                message=f"Failed to refresh token for account: {account_email}"
+            ))
+            return None, error_details
+
     def remove_token(self, account_email: str) -> bool:
         """Remove token by account email"""
         # First, find the task to cancel WITHOUT holding the lock

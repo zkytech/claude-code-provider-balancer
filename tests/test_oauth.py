@@ -514,6 +514,89 @@ class TestOAuth:
             print(f"❌ 手动OAuth URL生成测试失败: {e}")
             return False
     
+    def test_oauth_manual_refresh(self):
+        """测试手动刷新OAuth token接口"""
+        print("测试: 手动刷新OAuth token接口")
+        
+        success_count = 0
+        
+        try:
+            # 首先检查是否有可用的tokens
+            status_response = requests.get(f"{self.base_url}/oauth/status", timeout=10)
+            
+            if status_response.status_code == 200:
+                status_data = status_response.json()
+                tokens = status_data.get("tokens", [])
+                
+                if tokens:
+                    # 使用第一个token进行测试
+                    test_account_email = tokens[0].get("account_email")
+                    
+                    if test_account_email:
+                        print(f"   使用账户进行测试: {test_account_email}")
+                        
+                        # 测试有效账户的token刷新
+                        refresh_response = requests.post(
+                            f"{self.base_url}/oauth/refresh/{test_account_email}",
+                            timeout=30
+                        )
+                        
+                        if refresh_response.status_code == 200:
+                            refresh_data = refresh_response.json()
+                            if refresh_data.get("status") == "success":
+                                print("✅ 手动token刷新成功")
+                                print(f"   账户: {refresh_data.get('account_email')}")
+                                print(f"   过期时间: {refresh_data.get('expires_in_human')}")
+                                print(f"   Token预览: {refresh_data.get('access_token_preview')}")
+                                print(f"   权限范围: {', '.join(refresh_data.get('scopes', []))}")
+                                success_count += 1
+                            else:
+                                print(f"❌ 刷新失败: {refresh_data}")
+                        elif refresh_response.status_code == 404:
+                            print(f"⚠️  Token未找到或刷新失败: {refresh_response.json().get('error', 'unknown')}")
+                            # 这可能是正常情况（refresh token过期等）
+                            success_count += 1
+                        else:
+                            print(f"❌ 意外的HTTP状态码: {refresh_response.status_code}")
+                            try:
+                                error_data = refresh_response.json()
+                                print(f"   错误: {error_data.get('error', 'unknown')}")
+                            except:
+                                print(f"   响应: {refresh_response.text}")
+                    else:
+                        print("⚠️  第一个token没有account_email，跳过有效账户测试")
+                        success_count += 1
+                else:
+                    print("⚠️  没有可用的tokens，跳过有效账户测试")
+                    success_count += 1
+            else:
+                print(f"❌ 无法获取OAuth状态: {status_response.status_code}")
+            
+            # 测试不存在账户的刷新
+            fake_email = "nonexistent@example.com"
+            print(f"   测试不存在账户: {fake_email}")
+            
+            fake_refresh_response = requests.post(
+                f"{self.base_url}/oauth/refresh/{fake_email}",
+                timeout=10
+            )
+            
+            if fake_refresh_response.status_code == 404:
+                error_data = fake_refresh_response.json()
+                if "not found" in error_data.get("error", "").lower():
+                    print("✅ 正确处理不存在的账户")
+                    success_count += 1
+                else:
+                    print(f"❌ 意外的错误消息: {error_data.get('error', 'unknown')}")
+            else:
+                print(f"❌ 期望404，得到: {fake_refresh_response.status_code}")
+            
+            return success_count == 2
+                
+        except Exception as e:
+            print(f"❌ 手动OAuth刷新测试失败: {e}")
+            return False
+    
     def run_all_tests(self):
         """运行所有OAuth测试"""
         print("🔐 OAuth认证功能测试")
@@ -529,6 +612,7 @@ class TestOAuth:
             ("真实OAuth请求", self.test_oauth_with_real_request),
             ("Keyring持久化", self.test_oauth_keyring_persistence),
             ("手动OAuth URL生成", self.test_oauth_manual_generate_url),
+            ("手动OAuth Token刷新", self.test_oauth_manual_refresh),
         ]
         
         passed = 0

@@ -171,6 +171,16 @@ model_routes:
     - provider: "ProviderName"  
       model: "anthropic/claude-3.5-haiku"  # Map to specific model
       priority: 1
+
+# System settings for performance tuning
+settings:
+  cooldown_seconds: 90              # Provider failure cooldown period
+  timeout_seconds: 300              # Request timeout
+  log_level: "INFO"                 # Logging verbosity
+  max_cache_size: 1000              # Maximum cached responses
+  cache_ttl_seconds: 3600           # Cache time-to-live
+  enable_streaming: true            # Enable streaming responses
+  max_concurrent_requests: 100      # Maximum parallel requests
 ```
 
 ### Testing Strategy
@@ -190,3 +200,29 @@ Tests use `respx` for HTTP mocking and `pytest-asyncio` for async test support.
 - **Request Tracing**: Each request gets a unique ID for tracking through the system
 - **Provider Health**: Real-time provider status available via `/providers` endpoint
 - **Performance Metrics**: Request timing and success rates logged per provider
+
+## Important Notes for Development
+
+### Code Quality Standards
+- **Linting**: Always run `ruff check src/ tests/` before committing
+- **Formatting**: Use `ruff format src/ tests/` for consistent code style
+- **Testing**: Ensure all tests pass with `python -m pytest tests/ -v`
+- **Type Hints**: Use proper type annotations throughout the codebase
+
+### Error Handling Patterns
+- **Provider Failures**: Always implement graceful degradation
+- **Network Errors**: Use exponential backoff for retries
+- **Configuration Errors**: Fail fast with clear error messages
+- **Validation Errors**: Return structured error responses
+
+### Performance Considerations
+- **Async/Await**: Use asyncio patterns consistently
+- **Connection Pooling**: Reuse HTTP connections where possible
+- **Memory Management**: Monitor cache growth and implement TTL
+- **Request Deduplication**: Prevent duplicate expensive operations
+
+### Security Best Practices
+- **API Keys**: Never log or expose authentication credentials
+- **Input Validation**: Validate all user inputs using Pydantic models
+- **Rate Limiting**: Implement appropriate rate limiting for providers
+- **CORS**: Configure CORS settings for production deployments
