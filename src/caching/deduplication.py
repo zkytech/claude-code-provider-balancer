@@ -328,8 +328,26 @@ def complete_and_cleanup_request(signature: str, result: Any, cache_content: Opt
                     if not future.done():
                         future.set_result(result)
                     del _pending_requests[signature]
+                    debug(
+                        LogRecord(
+                            "original_request_completed",
+                            f"Original request completed and cleaned up",
+                            original_request_id,
+                            {"signature": signature[:16] + "...", "result_type": type(result).__name__}
+                        )
+                    )
+                else:
+                    debug(
+                        LogRecord(
+                            "request_cleanup_skip",
+                            f"No pending request found for signature (non-duplicate request)",
+                            None,
+                            {"signature": signature[:16] + "...", "result_type": type(result).__name__}
+                        )
+                    )
                 
                 # 处理所有等待中的duplicate requests，只响应每个original_request_id的最新请求
+                # 即使原始请求不在_pending_requests中，也要检查_duplicate_requests
                 if signature in _duplicate_requests and _duplicate_requests[signature]:
                     duplicate_list = _duplicate_requests[signature]
                     
@@ -546,26 +564,46 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                 future_to_wait = duplicate_future
                 
             elif signature in _duplicate_requests:
-                # 有其他重复请求在等待，添加到队列
-                duplicate_future = asyncio.Future()
-                current_timestamp = time.time()
-                _duplicate_requests[signature].append((duplicate_future, request_id, original_request_id, current_timestamp, is_stream))
+                # 检查是否还有活跃的duplicate requests等待
+                # 如果没有活跃的等待请求，说明原始请求已经完成，这应该是一个新请求
+                active_duplicates = [f for f, _, _, _, _ in _duplicate_requests[signature] if not f.done()]
                 
-                info(
-                    LogRecord(
-                        LogEvent.REQUEST_RECEIVED.value,
-                        f"Additional duplicate request for signature {signature[:16]}..., added to duplicate requests queue",
-                        request_id,
-                        {
-                            "signature": signature[:16] + "...",
-                            "duplicate_queue_size": len(_duplicate_requests[signature]),
-                            "is_stream": is_stream
-                        }
+                if not active_duplicates:
+                    # 没有活跃的duplicate requests，清理这个signature并当作新请求处理
+                    del _duplicate_requests[signature]
+                    info(
+                        LogRecord(
+                            LogEvent.REQUEST_RECEIVED.value,
+                            f"Found inactive duplicate queue for signature {signature[:16]}..., treating as new request",
+                            request_id,
+                            {"signature": signature[:16] + "...", "cleaned_inactive_queue": True}
+                        )
                     )
-                )
-                
-                # 等待这个duplicate request的结果
-                future_to_wait = duplicate_future
+                    # 这是新请求，创建 Future 并记录
+                    future = asyncio.Future()
+                    _pending_requests[signature] = (future, request_id)
+                    return None  # 表示这是新请求，继续处理
+                else:
+                    # 有其他重复请求在等待，添加到队列
+                    duplicate_future = asyncio.Future()
+                    current_timestamp = time.time()
+                    _duplicate_requests[signature].append((duplicate_future, request_id, original_request_id, current_timestamp, is_stream))
+                    
+                    info(
+                        LogRecord(
+                            LogEvent.REQUEST_RECEIVED.value,
+                            f"Additional duplicate request for signature {signature[:16]}..., added to duplicate requests queue",
+                            request_id,
+                            {
+                                "signature": signature[:16] + "...",
+                                "duplicate_queue_size": len(_duplicate_requests[signature]),
+                                "is_stream": is_stream
+                            }
+                        )
+                    )
+                    
+                    # 等待这个duplicate request的结果
+                    future_to_wait = duplicate_future
         else:
             # 这是新请求，创建 Future 并记录
             future = asyncio.Future()
@@ -575,7 +613,15 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
     # 在锁外等待原请求完成
     if future_to_wait:
         try:
-            result = await future_to_wait
+            # 添加超时机制防止无限等待
+            try:
+                from core.provider_manager import get_provider_manager
+                provider_manager = get_provider_manager()
+                timeout = provider_manager.get_caching_timeouts()['deduplication_timeout'] if provider_manager else 180
+            except:
+                timeout = 180  # 默认3分钟超时
+            
+            result = await asyncio.wait_for(future_to_wait, timeout=timeout)
             
             # 检查result是否是Exception对象
             if isinstance(result, Exception):
@@ -883,6 +929,41 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                     }
                 }
             )
+        except asyncio.TimeoutError:
+            # 等待原始请求超时
+            timeout_error = Exception(f"Duplicate request timed out waiting for original request (timeout: {timeout}s)")
+            info(
+                LogRecord(
+                    LogEvent.REQUEST_FAILURE.value,
+                    f"Duplicate request timed out after {timeout}s",
+                    request_id,
+                    {"original_request_id": original_request_id, "signature": signature[:16] + "...", "timeout": timeout}
+                )
+            )
+            
+            if is_stream:
+                # 返回超时错误的流式响应
+                error_response = {
+                    "type": "error",
+                    "error": {
+                        "type": "api_error", 
+                        "message": "Request timed out waiting for duplicate processing"
+                    }
+                }
+                
+                async def stream_timeout_response():
+                    formatted_error_chunk = f"event: error\ndata: {json.dumps(error_response)}\n\n"
+                    yield formatted_error_chunk
+                
+                from fastapi.responses import StreamingResponse
+                return StreamingResponse(
+                    stream_timeout_response(),
+                    media_type="text/event-stream"
+                )
+            else:
+                # 非流式请求直接抛出异常
+                raise timeout_error
+                
         except Exception as e:
             # 这里捕获的是真正的异常（比如网络错误等），不是我们设置的Exception对象
             # 对于流式duplicate requests，需要返回StreamingResponse格式的错误

@@ -655,8 +655,13 @@ async def _log_and_return_error_response(
     exc: Exception,
     request_id: str,
     status_code: int = 500,
+    signature: str = None,
 ) -> JSONResponse:
     """Log error and return formatted error response."""
+    # 统一清理signature，防止duplicate request死锁
+    if signature:
+        complete_and_cleanup_request(signature, exc, None, False, "error_cleanup")
+    
     error_type, message, _, provider_details = get_anthropic_error_details_from_exc(exc)
     
     # Add hint about detailed logs in file only for provider-related errors
@@ -767,7 +772,7 @@ async def create_message_proxy(
         if not provider_options:
             error_msg = _create_no_providers_error_message(messages_request.model, provider_name)
             return await _log_and_return_error_response(
-                request, Exception(error_msg), request_id, 404
+                request, Exception(error_msg), request_id, 404, signature
             )
         
         # Log available options
@@ -1288,8 +1293,8 @@ async def create_message_proxy(
                             continue
                         else:
                             # This was the last provider, return the health validation error
-                            complete_and_cleanup_request(signature, health_validation_error, None, False, current_provider.name)
-                            return await _log_and_return_error_response(request, health_validation_error, request_id)
+                            # complete_and_cleanup_request(signature, health_validation_error, None, False, current_provider.name)  # 由_log_and_return_error_response统一处理
+                            return await _log_and_return_error_response(request, health_validation_error, request_id, 500, signature)
                 
                 # Provider is healthy, complete the request and cleanup
                 # For non-streaming responses, cache the actual content dict instead of JSON string array
@@ -1329,8 +1334,8 @@ async def create_message_proxy(
                         if login_url:
                             # For OAuth authorization flow, don't failover and return the auth error directly
                             # The user needs to complete the OAuth flow
-                            complete_and_cleanup_request(signature, e, None, False, current_provider.name)
-                            return await _log_and_return_error_response(request, e, request_id, status_code=http_status_code)
+                            # complete_and_cleanup_request(signature, e, None, False, current_provider.name)  # 由_log_and_return_error_response统一处理
+                            return await _log_and_return_error_response(request, e, request_id, http_status_code, signature)
                 
                 # Use provider_manager to determine if we should failover
                 if provider_manager:
@@ -1451,8 +1456,8 @@ async def create_message_proxy(
                             }
                         )
                     )
-                    complete_and_cleanup_request(signature, e, None, False, current_provider.name)
-                    return await _log_and_return_error_response(request, e, request_id)
+                    # complete_and_cleanup_request(signature, e, None, False, current_provider.name)  # 由_log_and_return_error_response统一处理
+                    return await _log_and_return_error_response(request, e, request_id, 500, signature)
                 
                 # Mark current provider as failed since we are failing over
                 current_provider.mark_failure()
@@ -1496,15 +1501,18 @@ async def create_message_proxy(
         client_error_message = _create_no_providers_error_message(messages_request.model)
         client_error = Exception(client_error_message)
         
-        complete_and_cleanup_request(signature, last_exception, None, False, "unknown")
-        return await _log_and_return_error_response(request, client_error, request_id)
+        # complete_and_cleanup_request(signature, client_error, None, False, "unknown")  # 由_log_and_return_error_response统一处理
+        return await _log_and_return_error_response(request, client_error, request_id, 500, signature)
             
     except ValidationError as e:
+        # ValidationError发生在生成signature之前，无需cleanup
         return await _log_and_return_error_response(request, e, request_id, 400)
     except json.JSONDecodeError as e:
+        # JSONDecodeError发生在生成signature之前，无需cleanup
         return await _log_and_return_error_response(request, e, request_id, 400)
     except Exception as e:
-        return await _log_and_return_error_response(request, e, request_id)
+        # 通用异常可能在任何阶段发生，尝试cleanup（如果signature不存在会被安全忽略）
+        return await _log_and_return_error_response(request, e, request_id, 500, locals().get('signature'))
 
 
 @app.post("/v1/messages/count_tokens", response_model=TokenCountResponse, tags=["API"])
