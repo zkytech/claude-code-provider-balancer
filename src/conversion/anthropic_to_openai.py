@@ -165,7 +165,7 @@ def convert_anthropic_tool_choice_to_openai(
                 event=LogEvent.TOOL_CHOICE_UNSUPPORTED.value,
                 message="Anthropic tool_choice type 'any' mapped to OpenAI 'auto'. Exact behavior might differ.",
                 request_id=request_id,
-                data={"anthropic_tool_choice": anthropic_choice.dict()},
+                data={"anthropic_tool_choice": anthropic_choice.model_dump()},
             )
         )
         return "auto"
@@ -177,9 +177,9 @@ def convert_anthropic_tool_choice_to_openai(
     warning(
         LogRecord(
             event=LogEvent.TOOL_CHOICE_UNSUPPORTED.value,
-            message=f"Unsupported Anthropic tool_choice: {anthropic_choice.dict()}. Defaulting to 'auto'.",
+            message=f"Unsupported Anthropic tool_choice: {anthropic_choice.model_dump()}. Defaulting to 'auto'.",
             request_id=request_id,
-            data={"anthropic_tool_choice": anthropic_choice.dict()},
+            data={"anthropic_tool_choice": anthropic_choice.model_dump()},
         )
     )
     return "auto"

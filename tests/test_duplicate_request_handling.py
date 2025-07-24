@@ -30,7 +30,7 @@ class TestDuplicateRequestHandling:
                 "usage": {"input_tokens": 10, "output_tokens": 15}
             }
             
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(200, json=mock_response)
             )
             
@@ -67,7 +67,7 @@ class TestDuplicateRequestHandling:
                 yield b'event: content_block_delta\ndata: {"type": "content_block_delta", "delta": {"text": "Stream response"}}\n\n'
                 yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
             
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(
                     200,
                     headers={"content-type": "text/event-stream"},
@@ -143,7 +143,7 @@ class TestDuplicateRequestHandling:
                 yield b'event: content_block_delta\ndata: {"type": "content_block_delta", "delta": {"text": "Streaming response"}}\n\n'
                 yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
             
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(200, json=non_streaming_response)
             )
             
@@ -166,7 +166,7 @@ class TestDuplicateRequestHandling:
             streaming_request["stream"] = True
             
             # Update mock for streaming response
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(
                     200,
                     headers={"content-type": "text/event-stream"},
@@ -208,7 +208,7 @@ class TestDuplicateRequestHandling:
                     "usage": {"input_tokens": 10, "output_tokens": 15}
                 })
             
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 side_effect=delayed_response
             )
             
@@ -261,7 +261,7 @@ class TestDuplicateRequestHandling:
                 "usage": {"input_tokens": 10, "output_tokens": 15}
             }
             
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 side_effect=[
                     Response(200, json=response1_mock),
                     Response(200, json=response2_mock)
@@ -331,7 +331,7 @@ class TestDuplicateRequestHandling:
                 "usage": {"input_tokens": 15, "output_tokens": 20}
             }
             
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(200, json=mock_response)
             )
             
@@ -403,7 +403,7 @@ class TestDuplicateRequestHandling:
                 "usage": {"input_tokens": 25, "output_tokens": 10}
             }
             
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(200, json=mock_response)
             )
             
@@ -456,7 +456,7 @@ class TestDuplicateRequestHandling:
                 "usage": {"input_tokens": 10, "output_tokens": 15}
             }
             
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 side_effect=[
                     Response(200, json=first_response),
                     Response(200, json=second_response)
@@ -493,7 +493,7 @@ class TestDuplicateRequestHandling:
         """Test duplicate detection when provider failover occurs."""
         with respx.mock:
             # Mock first provider failure
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 side_effect=[
                     Response(500, json={"error": {"message": "Server error"}}),
                     Response(200, json={
@@ -509,7 +509,7 @@ class TestDuplicateRequestHandling:
             )
             
             # Mock secondary provider success
-            respx.post("http://localhost:9090/test-providers/anthropic/error/server_error").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(200, json={
                     "id": "msg_secondary_duplicate",
                     "type": "message",

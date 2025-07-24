@@ -17,11 +17,27 @@ class TestMultiProviderManagement:
     @pytest.mark.asyncio
     async def test_primary_provider_success(self, async_client: AsyncClient, claude_headers, test_messages_request):
         """Test successful request to primary provider."""
-        response = await async_client.post(
-            "/v1/messages",
-            json=test_messages_request,
-            headers=claude_headers
-        )
+        with respx.mock:
+            # Mock successful primary provider response
+            mock_response = {
+                "id": "msg_primary_success",
+                "type": "message", 
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Response from primary provider"}],
+                "model": "claude-3-5-sonnet-20241022",
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": 8}
+            }
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+                return_value=Response(200, json=mock_response)
+            )
+            
+            response = await async_client.post(
+                "/v1/messages",
+                json=test_messages_request,
+                headers=claude_headers
+            )
         
         assert response.status_code == 200
         data = response.json()
@@ -32,12 +48,12 @@ class TestMultiProviderManagement:
         """Test failover when primary provider fails."""
         with respx.mock:
             # Mock primary provider failure
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 side_effect=ConnectError("Primary provider connection failed")
             )
             
             # Mock secondary provider success
-            respx.post("http://localhost:9090/test-providers/anthropic/error/server_error").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(
                     200,
                     json={
@@ -68,13 +84,13 @@ class TestMultiProviderManagement:
         """Test scenario when all providers are unavailable."""
         with respx.mock:
             # Mock all providers failing
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 side_effect=ConnectError("Provider 1 connection failed")
             )
-            respx.post("http://localhost:9090/test-providers/anthropic/error/server_error").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 side_effect=ConnectError("Provider 2 connection failed")
             )
-            respx.post("http://localhost:9090/test-providers/openai/success").mock(
+            respx.post("http://localhost:9090/test-providers/openai/v1/chat/completions").mock(
                 side_effect=ConnectError("Provider 3 connection failed")
             )
             
@@ -100,12 +116,12 @@ class TestMultiProviderManagement:
                 ConnectError("Connection failed")
             ]
             
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 side_effect=failure_responses
             )
             
             # Mock secondary provider success
-            respx.post("http://localhost:9090/test-providers/anthropic/error/server_error").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(
                     200,
                     json={
@@ -136,7 +152,7 @@ class TestMultiProviderManagement:
         """Test provider recovery after cooldown period."""
         with respx.mock:
             # Initially mock provider failure
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 side_effect=ConnectError("Temporary failure")
             )
             
@@ -151,7 +167,7 @@ class TestMultiProviderManagement:
             assert response1.status_code in [200, 500, 502, 503]
             
             # Now mock provider recovery
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(
                     200,
                     json={
@@ -181,7 +197,7 @@ class TestMultiProviderManagement:
         """Test failover for streaming requests."""
         with respx.mock:
             # Mock primary provider failure for streaming
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 side_effect=ReadTimeout("Streaming timeout")
             )
             
@@ -191,7 +207,7 @@ class TestMultiProviderManagement:
                 yield b'event: content_block_delta\ndata: {"type": "content_block_delta", "delta": {"text": "Failover stream"}}\n\n'
                 yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
             
-            respx.post("http://localhost:9090/test-providers/anthropic/error/server_error").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(
                     200,
                     headers={"content-type": "text/event-stream"},
@@ -270,7 +286,7 @@ class TestMultiProviderManagement:
         
         with respx.mock:
             # Mock OpenAI-style error response
-            respx.post("http://localhost:9090/test-providers/openai/success").mock(
+            respx.post("http://localhost:9090/test-providers/openai/v1/chat/completions").mock(
                 return_value=Response(
                     400,
                     json={
@@ -321,7 +337,7 @@ class TestMultiProviderManagement:
                 })
             ] * 10
             
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 side_effect=responses
             )
             

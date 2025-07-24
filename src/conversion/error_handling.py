@@ -51,7 +51,7 @@ except ImportError:
             def dict(self):
                 return {
                     "type": self.type,
-                    "error": self.error.dict()
+                    "error": self.error.model_dump()
                 }
 
 
@@ -112,7 +112,7 @@ def format_anthropic_error_sse_event(
         error=error_detail
     )
     
-    return f"event: error\ndata: {json.dumps(error_response.dict())}\n\n"
+    return f"event: error\ndata: {json.dumps(error_response.model_dump())}\n\n"
 
 
 def build_anthropic_error_response(
@@ -137,5 +137,5 @@ def build_anthropic_error_response(
     
     return JSONResponse(
         status_code=status_code,
-        content=error_response.dict()
+        content=error_response.model_dump()
     )

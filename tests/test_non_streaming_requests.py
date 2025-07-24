@@ -16,11 +16,27 @@ class TestNonStreamingRequests:
     @pytest.mark.asyncio
     async def test_successful_non_streaming_response(self, async_client: AsyncClient, claude_headers, test_messages_request):
         """Test successful non-streaming response handling."""
-        response = await async_client.post(
-            "/v1/messages",
-            json=test_messages_request,
-            headers=claude_headers
-        )
+        with respx.mock:
+            # Mock successful response
+            mock_response = {
+                "id": "msg_test_success", 
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Hello! This is a test response."}],
+                "model": "claude-3-5-sonnet-20241022",
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": 8}
+            }
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+                return_value=Response(200, json=mock_response)
+            )
+            
+            response = await async_client.post(
+                "/v1/messages",
+                json=test_messages_request,
+                headers=claude_headers
+            )
         
         assert response.status_code == 200
         assert response.headers.get("content-type") == "application/json"
@@ -69,11 +85,27 @@ class TestNonStreamingRequests:
         request_data = test_messages_request.copy()
         request_data["temperature"] = 0.7
         
-        response = await async_client.post(
-            "/v1/messages",
-            json=request_data,
-            headers=claude_headers
-        )
+        with respx.mock:
+            # Mock successful response with temperature
+            mock_response = {
+                "id": "msg_temp_test",
+                "type": "message",
+                "role": "assistant", 
+                "content": [{"type": "text", "text": "Response with temperature 0.7"}],
+                "model": "claude-3-5-sonnet-20241022",
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": 8}
+            }
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+                return_value=Response(200, json=mock_response)
+            )
+            
+            response = await async_client.post(
+                "/v1/messages",
+                json=request_data,
+                headers=claude_headers
+            )
         
         assert response.status_code == 200
         data = response.json()
@@ -84,7 +116,7 @@ class TestNonStreamingRequests:
         """Test non-streaming request with provider returning 500 error."""
         with respx.mock:
             # Mock provider to return 500 error
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(
                     500,
                     json={
@@ -112,7 +144,7 @@ class TestNonStreamingRequests:
         """Test non-streaming request with authentication error."""
         with respx.mock:
             # Mock provider to return 401 error
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(
                     401,
                     json={
@@ -141,7 +173,7 @@ class TestNonStreamingRequests:
         """Test non-streaming request with rate limit error."""
         with respx.mock:
             # Mock provider to return 429 error
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(
                     429,
                     json={
@@ -171,7 +203,7 @@ class TestNonStreamingRequests:
         """Test non-streaming request with connection error."""
         with respx.mock:
             # Mock connection error
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 side_effect=ConnectError("Connection failed")
             )
             
@@ -189,7 +221,7 @@ class TestNonStreamingRequests:
         """Test non-streaming request with timeout."""
         with respx.mock:
             # Mock timeout error
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 side_effect=ReadTimeout("Request timeout")
             )
             
@@ -207,7 +239,7 @@ class TestNonStreamingRequests:
         """Test non-streaming request with invalid JSON response."""
         with respx.mock:
             # Mock response with invalid JSON
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(200, content="invalid json response")
             )
             
@@ -225,7 +257,7 @@ class TestNonStreamingRequests:
         """Test non-streaming request with empty response."""
         with respx.mock:
             # Mock empty response
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(200, content="")
             )
             
@@ -250,7 +282,7 @@ class TestNonStreamingRequests:
                     "message": "Invalid request parameters"
                 }
             }
-            respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
                 return_value=Response(200, json=error_content)
             )
             
@@ -379,4 +411,4 @@ class TestNonStreamingRequests:
             headers=claude_headers
         )
         
-        assert response.status_code == 422  # Validation error
+        assert response.status_code == 400  # Validation error

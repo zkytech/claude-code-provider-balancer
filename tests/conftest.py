@@ -118,9 +118,9 @@ def mock_provider_manager(test_config: Dict[str, Any]) -> ProviderManager:
 
 
 @pytest.fixture(autouse=True) 
-def setup_test_environment(monkeypatch):
-    """Set up test environment for testing."""
-    # We'll use respx to mock all HTTP requests, so we don't need to modify the actual provider manager
+def setup_test_environment():
+    """Set up test environment."""
+    # Now that async_client creates its own test app, we don't need complex patching
     pass
 
 
@@ -132,9 +132,51 @@ def test_client() -> TestClient:
 
 @pytest_asyncio.fixture
 async def async_client() -> AsyncGenerator[AsyncClient, None]:
-    """Create an async test client for the FastAPI app."""
+    """Create an async test client with test configuration."""
     from httpx import ASGITransport
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    import os
+    from pathlib import Path
+    
+    # Get the project root directory
+    current_dir = Path(__file__).parent
+    project_root = current_dir.parent
+    test_config_path = project_root / "config-test.yaml"
+    
+    # Create test provider manager
+    from core.provider_manager import ProviderManager
+    test_provider_manager = ProviderManager(config_path=str(test_config_path))
+    
+    # Create test app with test provider manager
+    from main import Settings
+    import fastapi
+    
+    # Create test settings (we can reuse the existing settings for now)
+    test_settings = Settings()
+    test_settings.load_from_provider_config()
+    
+    # Create test FastAPI app
+    test_app = fastapi.FastAPI(
+        title="Test " + test_settings.app_name,
+        version=test_settings.app_version,
+        description="Test application with mock providers",
+    )
+    
+    # Register routers with test provider manager
+    from routers.messages import create_messages_router
+    from routers.oauth import create_oauth_router
+    from routers.health import create_health_router
+    from routers.management import create_management_router
+    
+    test_app.include_router(create_messages_router(test_provider_manager, test_settings))
+    test_app.include_router(create_oauth_router(test_provider_manager))
+    test_app.include_router(create_health_router(test_provider_manager, test_settings.app_name, test_settings.app_version))
+    test_app.include_router(create_management_router())
+    
+    # Set up test deduplication
+    from caching.deduplication import set_provider_manager
+    set_provider_manager(test_provider_manager)
+    
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
         yield client
 
 

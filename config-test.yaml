@@ -1,0 +1,157 @@
+# Claude Code Provider Balancer - Test Configuration
+# 专用于测试的配置文件，使用 mock providers
+
+providers:
+  # 测试用的成功提供者 - base_url 不包含完整路径，因为 anthropic 类型会自动添加 /v1/messages
+  - name: "Test Success Provider"
+    type: "anthropic"
+    base_url: "http://localhost:9090/test-providers/anthropic"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  # 测试用的错误提供者
+  - name: "Test Error Provider"
+    type: "anthropic"
+    base_url: "http://localhost:9090/test-providers/anthropic"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  # 测试用的 OpenAI 提供者
+  - name: "Test OpenAI Provider"
+    type: "openai"
+    base_url: "http://localhost:9090/test-providers/openai"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+# 测试用的模型路由配置
+model_routes:
+  # Claude 模型路由 - 用于测试 sonnet/haiku/opus
+  "*claude*":
+    - provider: "Test Success Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Test Error Provider"
+      model: "passthrough"
+      priority: 2
+
+  "*sonnet*":
+    - provider: "Test Success Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Test Error Provider"
+      model: "passthrough"
+      priority: 2
+
+  "*haiku*":
+    - provider: "Test Success Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Test Error Provider"
+      model: "passthrough"
+      priority: 2
+
+  "*opus*":
+    - provider: "Test Success Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Test Error Provider"
+      model: "passthrough"
+      priority: 2
+
+  # OpenAI 模型路由
+  "*gpt*":
+    - provider: "Test OpenAI Provider"
+      model: "passthrough"
+      priority: 1
+
+  # 测试专用路由
+  "*test*":
+    - provider: "Test Success Provider"
+      model: "success"
+      priority: 1
+
+# 测试用的全局设置
+settings:
+  # 模型选择策略
+  selection_strategy: "priority"
+
+  # 超时配置 - 测试用较短超时
+  timeouts:
+    non_streaming:
+      connect_timeout: 10
+      read_timeout: 30
+      pool_timeout: 10
+    streaming:
+      connect_timeout: 10
+      read_timeout: 60
+      pool_timeout: 10
+    caching:
+      deduplication_timeout: 60
+
+  # 故障恢复设置 - 测试用较短时间
+  idle_recovery_interval: 30
+  failure_cooldown: 30
+
+  # 错误处理策略
+  failover_error_types:
+    - "connection_error"
+    - "timeout_error"
+    - "internal_server_error"
+    - "bad_gateway"
+    - "service_unavailable"
+    - "gateway_timeout"
+    - "too_many_requests"
+    - "rate_limit_exceeded"
+    - "invalid_request_error"
+    - "unknown_error"
+    - "not_found_error"
+
+  failover_http_codes:
+    - 404
+    - 500
+    - 502
+    - 503
+    - 504
+    - 429
+
+  # 日志设置
+  log_level: "DEBUG"
+  log_color: true
+  log_file_path: "logs/test-logs.jsonl"
+
+  # 服务器配置
+  host: "127.0.0.1"
+  port: 9090
+
+  # 应用信息
+  app_name: "ClaudeCode Providers Balancer - Test Mode"
+  app_version: "0.1.1-test"
+
+  # OAuth配置 - 测试用禁用
+  oauth:
+    enable_persistence: false
+    enable_auto_refresh: false
+
+  # 请求去重设置
+  deduplication:
+    enabled: true
+    include_max_tokens_in_signature: false
+
+  # 测试设置 - 禁用延迟
+  testing:
+    simulate_delay: false
+    delay_seconds: 0
+
+  # 测试提供商设置
+  test_providers:
+    enabled: true
+    default_delay_ms: 50
+    error_delay_ms: 25
+    streaming_chunks: 3
+    chunk_delay_ms: 100
+    random_error_rate: 0.0  # 测试时不要随机错误
+    success_response_text: "Test response from mock provider"
+    streaming_response_text: "Streaming test response from mock provider"

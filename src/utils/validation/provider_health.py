@@ -141,8 +141,15 @@ def validate_provider_health(response_content: Union[List[str], str, Dict[str, A
         try:
             json_content = json.loads(full_content.strip())
             if isinstance(json_content, dict) and "error" in json_content:
-                error_type = json_content.get("error", "unknown")
-                error_message = json_content.get("message", "")
+                # Handle nested error structure (Anthropic format)
+                error_obj = json_content.get("error", {})
+                if isinstance(error_obj, dict):
+                    error_type = error_obj.get("type", "unknown")
+                    error_message = error_obj.get("message", "")
+                else:
+                    # Fallback for simple error format
+                    error_type = str(error_obj)
+                    error_message = json_content.get("message", "")
                 
                 # 检查特定错误类型是否在failover规则中
                 failover_matches = [
