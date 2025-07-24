@@ -4,7 +4,8 @@ import asyncio
 import json
 import pytest
 import respx
-from httpx import AsyncClient, ConnectError, ReadTimeout, Response
+import httpx
+from httpx import AsyncClient, ConnectError, Response
 from unittest.mock import patch, AsyncMock
 
 from conftest import (
@@ -114,12 +115,13 @@ class TestStreamingRequests:
             assert response.status_code in [500, 502, 503]
 
     @pytest.mark.asyncio
-    async def test_streaming_timeout_error(self, async_client: AsyncClient, claude_headers, test_streaming_request):
-        """Test streaming request with timeout."""
+    async def test_streaming_connection_timeout(self, async_client: AsyncClient, claude_headers, test_streaming_request):
+        """Test streaming request with connection timeout."""
+        
         with respx.mock:
-            # Mock timeout error
+            # Mock connection timeout - use side_effect to trigger actual httpx timeout
             respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
-                side_effect=ReadTimeout("Request timeout")
+                side_effect=httpx.ConnectTimeout("Connection timed out")
             )
             
             response = await async_client.post(
@@ -128,8 +130,67 @@ class TestStreamingRequests:
                 headers=claude_headers
             )
             
-            # Should handle timeout gracefully
-            assert response.status_code in [504, 500]
+            # Should handle connection timeout gracefully - returns 500 after trying all providers
+            assert response.status_code == 500
+            error_data = response.json()
+            assert "error" in error_data
+            # Should indicate all providers failed
+            assert "All configured providers" in error_data["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_streaming_read_timeout(self, async_client: AsyncClient, claude_headers, test_streaming_request):
+        """Test streaming request with read timeout during data streaming."""
+        
+        with respx.mock:
+            # Mock read timeout during streaming - use side_effect to trigger actual httpx timeout
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+                side_effect=httpx.ReadTimeout("Read timed out")
+            )
+            
+            response = await async_client.post(
+                "/v1/messages",
+                json=test_streaming_request,  
+                headers=claude_headers
+            )
+            
+            # Should handle read timeout gracefully - returns 500 after trying all providers
+            assert response.status_code == 500
+            error_data = response.json()
+            assert "error" in error_data
+            # Should indicate all providers failed
+            assert "All configured providers" in error_data["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_balancer_timeout_handling_and_provider_failover(self, async_client: AsyncClient, claude_headers, test_streaming_request):
+        """Test that balancer properly handles timeouts and attempts provider failover."""
+        
+        with respx.mock:
+            # Mock different timeout scenarios for different providers
+            # First provider (Test Success Provider) - connection timeout
+            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+                side_effect=httpx.ConnectTimeout("First provider connection timeout")
+            )
+            
+            # The balancer will try to failover to the second provider (Test Error Provider)
+            # which is also mocked to fail, so we should get a comprehensive error
+            
+            response = await async_client.post(
+                "/v1/messages",
+                json=test_streaming_request,
+                headers=claude_headers
+            )
+            
+            # Should return 500 after all providers fail with timeouts
+            assert response.status_code == 500
+            error_data = response.json()
+            assert "error" in error_data
+            
+            # Should indicate that all providers failed
+            error_msg = error_data["error"]["message"]
+            assert "All configured providers" in error_msg
+            
+            # Verify the error type is correctly classified
+            assert "api_error" in error_data["error"]["type"] or "timeout" in error_msg.lower()
 
     @pytest.mark.asyncio
     async def test_streaming_200_with_error_content(self, async_client: AsyncClient, claude_headers, test_streaming_request):
