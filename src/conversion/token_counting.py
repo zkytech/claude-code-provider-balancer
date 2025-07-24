@@ -47,10 +47,10 @@ except ImportError:
                 self.content = content
 
 try:
-    from log_utils import warning, debug, LogRecord, LogEvent
+    from utils.logging import warning, debug, LogRecord, LogEvent
 except ImportError:
     try:
-        from log_utils.handlers import warning, debug, LogRecord, LogEvent
+        from utils.logging.handlers import warning, debug, LogRecord, LogEvent
     except ImportError:
         # Fallback implementations
         warning = debug = lambda *args, **kwargs: None
@@ -88,7 +88,7 @@ def get_token_encoder(
                 )
             except Exception as e_cl:
                 try:
-                    from log_utils.handlers import critical
+                    from utils.logging.handlers import critical
                     critical(
                         LogRecord(
                             event=LogEvent.TOKEN_ENCODER_LOAD_FAILED.value,

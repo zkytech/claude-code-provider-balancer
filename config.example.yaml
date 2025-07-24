@@ -167,58 +167,14 @@ settings:
       read_timeout: 120
       # 连接池超时（秒）
       pool_timeout: 30
-      # 流数据块间隔超时（秒）- 两个数据块之间的最大等待时间
-      chunk_timeout: 30
-      # 首次响应超时（秒）- 等待第一个数据块的时间
-      first_chunk_timeout: 30
-      # 流处理超时（秒）- 处理每个数据块的最大时间
-      processing_timeout: 10
 
     # 缓存相关超时配置
     caching:
       # 请求去重等待超时（秒）
-      deduplication_timeout: 300
-      # 缓存操作超时（秒）
-      cache_operation_timeout: 5
-
-    # 提供商健康检查超时配置
-    health_check:
-      # 健康检查请求超时（秒）
-      timeout: 10
-      # 健康检查连接超时（秒）
-      connect_timeout: 5
-
+      deduplication_timeout: 180
 
   # 智能恢复设置
   idle_recovery_interval: 300  # 空闲多长时间（秒）后才恢复失败的provider（默认5分钟）
-
-  # 客户端断开检测设置
-  client_disconnect_watchdog:
-    # 是否启用客户端断开检测
-    enabled: true
-    
-    # 检测方法配置
-    detection_methods:
-      # 连接状态检测 - 最准确，推荐启用
-      connection_state:
-        enabled: true
-        check_interval: 20  # 每20秒检查一次连接状态
-
-      # yield异常捕获 - 在数据传输时检测断开
-      yield_exception:
-        enabled: true
-      
-      # 心跳检测 - 在长时间无数据时主动测试连接
-      heartbeat:
-        enabled: true
-        interval: 60  # 60秒无数据输出时发送心跳
-        comment: ": heartbeat"  # 心跳内容（SSE注释格式）
-      
-      # 超时检测 - 作为兜底机制，延长超时时间避免误报
-      timeout_fallback:
-        enabled: true
-        yield_start_timeout: 120  # 等待第一次yield开始的超时时间（秒）
-        yield_stuck_timeout: 300  # yield长时间卡住的超时时间（秒），作为最后防线
 
   # 错误处理策略
   # 只有在以下错误类型时才会尝试failover到其他provider

@@ -12,7 +12,7 @@ The system follows a modular, layered architecture with clear separation of conc
 
 ### Request Flow
 1. **Request Reception** (`src/main.py`) - FastAPI endpoints receive and validate requests
-2. **Request Deduplication** (`src/caching/`) - Check for duplicate requests and handle caching
+2. **Request Deduplication** (`src/deduplication/`) - Check for duplicate requests and handle caching
 3. **Provider Selection** (`src/provider_manager.py`) - Select healthy provider based on routing rules
 4. **Format Conversion** (`src/conversion/`) - Convert between Anthropic and OpenAI formats as needed
 5. **Provider Communication** - Send request to selected provider with proper authentication
@@ -25,14 +25,18 @@ The system follows a modular, layered architecture with clear separation of conc
 - **`src/provider_manager.py`** - Provider health monitoring, selection logic, and configuration management
 - **`src/models/`** - Pydantic models for request/response validation (content blocks, messages, tools, errors)
 - **`src/conversion/`** - Bidirectional format conversion between Anthropic and OpenAI APIs
-- **`src/caching/`** - Request deduplication and response caching system
+- **`src/deduplication/`** - Request deduplication and response caching system
+- **`src/oauth_manager.py`** - OAuth 2.0 authentication management for Claude Official
+- **`src/streaming/`** - Streaming response handling with parallel broadcasting
+- **`src/validation/`** - Provider health validation system
 - **`src/log_utils/`** - Structured logging with colored console output and JSON formatting
 
 ### Configuration System
 
 The system uses `config.yaml` for configuration with hot-reload capability:
-- **Provider definitions** with auth types (`api_key`, `auth_token`) and endpoints
-- **Model routing rules** with priority-based selection and passthrough support
+- **Provider definitions** with auth types (`api_key`, `auth_token`, `oauth`) and endpoints
+- **Model routing rules** with priority-based selection and passthrough support  
+- **OAuth configuration** for Claude Official integration with auto-refresh
 - **System settings** for timeouts, cooldowns, and logging levels
 
 ### Key Design Patterns
@@ -70,6 +74,7 @@ python tests/test_stream_nonstream.py      # Streaming functionality
 python tests/test_caching_deduplication.py # Request deduplication
 python tests/test_error_handling.py        # Error handling
 python tests/test_passthrough.py           # Passthrough model routing
+python tests/test_oauth.py                 # OAuth authentication flow
 python tests/test_log_colors.py           # Logging and colors
 
 # Run a single test function
@@ -103,6 +108,11 @@ python -c "import yaml; yaml.safe_load(open('config.yaml'))"
 
 # Check provider status
 curl http://localhost:9090/providers
+
+# OAuth endpoints for Claude Official integration
+curl http://localhost:9090/oauth/status
+curl "http://localhost:9090/oauth/generate-url?client_id=YOUR_CLIENT_ID"
+curl -X POST http://localhost:9090/oauth/exchange-code -d '{"code":"auth_code"}'
 ```
 
 ### Development Testing
@@ -132,10 +142,10 @@ curl -X POST http://localhost:9090/v1/messages/count_tokens \
 ### Provider Management (`src/provider_manager.py`)
 - **Health Monitoring**: Tracks provider availability with configurable cooldown periods (default 90s)
 - **Selection Strategies**: Priority-based (default), round-robin, and random selection
-- **Authentication Handling**: Supports both `api_key` (X-API-Key header) and `auth_token` (Authorization Bearer) methods
+- **Authentication Handling**: Supports `api_key` (X-API-Key header), `auth_token` (Authorization Bearer), and `oauth` methods
 - **Model Routing**: Pattern-based routing with support for passthrough mode (`model: "passthrough"`)
 
-### Request Deduplication (`src/caching/`)
+### Request Deduplication (`src/deduplication/`)
 - **Signature Generation**: Creates content-based hashes for request identification
 - **Cache Management**: In-memory caching with TTL and quality validation
 - **Concurrent Handling**: Thread-safe duplicate request handling with request pooling
@@ -156,7 +166,7 @@ providers:
   - name: "Provider Name"
     type: "anthropic" | "openai"    # Determines format conversion
     base_url: "https://api.example.com"
-    auth_type: "api_key" | "auth_token"
+    auth_type: "api_key" | "auth_token" | "oauth"
     auth_value: "key" | "passthrough" | "${ENV_VAR}"
     proxy: "http://proxy:port"       # Optional proxy support
     enabled: true | false
@@ -181,6 +191,10 @@ settings:
   cache_ttl_seconds: 3600           # Cache time-to-live
   enable_streaming: true            # Enable streaming responses
   max_concurrent_requests: 100      # Maximum parallel requests
+  oauth:                            # OAuth configuration section
+    enable_persistence: true        # Persist tokens to disk
+    enable_auto_refresh: true       # Auto-refresh expired tokens
+    token_file: "oauth_tokens.json" # Token storage file
 ```
 
 ### Testing Strategy
@@ -191,6 +205,7 @@ The test suite focuses on integration testing with mock providers:
 - **`test_caching_deduplication.py`**: Tests request deduplication and caching
 - **`test_error_handling.py`**: Validates error propagation and formatting
 - **`test_passthrough.py`**: Tests model name passthrough functionality
+- **`test_oauth.py`**: Tests OAuth 2.0 authentication flow and token management
 
 Tests use `respx` for HTTP mocking and `pytest-asyncio` for async test support.
 

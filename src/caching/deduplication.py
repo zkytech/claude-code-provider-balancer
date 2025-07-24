@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from log_utils.handlers import info
+from utils.logging.handlers import info
 
 # Global references - set by main application
 _provider_manager = None
@@ -57,10 +57,10 @@ def cleanup_stuck_requests(force_cleanup_all: bool = False):
     except ImportError:
         provider_manager = None
     try:
-        from log_utils.handlers import warning, LogRecord
+        from utils.logging.handlers import warning, LogRecord
     except ImportError:
         try:
-            from log_utils import warning, LogRecord
+            from utils.logging import warning, LogRecord
         except ImportError:
             warning = lambda x: None
             LogRecord = dict
@@ -169,10 +169,10 @@ async def simulate_testing_delay(request_body: Dict[str, Any], request_id: str):
     except ImportError:
         provider_manager = None
     try:
-        from log_utils.handlers import info, LogRecord
+        from utils.logging.handlers import info, LogRecord
     except ImportError:
         try:
-            from log_utils import info, LogRecord
+            from utils.logging import info, LogRecord
         except ImportError:
             info = lambda x: None
             LogRecord = dict
@@ -272,10 +272,10 @@ def generate_request_signature(data: Dict[str, Any]) -> str:
 
     # 添加调试日志
     try:
-        from log_utils.handlers import debug, LogRecord
+        from utils.logging.handlers import debug, LogRecord
     except ImportError:
         try:
-            from log_utils import debug, LogRecord
+            from utils.logging import debug, LogRecord
         except ImportError:
             debug = lambda x: None
             LogRecord = dict
@@ -306,10 +306,10 @@ def cleanup_completed_request(signature: str):
 def complete_and_cleanup_request(signature: str, result: Any, cache_content: Optional[Union[Dict[str, Any], List[str]]] = None, is_streaming: bool = False, provider_name: Optional[str] = None):
     """完成请求并清理去重状态"""
     try:
-        from log_utils.handlers import debug, info, error, LogRecord
+        from utils.logging.handlers import debug, info, error, LogRecord
     except ImportError:
         try:
-            from log_utils import debug, info, error, LogRecord
+            from utils.logging import debug, info, error, LogRecord
         except ImportError:
             debug = info = error = lambda x: None
             LogRecord = dict
@@ -496,10 +496,10 @@ def complete_and_cleanup_request(signature: str, result: Any, cache_content: Opt
 async def handle_duplicate_request(signature: str, request_id: str, is_stream: bool = False, request_data: Dict[str, Any] = None) -> Optional[Any]:
     """处理重复请求，如果是重复请求则等待原请求完成"""
     try:
-        from log_utils.handlers import info, warning, LogRecord, LogEvent
+        from utils.logging.handlers import info, warning, LogRecord, LogEvent
     except ImportError:
         try:
-            from log_utils import info, warning, LogRecord, LogEvent
+            from utils.logging import info, warning, LogRecord, LogEvent
         except ImportError:
             info = warning = lambda x: None
             LogRecord = dict
@@ -662,7 +662,7 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                     # 流式请求：直接返回缓存的内容（无论是成功还是错误，甚至是空内容）
                     # 添加调试信息
                     try:
-                        from log_utils.handlers import info, LogRecord
+                        from utils.logging.handlers import info, LogRecord
                         info(
                             LogRecord(
                                 "stream_cached_content_debug",
@@ -818,7 +818,7 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                 else:
                     # 如果result不是预期的格式，记录调试信息并返回错误
                     try:
-                        from log_utils.handlers import warning, LogRecord
+                        from utils.logging.handlers import warning, LogRecord
                         warning(
                             LogRecord(
                                 "unexpected_result_format",
@@ -991,7 +991,7 @@ def extract_content_from_sse_chunks(sse_chunks: List[str]) -> Dict[str, Any]:
     
     # 记录最终提取结果
     try:
-        from log_utils.handlers import debug, LogRecord
+        from utils.logging.handlers import debug, LogRecord
         debug(
             LogRecord(
                 event="sse_extraction_complete",

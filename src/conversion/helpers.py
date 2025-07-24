@@ -4,10 +4,10 @@ import json
 from typing import Any, Dict, List, Optional, Union
 
 try:
-    from log_utils import warning, LogRecord, LogEvent
+    from utils.logging import warning, LogRecord, LogEvent
 except ImportError:
     try:
-        from log_utils.handlers import warning, LogRecord, LogEvent
+        from utils.logging.handlers import warning, LogRecord, LogEvent
     except ImportError:
         # Fallback implementations
         warning = lambda *args, **kwargs: None

@@ -23,7 +23,7 @@ except ImportError:
     KEYRING_AVAILABLE = False
     # Import will be available after this block
 
-from log_utils import info, warning, error, debug, LogRecord
+from utils import info, warning, error, debug, LogRecord
 
 # Warn about missing keyring if needed
 if not KEYRING_AVAILABLE:

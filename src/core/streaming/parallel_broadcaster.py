@@ -6,7 +6,7 @@ Handles client disconnections gracefully through exception-based detection.
 import asyncio
 from typing import List, AsyncGenerator, Tuple, Optional
 from fastapi import Request
-from log_utils import debug, info, error, LogRecord
+from utils.logging import debug, info, error, LogRecord
 
 
 class ClientStream:

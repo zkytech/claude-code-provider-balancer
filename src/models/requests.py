@@ -46,7 +46,7 @@ class MessagesRequest(BaseModel):
                 pass
                 
             try:
-                from log_utils import warning, LogRecord, LogEvent
+                from utils.logging import warning, LogRecord, LogEvent
                 warning(
                     LogRecord(
                         event=LogEvent.PARAMETER_UNSUPPORTED.value,
@@ -57,7 +57,7 @@ class MessagesRequest(BaseModel):
                 )
             except ImportError:
                 try:
-                    from log_utils.handlers import warning, LogRecord, LogEvent
+                    from utils.logging.handlers import warning, LogRecord, LogEvent
                     warning(
                         LogRecord(
                             event=LogEvent.PARAMETER_UNSUPPORTED.value,

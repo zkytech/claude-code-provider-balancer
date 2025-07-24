@@ -16,8 +16,8 @@ from enum import Enum
 import httpx
 
 # Import OAuth manager for Claude Code Official authentication  
-import oauth_manager as oauth_module
-from log_utils import info, warning, error, debug, LogRecord
+from oauth import oauth_manager as oauth_module
+from utils import info, warning, error, debug, LogRecord
 
 
 class ProviderType(str, Enum):
@@ -96,9 +96,9 @@ class ProviderManager:
     def __init__(self, config_path: str = "config.yaml"):
         # Determine the absolute path to the config file
         if not os.path.isabs(config_path):
-            # If relative path, look for it in project root (one level up from src)
+            # If relative path, look for it in project root (two levels up from src/core)
             current_dir = Path(__file__).parent
-            project_root = current_dir.parent
+            project_root = current_dir.parent.parent
             config_path = project_root / config_path
         
         self.config_path = Path(config_path)
@@ -323,12 +323,6 @@ class ProviderManager:
         """Get failure cooldown time from settings"""
         return self.settings.get('failure_cooldown', 60)
     
-    def get_request_timeout(self) -> int:
-        """Get request timeout from settings (非流式请求)"""
-        timeouts = self.settings.get('timeouts', {})
-        non_streaming = timeouts.get('non_streaming', {})
-        return non_streaming.get('read_timeout', 60)
-    
     def get_non_streaming_timeouts(self) -> Dict[str, int]:
         """获取非流式请求超时配置"""
         timeouts = self.settings.get('timeouts', {})
@@ -346,10 +340,7 @@ class ProviderManager:
         return {
             'connect_timeout': streaming.get('connect_timeout', 30),
             'read_timeout': streaming.get('read_timeout', 120),
-            'pool_timeout': streaming.get('pool_timeout', 30),
-            'chunk_timeout': streaming.get('chunk_timeout', 30),
-            'first_chunk_timeout': streaming.get('first_chunk_timeout', 30),
-            'processing_timeout': streaming.get('processing_timeout', 10)
+            'pool_timeout': streaming.get('pool_timeout', 30)
         }
     
     def get_timeouts_for_request(self, is_streaming: bool) -> Dict[str, int]:
@@ -364,26 +355,7 @@ class ProviderManager:
         timeouts = self.settings.get('timeouts', {})
         caching = timeouts.get('caching', {})
         return {
-            'deduplication_timeout': caching.get('deduplication_timeout', 300),
-            'cache_operation_timeout': caching.get('cache_operation_timeout', 5)
-        }
-    
-    def get_client_disconnect_timeouts(self) -> Dict[str, int]:
-        """获取客户端断开检测超时配置"""
-        timeouts = self.settings.get('timeouts', {})
-        client_disconnect = timeouts.get('client_disconnect', {})
-        return {
-            'check_interval': client_disconnect.get('check_interval', 5),
-            'first_chunk_wait_timeout': client_disconnect.get('first_chunk_wait_timeout', 30)
-        }
-    
-    def get_health_check_timeouts(self) -> Dict[str, int]:
-        """获取健康检查超时配置"""
-        timeouts = self.settings.get('timeouts', {})
-        health_check = timeouts.get('health_check', {})
-        return {
-            'timeout': health_check.get('timeout', 10),
-            'connect_timeout': health_check.get('connect_timeout', 5)
+            'deduplication_timeout': caching.get('deduplication_timeout', 300)
         }
     
     def get_healthy_providers(self) -> List[Provider]:

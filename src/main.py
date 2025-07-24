@@ -35,9 +35,9 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-from provider_manager import ProviderManager, Provider, ProviderType
-from oauth_manager import oauth_manager, init_oauth_manager, start_oauth_auto_refresh
-from log_utils import (
+from core.provider_manager import ProviderManager, Provider, ProviderType
+from oauth import oauth_manager, init_oauth_manager, start_oauth_auto_refresh
+from utils import (
     LogRecord, LogEvent, LogError,
     ColoredConsoleFormatter, JSONFormatter, ConsoleJSONFormatter,
     init_logger, debug, info, warning, error, critical
@@ -46,19 +46,19 @@ from models import (
     MessagesRequest, TokenCountRequest, TokenCountResponse,
     MessagesResponse, AnthropicErrorResponse
 )
-from deduplication import (
+from caching import (
     generate_request_signature, handle_duplicate_request,
     cleanup_stuck_requests, simulate_testing_delay,
     complete_and_cleanup_request, extract_content_from_sse_chunks
 )
-from streaming import validate_response_quality
+from utils.validation import validate_provider_health
 from conversion import (
     get_token_encoder, count_tokens_for_anthropic_request,
     convert_anthropic_to_openai_messages, convert_anthropic_tools_to_openai,
     convert_anthropic_tool_choice_to_openai, convert_openai_to_anthropic_response,
     get_anthropic_error_details_from_exc, build_anthropic_error_response
 )
-from streaming import (
+from core.streaming import (
     create_broadcaster, 
     register_broadcaster, 
     unregister_broadcaster, 
@@ -144,7 +144,7 @@ def _initialize_oauth_manager(provider_manager_instance: ProviderManager, is_rel
     """
     try:
         # Check if OAuth manager already exists with tokens before calling init
-        from oauth_manager import oauth_manager
+        from oauth import oauth_manager
         had_existing_tokens = oauth_manager and oauth_manager.token_credentials
         
         result_manager = init_oauth_manager(provider_manager_instance.settings)
@@ -286,7 +286,7 @@ try:
     _initialize_oauth_manager(provider_manager, is_reload=False)
     
     # Set provider manager reference for deduplication module
-    from deduplication.core import set_provider_manager
+    from caching.deduplication import set_provider_manager
     set_provider_manager(provider_manager)
     
 except Exception as e:
@@ -297,7 +297,7 @@ except Exception as e:
     settings = Settings()
     
     # Still set the provider manager reference (even if None)
-    from deduplication.core import set_provider_manager
+    from caching.deduplication import set_provider_manager
     set_provider_manager(provider_manager)
 
 
@@ -319,7 +319,7 @@ log_config = {
             "()": JSONFormatter,
         },
         "uvicorn_access": {
-            "()": "log_utils.formatters.UvicornAccessFormatter",
+            "()": "utils.logging.formatters.UvicornAccessFormatter",
         },
     },
     "handlers": {
@@ -464,7 +464,7 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
                 
                 # Log complete error details to file (not console)
                 debug_info = create_debug_request_info(url, headers, data)
-                from log_utils.handlers import error_file_only
+                from utils.logging.handlers import error_file_only
                 error_file_only(
                     LogRecord(
                         event="provider_http_error_details",
@@ -480,7 +480,17 @@ async def make_provider_request(provider: Provider, endpoint: str, data: Dict[st
                     )
                 )
                 
-                response.raise_for_status()
+                # Create custom exception with status code for failover handling
+                from httpx import HTTPStatusError
+                request_obj = httpx.Request("POST", url)
+                http_error = HTTPStatusError(
+                    f"HTTP {response.status_code} from provider {provider.name}",
+                    request=request_obj,
+                    response=response
+                )
+                # Add status code as attribute for error handling
+                http_error.status_code = response.status_code
+                raise http_error
             
             # Parse response content
             response_data = response.json()
@@ -827,6 +837,19 @@ async def create_message_proxy(
                     if current_provider.type == ProviderType.ANTHROPIC:
                         # For Anthropic providers, response is an httpx.Response object
                         if hasattr(response, 'aiter_text'):
+                            # Check for HTTP error status codes before starting stream
+                            if response.status_code >= 400:
+                                # Create HTTP error with status code for failover handling
+                                from httpx import HTTPStatusError
+                                provider_url = provider_manager.get_request_url(current_provider, "v1/messages")
+                                request_obj = httpx.Request("POST", provider_url)
+                                http_error = HTTPStatusError(
+                                    f"HTTP {response.status_code} from provider {current_provider.name}",
+                                    request=request_obj,
+                                    response=response
+                                )
+                                http_error.status_code = response.status_code
+                                raise http_error
                             # Collect chunks for caching while streaming
                             collected_chunks = []
                             
@@ -839,21 +862,6 @@ async def create_message_proxy(
                                     
                                     # Register broadcaster for duplicate request handling
                                     register_broadcaster(signature, broadcaster)
-                                    
-                                    # Check if response is an error before trying to iterate
-                                    if response.status_code >= 400:
-                                        debug(
-                                            LogRecord(
-                                                "provider_error_response",
-                                                f"Provider returned error status {response.status_code}",
-                                                request_id,
-                                                {
-                                                    "provider": current_provider.name,
-                                                    "status_code": response.status_code
-                                                }
-                                            )
-                                        )
-                                        return
                                     
                                     # Create provider stream from response
                                     async def provider_stream():
@@ -897,24 +905,64 @@ async def create_message_proxy(
                                     if broadcaster:
                                         unregister_broadcaster(signature)
                                     
-                                    # Complete and cleanup request with collected chunks
-                                    complete_and_cleanup_request(signature, collected_chunks, collected_chunks, True, current_provider.name)
+                                    # Check provider health based on collected chunks
+                                    failover_config = {}
+                                    if provider_manager:
+                                        failover_config = {
+                                            'failover_error_types': provider_manager.settings.get('failover_error_types', []),
+                                            'failover_http_codes': provider_manager.settings.get('failover_http_codes', [])
+                                        }
                                     
-                                    # Log request completion for consistency with non-streaming requests
-                                    info(
-                                        LogRecord(
-                                            event=LogEvent.REQUEST_COMPLETED.value,
-                                            message=f"Streaming request completed: {current_provider.name}",
-                                            request_id=request_id,
-                                            data={
-                                                "provider": current_provider.name,
-                                                "model": target_model,
-                                                "stream": True,
-                                                "chunks_count": len(collected_chunks),
-                                                "attempt": attempt + 1,
-                                            }
-                                        )
+                                    is_unhealthy, error_type = validate_provider_health(
+                                        collected_chunks, 
+                                        current_provider.name, 
+                                        request_id,
+                                        None,  # No HTTP status for successful stream
+                                        failover_config.get('failover_error_types', []),
+                                        failover_config.get('failover_http_codes', [])
                                     )
+                                    
+                                    if is_unhealthy:
+                                        # Provider is unhealthy, mark as failed but cannot failover for stream
+                                        current_provider.mark_failure()
+                                        
+                                        warning(
+                                            LogRecord(
+                                                "provider_unhealthy_stream_anthropic",
+                                                f"Anthropic provider {current_provider.name} marked unhealthy due to stream content, cannot failover",
+                                                request_id,
+                                                {
+                                                    "provider": current_provider.name,
+                                                    "error_type": error_type,
+                                                    "can_failover": False,
+                                                    "action": "marked_unhealthy_only"
+                                                }
+                                            )
+                                        )
+                                        
+                                        # Cannot failover for streaming, but still complete the request
+                                        health_validation_error = Exception(f"Anthropic stream provider health validation failed: {error_type}")
+                                        complete_and_cleanup_request(signature, health_validation_error, None, True, current_provider.name)
+                                    else:
+                                        # Provider is healthy, complete the request with collected chunks
+                                        complete_and_cleanup_request(signature, collected_chunks, collected_chunks, True, current_provider.name)
+                                        
+                                        # Log request completion for consistency with non-streaming requests
+                                        info(
+                                            LogRecord(
+                                                event=LogEvent.REQUEST_COMPLETED.value,
+                                                message=f"Anthropic streaming request completed: {current_provider.name}",
+                                                request_id=request_id,
+                                                data={
+                                                    "provider": current_provider.name,
+                                                    "model": target_model,
+                                                    "stream": True,
+                                                    "provider_type": "anthropic",
+                                                    "chunks_count": len(collected_chunks),
+                                                    "attempt": attempt + 1,
+                                                }
+                                            )
+                                        )
                             
                             return StreamingResponse(
                                 stream_anthropic_response(),
@@ -958,184 +1006,208 @@ async def create_message_proxy(
                         collected_chunks = []
                         
                         async def stream_openai_response():
-                            message_id = str(uuid.uuid4())
-                            first_chunk = True
-                            client_disconnected = False
-                            
+                            """OpenAI streaming using parallel broadcaster"""
+                            broadcaster = None
                             try:
-                                async for chunk in response:
-                                    # Check if client is still connected before processing each chunk
-                                    if await request.is_disconnected():
-                                        info(
+                                # Create parallel broadcaster for handling multiple clients
+                                broadcaster = create_broadcaster(request, request_id, current_provider.name)
+                                
+                                # Register broadcaster for duplicate request handling
+                                register_broadcaster(signature, broadcaster)
+                                
+                                # Create provider stream from OpenAI response
+                                async def provider_stream():
+                                    message_id = str(uuid.uuid4())
+                                    first_chunk = True
+                                    
+                                    try:
+                                            async for chunk in response:
+                                                chunk_data = chunk.model_dump() if hasattr(chunk, 'model_dump') else chunk
+                                                
+                                                # Convert OpenAI streaming format to Anthropic format
+                                                if chunk_data.get("choices") and len(chunk_data["choices"]) > 0:
+                                                    choice = chunk_data["choices"][0]
+                                                    delta = choice.get("delta", {})
+                                                    
+                                                    if first_chunk and delta.get("role") == "assistant":
+                                                        # Send message_start event
+                                                        message_start = {
+                                                            "type": "message_start",
+                                                            "message": {
+                                                                "id": message_id,
+                                                                "type": "message",
+                                                                "role": "assistant",
+                                                                "content": [],
+                                                                "model": chunk_data.get("model", target_model),
+                                                                "stop_reason": None,
+                                                                "stop_sequence": None,
+                                                                "usage": {"input_tokens": 0, "output_tokens": 0}
+                                                            }
+                                                        }
+                                                        formatted_chunk = f"event: message_start\ndata: {json.dumps(message_start)}\n\n"
+                                                        collected_chunks.append(formatted_chunk)
+                                                        yield formatted_chunk
+                                                        
+                                                        # Send content_block_start event
+                                                        content_block_start = {
+                                                            "type": "content_block_start",
+                                                            "index": 0,
+                                                            "content_block": {"type": "text", "text": ""}
+                                                        }
+                                                        formatted_chunk = f"event: content_block_start\ndata: {json.dumps(content_block_start)}\n\n"
+                                                        collected_chunks.append(formatted_chunk)
+                                                        yield formatted_chunk
+                                                        first_chunk = False
+                                                    
+                                                    # Handle content deltas
+                                                    if "content" in delta and delta["content"]:
+                                                        content_delta = {
+                                                            "type": "content_block_delta",
+                                                            "index": 0,
+                                                            "delta": {
+                                                                "type": "text_delta",
+                                                                "text": delta["content"]
+                                                            }
+                                                        }
+                                                        formatted_chunk = f"event: content_block_delta\ndata: {json.dumps(content_delta)}\n\n"
+                                                        collected_chunks.append(formatted_chunk)
+                                                        yield formatted_chunk
+                                                    
+                                                    # Handle finish_reason
+                                                    if choice.get("finish_reason"):
+                                                        # Send content_block_stop event
+                                                        content_block_stop = {
+                                                            "type": "content_block_stop",
+                                                            "index": 0
+                                                        }
+                                                        formatted_chunk = f"event: content_block_stop\ndata: {json.dumps(content_block_stop)}\n\n"
+                                                        collected_chunks.append(formatted_chunk)
+                                                        yield formatted_chunk
+                                                        
+                                                        # Send message_delta with stop_reason
+                                                        message_delta = {
+                                                            "type": "message_delta",
+                                                            "delta": {
+                                                                "stop_reason": choice["finish_reason"],
+                                                                "stop_sequence": None
+                                                            }
+                                                        }
+                                                        
+                                                        # Add usage info if available
+                                                        if chunk_data.get("usage"):
+                                                            message_delta["usage"] = chunk_data["usage"]
+                                                        
+                                                        formatted_chunk = f"event: message_delta\ndata: {json.dumps(message_delta)}\n\n"
+                                                        collected_chunks.append(formatted_chunk)
+                                                        yield formatted_chunk
+                                                        
+                                                        # Send message_stop event
+                                                        message_stop = {"type": "message_stop"}
+                                                        formatted_chunk = f"event: message_stop\ndata: {json.dumps(message_stop)}\n\n"
+                                                        collected_chunks.append(formatted_chunk)
+                                                        yield formatted_chunk
+                                                        
+                                                        break
+                                    except Exception as e:
+                                        error(
                                             LogRecord(
-                                                "client_disconnected_detected",
-                                                "Client disconnected during OpenAI streaming, stopping response",
+                                                "provider_stream_error",
+                                                f"Error in OpenAI provider stream: {type(e).__name__}: {e}",
                                                 request_id,
                                                 {
                                                     "provider": current_provider.name,
-                                                    "chunks_sent": len(collected_chunks),
-                                                    "detection_method": "is_disconnected"
+                                                    "error": str(e),
+                                                    "chunks_processed": len(collected_chunks)
                                                 }
                                             )
                                         )
-                                        client_disconnected = True
-                                        break
-                                    
-                                    chunk_data = chunk.model_dump() if hasattr(chunk, 'model_dump') else chunk
-                                    
-                                    # Convert OpenAI streaming format to Anthropic format
-                                    if chunk_data.get("choices") and len(chunk_data["choices"]) > 0:
-                                        choice = chunk_data["choices"][0]
-                                        delta = choice.get("delta", {})
-                                        
-                                        if first_chunk and delta.get("role") == "assistant":
-                                            # Send message_start event
-                                            message_start = {
-                                                "type": "message_start",
-                                                "message": {
-                                                    "id": message_id,
-                                                    "type": "message",
-                                                    "role": "assistant",
-                                                    "content": [],
-                                                    "model": chunk_data.get("model", target_model),
-                                                    "stop_reason": None,
-                                                    "stop_sequence": None,
-                                                    "usage": {"input_tokens": 0, "output_tokens": 0}
-                                                }
-                                            }
-                                            formatted_chunk = f"event: message_start\ndata: {json.dumps(message_start)}\n\n"
-                                            collected_chunks.append(formatted_chunk)
-                                            yield formatted_chunk
-                                            
-                                            # Send content_block_start event
-                                            content_block_start = {
-                                                "type": "content_block_start",
-                                                "index": 0,
-                                                "content_block": {"type": "text", "text": ""}
-                                            }
-                                            formatted_chunk = f"event: content_block_start\ndata: {json.dumps(content_block_start)}\n\n"
-                                            collected_chunks.append(formatted_chunk)
-                                            yield formatted_chunk
-                                            first_chunk = False
-                                        
-                                        # Handle content deltas
-                                        if "content" in delta and delta["content"]:
-                                            content_delta = {
-                                                "type": "content_block_delta",
-                                                "index": 0,
-                                                "delta": {
-                                                    "type": "text_delta",
-                                                    "text": delta["content"]
-                                                }
-                                            }
-                                            formatted_chunk = f"event: content_block_delta\ndata: {json.dumps(content_delta)}\n\n"
-                                            collected_chunks.append(formatted_chunk)
-                                            yield formatted_chunk
-                                        
-                                        # Handle finish_reason
-                                        if choice.get("finish_reason"):
-                                            # Send content_block_stop event
-                                            content_block_stop = {
-                                                "type": "content_block_stop",
-                                                "index": 0
-                                            }
-                                            formatted_chunk = f"event: content_block_stop\ndata: {json.dumps(content_block_stop)}\n\n"
-                                            collected_chunks.append(formatted_chunk)
-                                            yield formatted_chunk
-                                            
-                                            # Send message_delta with stop_reason
-                                            message_delta = {
-                                                "type": "message_delta",
-                                                "delta": {
-                                                    "stop_reason": choice["finish_reason"],
-                                                    "stop_sequence": None
-                                                }
-                                            }
-                                            
-                                            # Add usage info if available
-                                            if chunk_data.get("usage"):
-                                                message_delta["usage"] = chunk_data["usage"]
-                                            
-                                            formatted_chunk = f"event: message_delta\ndata: {json.dumps(message_delta)}\n\n"
-                                            collected_chunks.append(formatted_chunk)
-                                            yield formatted_chunk
-                                            
-                                            # Send message_stop event
-                                            message_stop = {"type": "message_stop"}
-                                            formatted_chunk = f"event: message_stop\ndata: {json.dumps(message_stop)}\n\n"
-                                            collected_chunks.append(formatted_chunk)
-                                            yield formatted_chunk
-                                            
-                                            break
-                                            
-                            except (ConnectionError, ConnectionResetError, BrokenPipeError) as e:
-                                # Client connection was broken during streaming
-                                info(
+                                        raise
+                                
+                                # Use broadcaster to handle parallel streaming with disconnect detection
+                                async for chunk in broadcaster.stream_from_provider(provider_stream()):
+                                    yield chunk
+                                
+                            except Exception as e:
+                                error(
                                     LogRecord(
-                                        "client_connection_error",
-                                        f"Client connection error during OpenAI streaming: {str(e)}",
+                                        "stream_openai_error",
+                                        f"Error in OpenAI streaming: {type(e).__name__}: {e}",
                                         request_id,
                                         {
                                             "provider": current_provider.name,
-                                            "chunks_sent": len(collected_chunks),
-                                            "error_type": type(e).__name__
+                                            "error": str(e)
                                         }
                                     )
                                 )
-                                client_disconnected = True
-                                
-                            except asyncio.CancelledError:
-                                # Request was cancelled (usually due to client disconnect)
-                                info(
-                                    LogRecord(
-                                        "streaming_cancelled",
-                                        "Streaming request was cancelled from OpenAI provider",
-                                        request_id,
-                                        {
-                                            "provider": current_provider.name,
-                                            "chunks_sent": len(collected_chunks)
-                                        }
-                                    )
-                                )
-                                client_disconnected = True
-                                raise  # Re-raise CancelledError
-                                
+                                raise
                             finally:
-                                # Handle cleanup based on client connection status
-                                if client_disconnected:
-                                    # Client disconnected, mark request as cancelled
-                                    cancellation_error = Exception("Client disconnected during streaming")
-                                    complete_and_cleanup_request(signature, cancellation_error, None, True, current_provider.name)
+                                # Unregister broadcaster when streaming completes
+                                if broadcaster:
+                                    unregister_broadcaster(signature)
+                                
+                                # Check provider health based on collected chunks
+                                failover_config = {}
+                                if provider_manager:
+                                    failover_config = {
+                                        'failover_error_types': provider_manager.settings.get('failover_error_types', []),
+                                        'failover_http_codes': provider_manager.settings.get('failover_http_codes', [])
+                                    }
+                                
+                                is_unhealthy, error_type = validate_provider_health(
+                                    collected_chunks, 
+                                    current_provider.name, 
+                                    request_id,
+                                    None,  # No HTTP status for successful stream
+                                    failover_config.get('failover_error_types', []),
+                                    failover_config.get('failover_http_codes', [])
+                                )
+                                
+                                if is_unhealthy:
+                                    # Provider is unhealthy, mark as failed but cannot failover for stream
+                                    current_provider.mark_failure()
+                                    
+                                    warning(
+                                        LogRecord(
+                                            "provider_unhealthy_stream_openai",
+                                            f"OpenAI provider {current_provider.name} marked unhealthy due to stream content, cannot failover",
+                                            request_id,
+                                            {
+                                                "provider": current_provider.name,
+                                                "error_type": error_type,
+                                                "can_failover": False,
+                                                "action": "marked_unhealthy_only"
+                                            }
+                                        )
+                                    )
+                                    
+                                    # Cannot failover for streaming, but still complete the request
+                                    health_validation_error = Exception(f"OpenAI stream provider health validation failed: {error_type}")
+                                    complete_and_cleanup_request(signature, health_validation_error, None, True, current_provider.name)
                                 else:
-                                    # Stream completed normally, validate quality and cache if successful
-                                    # For OpenAI streaming, HTTP errors typically raise exceptions before we reach here
-                                    if validate_response_quality(collected_chunks, current_provider.name, request_id, None):
-                                        try:
-                                            response_content = extract_content_from_sse_chunks(collected_chunks)
-                                            complete_and_cleanup_request(signature, response_content, collected_chunks, True, current_provider.name)
-                                            
-                                            # Log request completion
-                                            info(
-                                                LogRecord(
-                                                    event=LogEvent.REQUEST_COMPLETED.value,
-                                                    message=f"OpenAI streaming request completed: {current_provider.name}",
-                                                    request_id=request_id,
-                                                    data={
-                                                        "provider": current_provider.name,
-                                                        "model": target_model,
-                                                        "stream": True,
-                                                        "provider_type": "openai",
-                                                        "chunks_count": len(collected_chunks),
-                                                        "attempt": attempt + 1,
-                                                    }
-                                                )
+                                    # Provider is healthy, cache the response
+                                    try:
+                                        response_content = extract_content_from_sse_chunks(collected_chunks)
+                                        complete_and_cleanup_request(signature, response_content, collected_chunks, True, current_provider.name)
+                                        
+                                        # Log request completion
+                                        info(
+                                            LogRecord(
+                                                event=LogEvent.REQUEST_COMPLETED.value,
+                                                message=f"OpenAI streaming request completed: {current_provider.name}",
+                                                request_id=request_id,
+                                                data={
+                                                    "provider": current_provider.name,
+                                                    "model": target_model,
+                                                    "stream": True,
+                                                    "provider_type": "openai",
+                                                    "chunks_count": len(collected_chunks),
+                                                    "attempt": attempt + 1,
+                                                }
                                             )
-                                        except Exception as e:
-                                            extraction_error = Exception(f"Response content extraction failed: {str(e)}")
-                                            complete_and_cleanup_request(signature, extraction_error, None, True, current_provider.name)
-                                    else:
-                                        quality_error = Exception("Response quality validation failed")
-                                        complete_and_cleanup_request(signature, quality_error, None, True, current_provider.name)
+                                        )
+                                    except Exception as e:
+                                        extraction_error = Exception(f"Response content extraction failed: {str(e)}")
+                                        complete_and_cleanup_request(signature, extraction_error, None, True, current_provider.name)
                         
                         # Return immediately without waiting for stream completion
                         # The caching will happen asynchronously in the stream generator
@@ -1161,7 +1233,59 @@ async def create_message_proxy(
                         # Convert non-serializable response objects to dict
                         response_content = {"error": {"type": "serialization_error", "message": "Unable to serialize response"}}
                 
-                # Complete the request and cleanup
+                # Check provider health based on response content
+                if provider_manager:
+                    failover_config = {
+                        'failover_error_types': provider_manager.settings.get('failover_error_types', []),
+                        'failover_http_codes': provider_manager.settings.get('failover_http_codes', [])
+                    }
+                    
+                    # Get HTTP status code from response
+                    response_status_code = None
+                    if hasattr(response, 'status_code'):
+                        response_status_code = response.status_code
+                    
+                    is_unhealthy, error_type = validate_provider_health(
+                        response_content, 
+                        current_provider.name, 
+                        request_id,
+                        response_status_code,
+                        failover_config['failover_error_types'],
+                        failover_config['failover_http_codes']
+                    )
+                    
+                    if is_unhealthy:
+                        # Provider is unhealthy, mark as failed and attempt failover
+                        current_provider.mark_failure()
+                        
+                        warning(
+                            LogRecord(
+                                "provider_unhealthy_non_stream",
+                                f"Provider {current_provider.name} marked unhealthy due to response content, attempting failover",
+                                request_id,
+                                {
+                                    "provider": current_provider.name,
+                                    "error_type": error_type,
+                                    "attempt": attempt + 1,
+                                    "remaining_attempts": max_attempts - attempt - 1,
+                                    "can_failover": True
+                                }
+                            )
+                        )
+                        
+                        # Create a health validation exception to trigger failover
+                        health_validation_error = Exception(f"Provider health validation failed: {error_type}")
+                        
+                        # If we have more providers to try, continue to next iteration
+                        if attempt < max_attempts - 1:
+                            last_exception = health_validation_error
+                            continue
+                        else:
+                            # This was the last provider, return the health validation error
+                            complete_and_cleanup_request(signature, health_validation_error, None, False, current_provider.name)
+                            return await _log_and_return_error_response(request, health_validation_error, request_id)
+                
+                # Provider is healthy, complete the request and cleanup
                 # For non-streaming responses, cache the actual content dict instead of JSON string array
                 complete_and_cleanup_request(signature, response_content, response_content, False, current_provider.name)
                 
@@ -1245,7 +1369,7 @@ async def create_message_proxy(
                         pass
                 
                 # Log detailed error information to file only (not console)
-                from log_utils.handlers import error_file_only
+                from utils.logging.handlers import error_file_only
                 error_file_only(
                     LogRecord(
                         event="provider_request_failed_details",
@@ -1362,8 +1486,12 @@ async def create_message_proxy(
             exc=last_exception
         )
         
+        # Create a generic error message for the client that doesn't expose provider details
+        client_error_message = f"Service temporarily unavailable. All configured providers for model '{messages_request.model}' are currently unable to process requests."
+        client_error = Exception(client_error_message)
+        
         complete_and_cleanup_request(signature, last_exception, None, False, "unknown")
-        return await _log_and_return_error_response(request, last_exception or Exception("All providers failed"), request_id)
+        return await _log_and_return_error_response(request, client_error, request_id)
             
     except ValidationError as e:
         return await _log_and_return_error_response(request, e, request_id, 400)
@@ -1809,7 +1937,7 @@ async def logging_middleware(request: Request, call_next):
 # Set function reference for deduplication module after all functions are defined
 def _init_deduplication_references():
     """Initialize function references for deduplication module"""
-    from deduplication.core import set_make_anthropic_request
+    from caching.deduplication import set_make_anthropic_request
     set_make_anthropic_request(make_anthropic_request)
 
 # Call initialization

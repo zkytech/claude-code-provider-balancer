@@ -50,10 +50,10 @@ except ImportError:
             pass
 
 try:
-    from log_utils import warning, error, LogRecord, LogEvent
+    from utils.logging import warning, error, LogRecord, LogEvent
 except ImportError:
     try:
-        from log_utils.handlers import warning, error, LogRecord, LogEvent
+        from utils.logging.handlers import warning, error, LogRecord, LogEvent
     except ImportError:
         # Fallback implementations
         warning = error = lambda *args, **kwargs: None

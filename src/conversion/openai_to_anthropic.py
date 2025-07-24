@@ -6,7 +6,7 @@ from typing import Optional
 import openai
 
 from models import MessagesResponse, ContentBlockText, ContentBlockToolUse, Usage
-from log_utils import warning, error, LogRecord, LogEvent
+from utils.logging import warning, error, LogRecord, LogEvent
 
 
 def convert_openai_to_anthropic_response(

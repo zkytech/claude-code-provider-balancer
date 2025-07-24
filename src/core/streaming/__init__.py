@@ -11,7 +11,7 @@ from .parallel_broadcaster import (
     handle_duplicate_stream_request,
     has_active_broadcaster
 )
-from .validation import validate_response_quality
+# Removed validation import - now using src/validation/provider_health.py
 
 __all__ = [
     "ParallelBroadcaster", 
@@ -20,6 +20,5 @@ __all__ = [
     "register_broadcaster",
     "unregister_broadcaster", 
     "handle_duplicate_stream_request",
-    "has_active_broadcaster",
-    "validate_response_quality"
+    "has_active_broadcaster"
 ]

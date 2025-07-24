@@ -1,6 +1,14 @@
-"""Request deduplication functionality."""
+"""
+Request caching and deduplication system.
 
-from .core import (
+This module provides functionality for:
+- Generating request signatures for deduplication
+- Handling duplicate requests
+- Caching responses
+- Managing concurrent request processing
+"""
+
+from .deduplication import (
     cleanup_stuck_requests,
     generate_request_signature,
     cleanup_completed_request,
