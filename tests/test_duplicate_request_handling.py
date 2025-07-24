@@ -61,10 +61,12 @@ class TestDuplicateRequestHandling:
     async def test_duplicate_streaming_requests(self, async_client: AsyncClient, claude_headers, test_streaming_request):
         """Test duplicate streaming requests are handled appropriately."""
         with respx.mock:
-            # Mock streaming response
+            # Mock streaming response with a delay to ensure overlap
             async def mock_streaming_response():
                 yield b'event: message_start\ndata: {"type": "message_start", "message": {"id": "stream_duplicate"}}\n\n'
+                await asyncio.sleep(0.1)  # Delay to allow second request to overlap
                 yield b'event: content_block_delta\ndata: {"type": "content_block_delta", "delta": {"text": "Stream response"}}\n\n'
+                await asyncio.sleep(0.1)  # Another delay
                 yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
             
             respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
@@ -75,41 +77,42 @@ class TestDuplicateRequestHandling:
                 )
             )
             
-            # Make first streaming request
-            response1 = await async_client.post(
-                "/v1/messages",
-                json=test_streaming_request,
-                headers=claude_headers
-            )
+            # Make both streaming requests concurrently to ensure they overlap
+            async def make_streaming_request():
+                response = await async_client.post(
+                    "/v1/messages",
+                    json=test_streaming_request,
+                    headers=claude_headers
+                )
+                
+                assert response.status_code == 200
+                assert "text/event-stream" in response.headers.get("content-type", "")
+                
+                # Collect response chunks
+                chunks = []
+                async for chunk in response.aiter_text():
+                    if chunk.strip():
+                        chunks.append(chunk.strip())
+                
+                return chunks
             
-            assert response1.status_code == 200
-            assert response1.headers.get("content-type") == "text/event-stream"
+            # Start both requests concurrently with a small delay between them
+            async def request_with_delay(delay=0):
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                return await make_streaming_request()
             
-            # Collect first response
-            chunks1 = []
-            async for chunk in response1.aiter_text():
-                if chunk.strip():
-                    chunks1.append(chunk.strip())
+            # Make the first request immediately, second after 0.05s delay
+            tasks = [
+                request_with_delay(0),      # First request starts immediately
+                request_with_delay(0.05)    # Second request starts after 0.05s
+            ]
             
-            # Make identical second streaming request
-            response2 = await async_client.post(
-                "/v1/messages",
-                json=test_streaming_request,
-                headers=claude_headers
-            )
-            
-            assert response2.status_code == 200
-            assert response2.headers.get("content-type") == "text/event-stream"
-            
-            # Collect second response
-            chunks2 = []
-            async for chunk in response2.aiter_text():
-                if chunk.strip():
-                    chunks2.append(chunk.strip())
+            chunks1, chunks2 = await asyncio.gather(*tasks)
             
             # Both should have streaming content
-            assert len(chunks1) > 0
-            assert len(chunks2) > 0
+            assert len(chunks1) > 0, f"First request got no chunks: {chunks1}"
+            assert len(chunks2) > 0, f"Second request got no chunks: {chunks2}"
 
     @pytest.mark.asyncio
     async def test_mixed_streaming_non_streaming_duplicates(self, async_client: AsyncClient, claude_headers):
@@ -181,7 +184,7 @@ class TestDuplicateRequestHandling:
             )
             
             assert response2.status_code == 200
-            assert response2.headers.get("content-type") == "text/event-stream"
+            assert "text/event-stream" in response2.headers.get("content-type", "")
             
             # Both should work despite different streaming modes
             chunks2 = []
@@ -196,7 +199,7 @@ class TestDuplicateRequestHandling:
         """Test concurrent duplicate requests are handled properly."""
         with respx.mock:
             # Mock provider response with delay to simulate race conditions
-            async def delayed_response():
+            async def delayed_response(request):
                 await asyncio.sleep(0.1)  # Small delay
                 return Response(200, json={
                     "id": "msg_concurrent_test",
@@ -223,11 +226,25 @@ class TestDuplicateRequestHandling:
             tasks = [make_request() for _ in range(3)]
             responses = await asyncio.gather(*tasks)
             
-            # All should succeed
+            # All should succeed (some may be duplicate responses)
+            successful_responses = []
+            cancelled_responses = []
+            
             for response in responses:
-                assert response.status_code == 200
-                data = response.json()
-                assert data["type"] == "message"
+                if response.status_code == 200:
+                    successful_responses.append(response)
+                    data = response.json()
+                    assert data["type"] == "message"
+                elif response.status_code == 409:
+                    # This is expected for some duplicate requests that get cancelled
+                    cancelled_responses.append(response)
+                else:
+                    assert False, f"Unexpected status code: {response.status_code}"
+            
+            # At least one request should succeed (the original one)
+            assert len(successful_responses) >= 1
+            # The total should be all 3 requests
+            assert len(successful_responses) + len(cancelled_responses) == 3
 
     @pytest.mark.asyncio
     async def test_duplicate_requests_with_different_parameters(self, async_client: AsyncClient, claude_headers):

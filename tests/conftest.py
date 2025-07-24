@@ -146,6 +146,10 @@ async def async_client() -> AsyncGenerator[AsyncClient, None]:
     from core.provider_manager import ProviderManager
     test_provider_manager = ProviderManager(config_path=str(test_config_path))
     
+    # Store provider manager globally for access by other fixtures
+    global _test_provider_manager
+    _test_provider_manager = test_provider_manager
+    
     # Create test app with test provider manager
     from main import Settings
     import fastapi
@@ -178,6 +182,16 @@ async def async_client() -> AsyncGenerator[AsyncClient, None]:
     
     async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
         yield client
+
+
+# Global variable to store test provider manager
+_test_provider_manager = None
+
+
+@pytest.fixture
+def provider_manager():
+    """Get access to the test provider manager."""
+    return _test_provider_manager
 
 
 @pytest.fixture
