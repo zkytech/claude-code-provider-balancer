@@ -43,6 +43,7 @@ from routers.messages import create_messages_router
 from routers.oauth import create_oauth_router
 from routers.health import create_health_router
 from routers.management import create_management_router
+from routers.test_providers import create_test_providers_router
 
 load_dotenv()
 
@@ -292,6 +293,7 @@ app.include_router(create_messages_router(provider_manager, settings))
 app.include_router(create_oauth_router(provider_manager))
 app.include_router(create_health_router(provider_manager, settings.app_name, settings.app_version))
 app.include_router(create_management_router())
+app.include_router(create_test_providers_router(global_config))
 
 
 # Exception handlers

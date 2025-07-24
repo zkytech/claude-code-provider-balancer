@@ -1,295 +1,176 @@
-# 测试套件文档
+# Claude Provider Balancer Tests
 
-这个目录包含了 Claude Code Provider Balancer 的完整测试套件，涵盖了系统的所有核心功能和边缘情况。
+This directory contains comprehensive tests for the Claude Provider Balancer application using pytest.
 
-## 🧪 测试文件概览
+## Test Structure
 
-### 核心功能测试
-1. **`test_stream_nonstream.py`** - 流式和非流式请求测试
-   - 基础响应格式验证
-   - 流式数据块处理
-   - 早期终止处理
-   - 内容一致性验证
+### Test Files
 
-2. **`test_provider_routing.py`** - 服务商路由和选择测试
-   - 服务商状态检查
-   - 模型路由规则
-   - 负载均衡行为
-   - 优先级处理
+- **`conftest.py`** - Pytest configuration and shared fixtures
+- **`test_streaming_requests.py`** - Tests for streaming request handling
+- **`test_non_streaming_requests.py`** - Tests for non-streaming request handling  
+- **`test_multi_provider_management.py`** - Tests for provider management and failover
+- **`test_mixed_provider_responses.py`** - Tests for mixed OpenAI/Anthropic provider responses
+- **`test_duplicate_request_handling.py`** - Tests for request deduplication and caching
+- **`run_tests.py`** - Test runner script
+- **`test_utils.py`** - Common test utilities
 
-3. **`test_provider_failover.py`** - 故障转移和恢复测试
-   - 健康监控机制
-   - 自动故障转移
-   - 冷却时间处理
-   - 并发故障恢复
+### Test Categories
 
-4. **`test_timeout_retry.py`** - 超时和重试机制测试
-   - 各种超时场景
-   - 重试逻辑验证
-   - 并发超时处理
-   - 部分响应处理
+#### 1. Streaming Request Tests (`test_streaming_requests.py`)
+- ✅ Successful streaming responses
+- ✅ Provider errors (500, 401, 429, etc.)  
+- ✅ Connection errors and timeouts
+- ✅ 200 responses with error content
+- ✅ 200 responses with empty content
+- ✅ Malformed JSON responses
+- ✅ Partial response interruptions
+- ✅ Content type mismatches
 
-5. **`test_client_disconnect.py`** - 客户端断开连接测试
-   - 早期断开处理
-   - 中途断开恢复
-   - 并发断开处理
-   - 服务器稳定性
+#### 2. Non-Streaming Request Tests (`test_non_streaming_requests.py`)
+- ✅ Successful non-streaming responses
+- ✅ System message handling
+- ✅ Temperature and parameter handling
+- ✅ Various error responses (500, 401, 429, etc.)
+- ✅ Connection and timeout errors
+- ✅ Invalid JSON and empty responses
+- ✅ OpenAI format requests
+- ✅ Tool usage requests
+- ✅ Invalid models and missing fields
 
-6. **`test_caching_deduplication.py`** - 缓存和去重功能测试
-   - 请求去重逻辑
-   - 缓存命中率
-   - 缓存过期处理
-   - 并发缓存行为
+#### 3. Multi-Provider Management Tests (`test_multi_provider_management.py`)
+- ✅ Primary provider success
+- ✅ Failover to secondary providers
+- ✅ All providers unavailable scenarios
+- ✅ Provider cooldown mechanisms
+- ✅ Provider recovery after cooldown
+- ✅ Streaming failover
+- ✅ Health check integration
+- ✅ Priority ordering
+- ✅ Type-specific error handling
+- ✅ Concurrent request handling
+- ✅ Model routing
 
-### OAuth认证测试
-7. **`test_oauth.py`** - OAuth 2.0 认证功能测试
-   - OAuth状态端点验证
-   - 真实OAuth授权流程触发
-   - 授权码交换测试
-   - Token管理端点测试
-   - Memory模式认证验证
-   - 使用OAuth token的真实请求测试
+#### 4. Mixed Provider Response Tests (`test_mixed_provider_responses.py`)
+- ✅ Anthropic requests to OpenAI providers
+- ✅ OpenAI requests to Anthropic providers
+- ✅ Streaming format conversions
+- ✅ Error format conversions
+- ✅ Tool use format conversions
+- ✅ Mixed provider failover
+- ✅ Token counting across providers
+- ✅ System message handling
 
-### 扩展功能测试  
-8. **`test_error_handling.py`** - 错误处理和边缘情况测试
-   - 无效请求处理
-   - 特殊字符支持
-   - 极端参数值
-   - 系统健壮性
+#### 5. Duplicate Request Handling Tests (`test_duplicate_request_handling.py`)
+- ✅ Duplicate non-streaming request caching
+- ✅ Duplicate streaming request handling
+- ✅ Mixed streaming/non-streaming duplicates
+- ✅ Concurrent duplicate requests
+- ✅ Different parameter differentiation
+- ✅ System message duplicate detection
+- ✅ Tool definition duplicate detection
+- ✅ Cache expiration behavior
+- ✅ Duplicate detection with provider failover
 
-### 工具文件
-- **`run_all_tests.py`** - 测试运行器，支持批量执行和报告生成
+## Running Tests
 
-## 🚀 快速开始
+### Prerequisites
 
-### 前提条件
-1. 确保服务器正在运行：
-   ```bash
-   # 在项目根目录
-   python src/main.py
-   ```
-
-2. 安装依赖（如果还没有）：
-   ```bash
-   pip install requests
-   ```
-
-### 运行所有测试
 ```bash
-# 在项目根目录或tests目录
-python tests/run_all_tests.py
+# Install test dependencies
+pip install pytest pytest-asyncio respx httpx
 ```
 
-### 运行单个测试文件
+### Run All Tests
+
 ```bash
-# 运行特定测试
-python tests/test_stream_nonstream.py
-python tests/test_provider_routing.py
-python tests/test_oauth.py
-python tests/test_caching_deduplication.py
+# Using the test runner script
+python tests/run_tests.py
+
+# Or directly with pytest
+python -m pytest tests/ -v
+
+# Run specific test file
+python -m pytest tests/test_streaming_requests.py -v
+
+# Run specific test function
+python -m pytest tests/test_streaming_requests.py::TestStreamingRequests::test_successful_streaming_response -v
 ```
 
-### 运行部分测试
-```bash
-# 只运行核心功能测试
-python tests/run_all_tests.py --tests test_stream_nonstream.py test_provider_routing.py
+### Test Configuration
 
-# 只运行OAuth相关测试
-python tests/run_all_tests.py --tests test_oauth.py
+Tests use the following configuration:
 
-# 列出所有可用测试
-python tests/run_all_tests.py --list
+- **Test Providers**: Mock providers are enabled via configuration
+- **Async Testing**: Uses `pytest-asyncio` for async test support
+- **HTTP Mocking**: Uses `respx` for HTTP request mocking
+- **Headers**: Realistic Claude Code client headers for testing
+- **Fixtures**: Shared test data and client fixtures
 
-# 检查服务器状态
-python tests/run_all_tests.py --check-server
-```
+### Test Providers
 
-### OAuth测试特殊说明
+Tests utilize the built-in test providers at:
+- `/test-providers/anthropic/success` - Mock successful Anthropic responses
+- `/test-providers/anthropic/error/{error_type}` - Mock various error responses
+- `/test-providers/anthropic/streaming` - Mock streaming responses
+- `/test-providers/openai/success` - Mock successful OpenAI responses
 
-OAuth测试包含交互式和自动化测试：
+### Mock Configuration
 
-1. **自动化测试** - 验证端点和基础功能
-2. **交互式测试** - 需要真实OAuth授权
+The test configuration includes:
+- Enabled test providers with configurable delays and error rates
+- Multiple provider types (Anthropic and OpenAI)
+- Model routing rules for different test scenarios
+- Realistic authentication and headers
 
-#### 完整OAuth测试流程
-```bash
-# 1. 运行OAuth测试（会触发401错误）
-python tests/test_oauth.py
+## Test Implementation Details
 
-# 2. 复制console中显示的OAuth授权URL，在浏览器中完成授权
+### Fixtures Used
 
-# 3. 从callback URL中复制授权码，设置环境变量
-export OAUTH_TEST_CODE="your_authorization_code_here"
+- `async_client` - AsyncClient for making HTTP requests
+- `claude_headers` - Realistic Claude Code client headers
+- `test_messages_request` - Standard non-streaming request
+- `test_streaming_request` - Standard streaming request
+- `test_config` - Test configuration with mock providers
+- `mock_provider_manager` - Mock provider manager instance
 
-# 4. 重新运行测试以测试token交换
-python tests/test_oauth.py
+### Key Testing Patterns
 
-# 5. 测试使用真实token发送请求
-python tests/test_oauth.py
-```
+1. **HTTP Mocking**: Uses `respx` to mock provider responses
+2. **Async Testing**: All tests are async using `pytest.mark.asyncio`
+3. **Error Simulation**: Tests various error conditions and edge cases
+4. **Format Conversion**: Tests conversion between OpenAI and Anthropic formats
+5. **Concurrent Testing**: Tests concurrent request scenarios
+6. **Cache Testing**: Tests request deduplication and caching behavior
 
-## 📊 测试报告
+### Common Test Scenarios
 
-测试运行器会生成详细的测试报告，包括：
+- **Success Paths**: Normal operation with various configurations
+- **Error Handling**: Provider failures, network errors, timeouts
+- **Edge Cases**: Empty responses, malformed JSON, content mismatches
+- **Failover**: Provider switching and recovery scenarios
+- **Format Conversion**: API format compatibility between providers
+- **Concurrency**: Multiple simultaneous requests and race conditions
 
-- ✅ **通过/失败统计**
-- ⏱️ **执行时间分析** 
-- 🔍 **失败测试详情**
-- 📈 **成功率计算**
-- ⚡ **性能统计**
+## Extending the Tests
 
-示例输出：
-```
-📊 测试报告
-============================================================
-总测试数: 7
-✅ 通过: 6
-❌ 失败: 1
-⏭️ 跳过: 0
-⏰ 超时: 0
-💥 错误: 0
-⏱️ 总耗时: 45.32秒
-📈 成功率: 85.7%
-```
+To add new tests:
 
-## 🎯 测试覆盖范围
+1. **Create new test file** in the `tests/` directory
+2. **Import required fixtures** from `conftest.py`
+3. **Use `@pytest.mark.asyncio`** for async tests
+4. **Mock HTTP responses** using `respx.mock`
+5. **Add to test runner** if needed for specific execution order
 
-### 功能覆盖
-- [x] **基础API功能** - 请求/响应处理
-- [x] **流式处理** - SSE流式响应
-- [x] **服务商管理** - 路由、负载均衡、故障转移
-- [x] **OAuth认证** - 自动授权流程、token管理、多账号轮换
-- [x] **缓存系统** - 去重、缓存命中、过期处理
-- [x] **错误处理** - 异常情况、边缘情况
-- [x] **网络处理** - 超时、重试、断开连接
-- [x] **并发处理** - 多线程、竞争条件
-
-### 场景覆盖
-- [x] **正常使用场景** - 标准API调用
-- [x] **异常场景** - 服务商故障、网络问题
-- [x] **边缘情况** - 极端参数、特殊字符
-- [x] **压力情况** - 并发请求、长时间运行
-- [x] **恢复场景** - 故障后恢复、缓存清理
-
-### 数据覆盖
-- [x] **有效数据** - 标准模型、正常消息
-- [x] **无效数据** - 错误格式、缺失字段
-- [x] **边界数据** - 极大/极小值、空值
-- [x] **特殊数据** - Unicode、表情符号、转义字符
-
-## 🔧 自定义测试
-
-### 添加新测试
-1. 创建新的测试文件：`test_your_feature.py`
-2. 继承或模仿现有测试的结构
-3. 实现 `run_all_tests()` 方法
-4. 添加到 `run_all_tests.py` 的 `TEST_FILES` 列表
-
-### 测试文件模板
+Example new test:
 ```python
-#!/usr/bin/env python3
-"""
-测试 [功能名称]
-"""
-
-import requests
-import sys
-import os
-
-BASE_URL = "http://localhost:9090"
-
-class TestYourFeature:
-    def __init__(self):
-        self.base_url = BASE_URL
-        self.headers = {"Content-Type": "application/json"}
-    
-    def test_your_specific_case(self):
-        """测试具体场景"""
-        print("测试: 具体场景描述")
+@pytest.mark.asyncio
+async def test_new_feature(async_client: AsyncClient, claude_headers):
+    with respx.mock:
+        respx.post("http://localhost:9090/test-providers/anthropic/success").mock(
+            return_value=Response(200, json={"test": "response"})
+        )
         
-        try:
-            # 测试逻辑
-            assert True, "测试条件"
-            print("✅ 测试通过")
-            return True
-        except Exception as e:
-            print(f"❌ 测试失败: {e}")
-            return False
-    
-    def run_all_tests(self):
-        """运行所有测试"""
-        tests = [self.test_your_specific_case]
-        passed = sum(1 for test in tests if test())
-        return passed == len(tests)
-
-def main():
-    tester = TestYourFeature()
-    return tester.run_all_tests()
-
-if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+        response = await async_client.post("/v1/messages", ...)
+        assert response.status_code == 200
 ```
-
-## 🐛 故障排除
-
-### 常见问题
-
-1. **服务器未运行**
-   ```
-   ❌ 无法连接到服务器
-   ```
-   **解决方案**: 先启动服务器 `python src/main.py`
-
-2. **测试超时**
-   ```
-   ⏰ 测试超时
-   ```
-   **解决方案**: 检查网络连接或增加超时时间
-
-3. **缓存相关测试失败**
-   ```
-   ℹ️ 缓存功能可能未启用
-   ```
-   **解决方案**: 检查 `providers.yaml` 中的缓存配置
-
-4. **服务商相关测试失败**
-   ```
-   ⚠️ 只有一个可用服务商
-   ```
-   **解决方案**: 在 `providers.yaml` 中配置多个服务商
-
-### 调试模式
-```bash
-# 启用详细输出
-python tests/test_stream_nonstream.py -v
-
-# 运行单个测试函数（需要修改代码）
-# 在测试文件中添加调试代码
-```
-
-## 📝 测试编写最佳实践
-
-1. **测试独立性** - 每个测试应该能独立运行
-2. **清晰命名** - 测试名称应该描述测试的具体场景
-3. **完整验证** - 验证响应状态码、内容格式和业务逻辑
-4. **错误处理** - 测试应该能优雅处理异常情况
-5. **性能考虑** - 避免不必要的等待时间
-6. **文档化** - 为复杂测试添加注释说明
-
-## 📚 相关文档
-
-- [项目README](../README.md) - 项目整体介绍
-- [配置指南](../providers.example.yaml) - 服务商配置示例
-- [API文档](../docs/) - API接口说明
-
-## 🤝 贡献指南
-
-1. 添加新功能时，请同时添加对应的测试
-2. 修改现有功能时，请更新相关测试
-3. 确保所有测试在提交前都能通过
-4. 为复杂测试添加适当的文档说明
-
----
-
-**注意**: 这些测试依赖于实际的服务器运行状态，请确保在运行测试前已正确配置并启动了 Claude Code Provider Balancer 服务。
