@@ -46,17 +46,24 @@ from models import (
     MessagesRequest, TokenCountRequest, TokenCountResponse,
     MessagesResponse, AnthropicErrorResponse
 )
-from caching import (
+from deduplication import (
     generate_request_signature, handle_duplicate_request,
     cleanup_stuck_requests, simulate_testing_delay,
-    complete_and_cleanup_request, serve_waiting_duplicate_requests,
-    update_response_cache, validate_response_quality, extract_content_from_sse_chunks
+    complete_and_cleanup_request, extract_content_from_sse_chunks
 )
+from streaming import validate_response_quality
 from conversion import (
     get_token_encoder, count_tokens_for_anthropic_request,
     convert_anthropic_to_openai_messages, convert_anthropic_tools_to_openai,
     convert_anthropic_tool_choice_to_openai, convert_openai_to_anthropic_response,
     get_anthropic_error_details_from_exc, build_anthropic_error_response
+)
+from streaming import (
+    create_broadcaster, 
+    register_broadcaster, 
+    unregister_broadcaster, 
+    handle_duplicate_stream_request,
+    has_active_broadcaster
 )
 
 load_dotenv()
@@ -279,7 +286,7 @@ try:
     _initialize_oauth_manager(provider_manager, is_reload=False)
     
     # Set provider manager reference for deduplication module
-    from caching.deduplication import set_provider_manager
+    from deduplication.core import set_provider_manager
     set_provider_manager(provider_manager)
     
 except Exception as e:
@@ -290,7 +297,7 @@ except Exception as e:
     settings = Settings()
     
     # Still set the provider manager reference (even if None)
-    from caching.deduplication import set_provider_manager
+    from deduplication.core import set_provider_manager
     set_provider_manager(provider_manager)
 
 
@@ -703,13 +710,36 @@ async def create_message_proxy(
         # Create clean request body without balancer-specific fields for provider requests
         clean_request_body = {k: v for k, v in parsed_body.items() if k not in ['provider']}
         
-        # Check for duplicate requests
+        # For streaming requests, first check if there's an active broadcaster for this signature
+        if messages_request.stream and has_active_broadcaster(signature):
+            try:
+                # Try to connect to existing broadcaster for duplicate stream request
+                stream_generator = handle_duplicate_stream_request(signature, request, request_id)
+                return StreamingResponse(
+                    stream_generator,
+                    media_type="text/event-stream",
+                    headers={"x-provider-used": "broadcaster-duplicate"}
+                )
+            except Exception as e:
+                # Fallback if broadcaster connection fails
+                debug(
+                    LogRecord(
+                        "broadcaster_connection_failed",
+                        f"Failed to connect to active broadcaster: {str(e)}",
+                        request_id,
+                        {
+                            "signature": signature[:16] + "...",
+                            "error": str(e)
+                        }
+                    )
+                )
+        
+        # Check for cached duplicate requests
         duplicate_result = await handle_duplicate_request(
             signature, request_id, messages_request.stream or False, clean_request_body
         )
         if duplicate_result is not None:
             return duplicate_result
-        
         
         # Select all available provider options for failover
         provider_options = select_model_and_provider_options(
@@ -801,84 +831,90 @@ async def create_message_proxy(
                             collected_chunks = []
                             
                             async def stream_anthropic_response():
-                                client_disconnected = False
+                                """Simplified Anthropic streaming using parallel broadcaster"""
+                                broadcaster = None
                                 try:
-                                    async for chunk in response.aiter_text():
-                                        # Check if client is still connected before sending each chunk
-                                        if await request.is_disconnected():
-                                            info(
+                                    # Create parallel broadcaster for handling multiple clients
+                                    broadcaster = create_broadcaster(request, request_id, current_provider.name)
+                                    
+                                    # Register broadcaster for duplicate request handling
+                                    register_broadcaster(signature, broadcaster)
+                                    
+                                    # Check if response is an error before trying to iterate
+                                    if response.status_code >= 400:
+                                        debug(
+                                            LogRecord(
+                                                "provider_error_response",
+                                                f"Provider returned error status {response.status_code}",
+                                                request_id,
+                                                {
+                                                    "provider": current_provider.name,
+                                                    "status_code": response.status_code
+                                                }
+                                            )
+                                        )
+                                        return
+                                    
+                                    # Create provider stream from response
+                                    async def provider_stream():
+                                        try:
+                                            async for chunk in response.aiter_text():
+                                                collected_chunks.append(chunk)
+                                                yield chunk
+                                        except Exception as e:
+                                            error(
                                                 LogRecord(
-                                                    "client_disconnected_detected",
-                                                    "Client disconnected during Anthropic streaming, stopping response",
+                                                    "provider_stream_error",
+                                                    f"Error in provider stream: {type(e).__name__}: {e}",
                                                     request_id,
                                                     {
                                                         "provider": current_provider.name,
-                                                        "chunks_sent": len(collected_chunks),
-                                                        "detection_method": "is_disconnected"
+                                                        "error": str(e)
                                                     }
                                                 )
                                             )
-                                            client_disconnected = True
-                                            break
-                                        
-                                        collected_chunks.append(chunk)
+                                            raise
+                                    
+                                    # Use broadcaster to handle parallel streaming with disconnect detection
+                                    async for chunk in broadcaster.stream_from_provider(provider_stream()):
                                         yield chunk
                                         
-                                except (ConnectionError, ConnectionResetError, BrokenPipeError) as e:
-                                    # Client connection was broken during streaming
-                                    info(
+                                except Exception as e:
+                                    error(
                                         LogRecord(
-                                            "client_connection_error",
-                                            f"Client connection error during Anthropic streaming: {str(e)}",
+                                            "stream_anthropic_error",
+                                            f"Error in Anthropic streaming: {type(e).__name__}: {e}",
                                             request_id,
                                             {
                                                 "provider": current_provider.name,
-                                                "chunks_sent": len(collected_chunks),
-                                                "error_type": type(e).__name__
+                                                "error": str(e)
                                             }
                                         )
                                     )
-                                    client_disconnected = True
-                                    
-                                except asyncio.CancelledError:
-                                    # Request was cancelled (usually due to client disconnect)
-                                    info(
-                                        LogRecord(
-                                            "streaming_cancelled",
-                                            "Streaming request was cancelled from Anthropic provider",
-                                            request_id,
-                                            {
-                                                "provider": current_provider.name,
-                                                "chunks_sent": len(collected_chunks)
-                                            }
-                                        )
-                                    )
-                                    client_disconnected = True
-                                    raise  # Re-raise CancelledError
-                                    
+                                    raise
                                 finally:
-                                    # Handle cleanup based on client connection status
-                                    if client_disconnected:
-                                        # Client disconnected, mark request as cancelled
-                                        cancellation_error = Exception("Client disconnected during streaming")
-                                        complete_and_cleanup_request(signature, cancellation_error, None, True, current_provider.name)
-                                    else:
-                                        # Stream completed normally, validate quality and cache if successful
-                                        # Check HTTP status code to skip quality validation on errors
-                                        status_code = getattr(response, 'status_code', None)
-                                        if validate_response_quality(collected_chunks, current_provider.name, request_id, status_code):
-                                            # Quality validation passed, extract content as result
-                                            try:
-                                                response_content = extract_content_from_sse_chunks(collected_chunks)
-                                                complete_and_cleanup_request(signature, response_content, collected_chunks, True, current_provider.name)
-                                            except Exception as e:
-                                                # Content extraction failed
-                                                extraction_error = Exception(f"Response content extraction failed: {str(e)}")
-                                                complete_and_cleanup_request(signature, extraction_error, None, True, current_provider.name)
-                                        else:
-                                            # Quality validation failed, mark as error to allow retry
-                                            quality_error = Exception("Response quality validation failed")
-                                            complete_and_cleanup_request(signature, quality_error, None, True, current_provider.name)
+                                    # Unregister broadcaster when streaming completes
+                                    if broadcaster:
+                                        unregister_broadcaster(signature)
+                                    
+                                    # Complete and cleanup request with collected chunks
+                                    complete_and_cleanup_request(signature, collected_chunks, collected_chunks, True, current_provider.name)
+                                    
+                                    # Log request completion for consistency with non-streaming requests
+                                    info(
+                                        LogRecord(
+                                            event=LogEvent.REQUEST_COMPLETED.value,
+                                            message=f"Streaming request completed: {current_provider.name}",
+                                            request_id=request_id,
+                                            data={
+                                                "provider": current_provider.name,
+                                                "model": target_model,
+                                                "stream": True,
+                                                "chunks_count": len(collected_chunks),
+                                                "attempt": attempt + 1,
+                                            }
+                                        )
+                                    )
                             
                             return StreamingResponse(
                                 stream_anthropic_response(),
@@ -895,6 +931,22 @@ async def create_message_proxy(
                             
                             # For non-streaming responses converted to stream, use the response_data directly
                             complete_and_cleanup_request(signature, response_data, collected_chunks, True, current_provider.name)
+                            
+                            # Log request completion
+                            info(
+                                LogRecord(
+                                    event=LogEvent.REQUEST_COMPLETED.value,
+                                    message=f"Non-streaming response converted to stream completed: {current_provider.name}",
+                                    request_id=request_id,
+                                    data={
+                                        "provider": current_provider.name,
+                                        "model": target_model,
+                                        "stream": True,
+                                        "converted_from_non_stream": True,
+                                        "attempt": attempt + 1,
+                                    }
+                                )
+                            )
                             return StreamingResponse(
                                 convert_to_stream(),
                                 media_type="text/event-stream",
@@ -1061,6 +1113,23 @@ async def create_message_proxy(
                                         try:
                                             response_content = extract_content_from_sse_chunks(collected_chunks)
                                             complete_and_cleanup_request(signature, response_content, collected_chunks, True, current_provider.name)
+                                            
+                                            # Log request completion
+                                            info(
+                                                LogRecord(
+                                                    event=LogEvent.REQUEST_COMPLETED.value,
+                                                    message=f"OpenAI streaming request completed: {current_provider.name}",
+                                                    request_id=request_id,
+                                                    data={
+                                                        "provider": current_provider.name,
+                                                        "model": target_model,
+                                                        "stream": True,
+                                                        "provider_type": "openai",
+                                                        "chunks_count": len(collected_chunks),
+                                                        "attempt": attempt + 1,
+                                                    }
+                                                )
+                                            )
                                         except Exception as e:
                                             extraction_error = Exception(f"Response content extraction failed: {str(e)}")
                                             complete_and_cleanup_request(signature, extraction_error, None, True, current_provider.name)
@@ -1740,7 +1809,7 @@ async def logging_middleware(request: Request, call_next):
 # Set function reference for deduplication module after all functions are defined
 def _init_deduplication_references():
     """Initialize function references for deduplication module"""
-    from caching.deduplication import set_make_anthropic_request
+    from deduplication.core import set_make_anthropic_request
     set_make_anthropic_request(make_anthropic_request)
 
 # Call initialization

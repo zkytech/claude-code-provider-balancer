@@ -368,6 +368,15 @@ class ProviderManager:
             'cache_operation_timeout': caching.get('cache_operation_timeout', 5)
         }
     
+    def get_client_disconnect_timeouts(self) -> Dict[str, int]:
+        """获取客户端断开检测超时配置"""
+        timeouts = self.settings.get('timeouts', {})
+        client_disconnect = timeouts.get('client_disconnect', {})
+        return {
+            'check_interval': client_disconnect.get('check_interval', 5),
+            'first_chunk_wait_timeout': client_disconnect.get('first_chunk_wait_timeout', 30)
+        }
+    
     def get_health_check_timeouts(self) -> Dict[str, int]:
         """获取健康检查超时配置"""
         timeouts = self.settings.get('timeouts', {})

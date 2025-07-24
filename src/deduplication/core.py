@@ -49,6 +49,7 @@ _request_cleanup_lock = threading.RLock()
 # 响应缓存功能已删除，只保留去重功能
 
 
+
 def cleanup_stuck_requests(force_cleanup_all: bool = False):
     """清理卡住的请求（超时但未正确清理的请求）"""
     try:
@@ -159,9 +160,6 @@ def cleanup_stuck_requests(force_cleanup_all: bool = False):
                 )
 
 
-def check_cache_size_limit(content: Union[Dict[str, Any], List[str]]) -> bool:
-    """响应缓存已删除，此函数为空实现保持接口兼容"""
-    return True
 
 
 async def simulate_testing_delay(request_body: Dict[str, Any], request_id: str):
@@ -493,119 +491,6 @@ def complete_and_cleanup_request(signature: str, result: Any, cache_content: Opt
             )
 
 
-async def debug_compare_provider_response(request_data: Dict[str, Any], signature: str, request_id: str, is_stream: bool = False) -> None:
-    """调试函数：将重复请求转发给provider并记录响应，用于对比缓存数据"""
-    try:
-        provider_manager = get_provider_manager()
-    except ImportError:
-        provider_manager = None
-    try:
-        from log_utils.handlers import info, warning, LogRecord
-    except ImportError:
-        try:
-            from log_utils import info, warning, LogRecord
-        except ImportError:
-            info = warning = lambda x: None
-            LogRecord = dict
-    make_anthropic_request = get_make_anthropic_request()
-    
-    try:
-        # 检查 provider_manager 是否为 None
-        if provider_manager is None:
-            warning(
-                LogRecord(
-                    "debug_provider_request_error",
-                    "Debug provider request skipped: provider_manager is None",
-                    request_id,
-                    {"signature": signature[:16] + "..."}
-                )
-            )
-            return
-            
-        # 选择一个provider来获取真实响应
-        model_provider_options = provider_manager.select_model_and_provider_options(request_data.get("model", "claude-3-5-sonnet-20241022"))
-        if not model_provider_options:
-            return
-        
-        _, selected_provider = model_provider_options[0]  # 使用第一个可用的provider
-        
-        info(
-            LogRecord(
-                "debug_provider_request_start",
-                f"Starting debug provider request for duplicate comparison",
-                request_id,
-                {
-                    "signature": signature[:16] + "...",
-                    "provider": selected_provider.name,
-                    "is_stream": is_stream,
-                    "purpose": "duplicate_response_debugging"
-                }
-            )
-        )
-        
-        # 转发到provider获取真实响应
-        debug_response = await make_anthropic_request(
-            selected_provider, 
-            request_data, 
-            f"{request_id}_debug", 
-            stream=is_stream
-        )
-        
-        if is_stream:
-            # 对于流式响应，收集所有chunks
-            debug_chunks = []
-            if hasattr(debug_response, 'aiter_lines'):
-                async for line in debug_response.aiter_lines():
-                    if line:
-                        debug_chunks.append(f"{line}\n")
-            
-            # 从debug chunks中提取内容
-            from .cache_serving import extract_content_from_sse_chunks
-            debug_extracted = extract_content_from_sse_chunks(debug_chunks)
-            
-            info(
-                LogRecord(
-                    "debug_provider_response_stream",
-                    f"Debug provider streaming response collected",
-                    request_id,
-                    {
-                        "signature": signature[:16] + "...",
-                        "provider": selected_provider.name,
-                        "debug_chunks_count": len(debug_chunks),
-                        "debug_extracted": debug_extracted,
-                        "debug_chunks_sample": debug_chunks[:5] if debug_chunks else []
-                    }
-                )
-            )
-        else:
-            # 非流式响应
-            debug_content = debug_response.json() if hasattr(debug_response, 'json') else debug_response
-            
-            info(
-                LogRecord(
-                    "debug_provider_response_nonstream",
-                    f"Debug provider non-streaming response collected",
-                    request_id,
-                    {
-                        "signature": signature[:16] + "...",
-                        "provider": selected_provider.name,
-                        "debug_content": debug_content
-                    }
-                )
-            )
-            
-    except Exception as e:
-        warning(
-            LogRecord(
-                "debug_provider_request_error",
-                f"Debug provider request failed: {str(e)}",
-                request_id,
-                {
-                    "signature": signature[:16] + "...",
-                    "error": str(e)
-                }
-            )
-        )
 
 
 async def handle_duplicate_request(signature: str, request_id: str, is_stream: bool = False, request_data: Dict[str, Any] = None) -> Optional[Any]:
@@ -692,30 +577,292 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
         try:
             result = await future_to_wait
             
-            # 响应缓存已删除，直接返回等待的结果
-            
-            # 如果没有缓存，使用原来的逻辑（向后兼容）
-            if isinstance(result, str) and result.startswith("streaming_"):
-                return JSONResponse(
-                    status_code=409,
-                    content={
+            # 检查result是否是Exception对象
+            if isinstance(result, Exception):
+                # 原请求失败，重复请求也应该收到相同的错误
+                info(
+                    LogRecord(
+                        LogEvent.REQUEST_FAILURE.value,
+                        "Duplicate request failed via original request",
+                        request_id,
+                        {"original_request_id": original_request_id, "signature": signature[:16] + "...", "error": str(result)},
+                    )
+                )
+                
+                # 对于流式duplicate requests，需要返回StreamingResponse格式的错误
+                if is_stream:
+                    # 尝试从异常消息中提取有意义的错误信息
+                    error_message = str(result)
+                    if "Provider returned JSON error:" in error_message:
+                        # 这是来自provider的JSON错误，尝试提取原始消息
+                        try:
+                            # 从异常消息中提取实际的错误信息
+                            # 假设格式是 "Provider returned JSON error: {...}"
+                            parts = error_message.split("Provider returned JSON error:", 1)
+                            if len(parts) > 1:
+                                extracted_part = parts[1].strip()
+                                # 先检查原始的chunk数据，这个信息应该在原始请求的SSE输出中
+                                # 但是我们这里只有Exception对象，需要从原始提供商响应中获取完整信息
+                                
+                                # 由于我们无法直接访问原始JSON响应，我们需要重新构造
+                                # 最好的做法是保持错误消息的一致性，使用相同的处理逻辑
+                                
+                                # 检查是否是简单的错误字符串还是JSON结构
+                                if extracted_part.startswith('{') and extracted_part.endswith('}'):
+                                    # 尝试解析为JSON以提取实际的错误消息
+                                    try:
+                                        error_json = json.loads(extracted_part)
+                                        if isinstance(error_json, dict):
+                                            # 优先使用message字段，如果没有则使用error字段
+                                            if "message" in error_json:
+                                                error_message = error_json["message"]
+                                            elif "error" in error_json and isinstance(error_json["error"], str):
+                                                error_message = error_json["error"]
+                                            else:
+                                                error_message = extracted_part
+                                        else:
+                                            error_message = extracted_part
+                                    except json.JSONDecodeError:
+                                        # 不是JSON格式，直接使用提取的部分
+                                        error_message = extracted_part
+                                else:
+                                    # 不是JSON格式，但这可能只是error字段的值
+                                    # 保持原来的逻辑，直接使用提取的部分
+                                    error_message = extracted_part
+                        except:
+                            pass  # 如果提取失败，使用原始错误消息
+                    
+                    # 创建一个包含错误信息的streaming response
+                    error_response = {
                         "type": "error",
                         "error": {
-                            "type": "duplicate_request_error",
-                            "message": "Duplicate request detected but no cached content available. Please retry your request."
+                            "type": "api_error",
+                            "message": error_message
                         }
                     }
-                )
+                    
+                    async def stream_error_response():
+                        formatted_error_chunk = f"event: error\ndata: {json.dumps(error_response)}\n\n"
+                        yield formatted_error_chunk
+                    
+                    from fastapi.responses import StreamingResponse
+                    return StreamingResponse(
+                        stream_error_response(),
+                        media_type="text/event-stream"
+                    )
+                else:
+                    # 对于非流式请求，重新抛出异常让上层处理器处理
+                    raise result
+            elif isinstance(result, list):
+                # 检查是否是实际发送给客户端的内容缓存 (List[str]格式的collected_chunks)
+                # 这可能包含SSE错误响应或者正常的SSE内容
+                # 注意：即使是空列表也应该处理，因为这可能代表原始请求的真实状态
+                
+                if is_stream:
+                    # 流式请求：直接返回缓存的内容（无论是成功还是错误，甚至是空内容）
+                    # 添加调试信息
+                    try:
+                        from log_utils.handlers import info, LogRecord
+                        info(
+                            LogRecord(
+                                "stream_cached_content_debug",
+                                f"Returning cached content for duplicate stream request",
+                                request_id,
+                                {
+                                    "chunks_count": len(result),
+                                    "chunks_preview": [chunk[:100] + "..." if len(chunk) > 100 else chunk for chunk in result[:3]],
+                                    "signature": signature[:16] + "..."
+                                }
+                            )
+                        )
+                    except:
+                        pass
+                        
+                    async def stream_cached_content():
+                        for chunk in result:
+                            yield chunk
+                    
+                    from fastapi.responses import StreamingResponse
+                    return StreamingResponse(
+                        stream_cached_content(),
+                        media_type="text/event-stream"
+                    )
+                else:
+                    # 非流式请求：需要从SSE格式转换为JSON格式
+                    # 如果是空列表，说明原始请求没有收到任何内容
+                    if not result:
+                        return JSONResponse(
+                            content={
+                                "type": "error",
+                                "error": {
+                                    "type": "api_error",
+                                    "message": "No response received from provider"
+                                }
+                            },
+                            status_code=500
+                        )
+                    
+                    # 首先检查是否是错误响应
+                    for chunk in result:
+                        if isinstance(chunk, str) and "event: error" in chunk:
+                            # 这是错误响应，从SSE格式提取JSON错误响应
+                            try:
+                                lines = chunk.strip().split('\n')
+                                for line in lines:
+                                    if line.startswith('data:'):
+                                        error_data = line[5:].strip()  # Remove 'data:' prefix
+                                        error_json = json.loads(error_data)
+                                        return JSONResponse(content=error_json, status_code=400)
+                            except Exception:
+                                pass
+                    
+                    # 如果不是错误响应，尝试提取为正常响应
+                    try:
+                        response_content = extract_content_from_sse_chunks(result)
+                        info(
+                            LogRecord(
+                                LogEvent.REQUEST_COMPLETED.value,
+                                "Duplicate request returning cached successful response",
+                                request_id,
+                                {"original_request_id": original_request_id, "signature": signature[:16] + "...", "is_stream": is_stream},
+                            )
+                        )
+                        return JSONResponse(content=response_content)
+                    except Exception:
+                        # 内容提取失败，返回通用错误
+                        return JSONResponse(
+                            content={
+                                "type": "error",
+                                "error": {
+                                    "type": "api_error",
+                                    "message": "Failed to process cached response"
+                                }
+                            },
+                            status_code=500
+                        )
             
-            info(
-                LogRecord(
-                    LogEvent.REQUEST_COMPLETED.value,
-                    "Duplicate request completed via original request",
-                    request_id,
-                    {"original_request_id": original_request_id, "signature": signature[:16] + "...", "is_stream": is_stream},
+            # 成功响应 - 根据是否为流式请求分别处理
+            if is_stream:
+                # 流式重复请求需要返回StreamingResponse格式
+                if isinstance(result, dict) and "content" in result:
+                    # result是提取的响应内容，需要转换为SSE流格式
+                    async def stream_cached_response():
+                        # 发送message_start事件
+                        message_start = {
+                            "type": "message_start",
+                            "message": {
+                                "id": result.get("id", ""),
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [],
+                                "model": result.get("model", "unknown"),
+                                "stop_reason": None,
+                                "stop_sequence": None,
+                                "usage": result.get("usage", {"input_tokens": 0, "output_tokens": 0})
+                            }
+                        }
+                        yield f"event: message_start\ndata: {json.dumps(message_start)}\n\n"
+                        
+                        # 处理内容块
+                        content_blocks = result.get("content", [])
+                        for i, block in enumerate(content_blocks):
+                            if block.get("type") == "text":
+                                # 发送content_block_start事件
+                                content_block_start = {
+                                    "type": "content_block_start",
+                                    "index": i,
+                                    "content_block": {"type": "text", "text": ""}
+                                }
+                                yield f"event: content_block_start\ndata: {json.dumps(content_block_start)}\n\n"
+                                
+                                # 发送文本内容作为delta
+                                text_content = block.get("text", "")
+                                if text_content:
+                                    content_delta = {
+                                        "type": "content_block_delta",
+                                        "index": i,  
+                                        "delta": {
+                                            "type": "text_delta",
+                                            "text": text_content
+                                        }
+                                    }
+                                    yield f"event: content_block_delta\ndata: {json.dumps(content_delta)}\n\n"
+                                
+                                # 发送content_block_stop事件
+                                content_block_stop = {
+                                    "type": "content_block_stop",
+                                    "index": i
+                                }
+                                yield f"event: content_block_stop\ndata: {json.dumps(content_block_stop)}\n\n"
+                        
+                        # 发送message_delta和message_stop事件
+                        message_delta = {
+                            "type": "message_delta",
+                            "delta": {
+                                "stop_reason": result.get("stop_reason", "end_turn"),
+                                "stop_sequence": result.get("stop_sequence")
+                            }
+                        }
+                        if "usage" in result:
+                            message_delta["usage"] = result["usage"]
+                        yield f"event: message_delta\ndata: {json.dumps(message_delta)}\n\n"
+                        
+                        message_stop = {"type": "message_stop"}
+                        yield f"event: message_stop\ndata: {json.dumps(message_stop)}\n\n"
+                    
+                    from fastapi.responses import StreamingResponse
+                    return StreamingResponse(
+                        stream_cached_response(),
+                        media_type="text/event-stream"
+                    )
+                else:
+                    # 如果result不是预期的格式，记录调试信息并返回错误
+                    try:
+                        from log_utils.handlers import warning, LogRecord
+                        warning(
+                            LogRecord(
+                                "unexpected_result_format",
+                                f"Unexpected result format in duplicate request: type={type(result)}, value={repr(result)[:200]}",
+                                request_id,
+                                {
+                                    "result_type": str(type(result)),
+                                    "result_repr": repr(result)[:200],
+                                    "is_stream": is_stream,
+                                    "signature": signature[:16] + "..."
+                                }
+                            )
+                        )
+                    except:
+                        pass  # 如果日志记录失败，继续处理
+                        
+                    error_response = {
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": "Invalid cached response format"
+                        }
+                    }
+                    
+                    async def stream_error_response():
+                        formatted_error_chunk = f"event: error\ndata: {json.dumps(error_response)}\n\n"
+                        yield formatted_error_chunk
+                    
+                    from fastapi.responses import StreamingResponse
+                    return StreamingResponse(
+                        stream_error_response(),
+                        media_type="text/event-stream"
+                    )
+            else:
+                # 非流式重复请求直接返回JSON响应
+                info(
+                    LogRecord(
+                        LogEvent.REQUEST_COMPLETED.value,
+                        "Duplicate request completed via original request (non-stream)",
+                        request_id,
+                        {"original_request_id": original_request_id, "signature": signature[:16] + "...", "is_stream": is_stream},
+                    )
                 )
-            )
-            return result
+                return result
         except asyncio.CancelledError:
             # 原请求被取消，返回适当的错误响应
             warning(
@@ -737,179 +884,35 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                 }
             )
         except Exception as e:
-            # 原请求失败，重复请求也应该收到相同的错误
-            info(
-                LogRecord(
-                    LogEvent.REQUEST_FAILURE.value,
-                    "Duplicate request failed via original request",
-                    request_id,
-                    {"original_request_id": original_request_id, "signature": signature[:16] + "...", "error": str(e)},
+            # 这里捕获的是真正的异常（比如网络错误等），不是我们设置的Exception对象
+            # 对于流式duplicate requests，需要返回StreamingResponse格式的错误
+            if is_stream:
+                error_response = {
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": str(e)
+                    }
+                }
+                
+                async def stream_error_response():
+                    formatted_error_chunk = f"event: error\ndata: {json.dumps(error_response)}\n\n"
+                    yield formatted_error_chunk
+                
+                from fastapi.responses import StreamingResponse
+                return StreamingResponse(
+                    stream_error_response(),
+                    media_type="text/event-stream"
                 )
-            )
-            raise e
+            else:
+                # 对于非流式请求，重新抛出异常让上层处理器处理
+                raise e
 
     return None
 
 
-def update_response_cache(signature: str, collected_chunks: List[str], is_streaming: bool, request_id: str, provider_name: Optional[str] = None):
-    """响应缓存已删除，此函数为空实现保持接口兼容"""
-    pass
 
 
-def validate_response_quality(collected_chunks: List[str], provider_name: str, request_id: str, http_status_code: Optional[int] = None) -> bool:
-    """增强的响应质量验证，支持Anthropic和OpenAI格式"""
-    try:
-        from log_utils.handlers import warning, debug, LogRecord
-    except ImportError:
-        try:
-            from log_utils import warning, debug, LogRecord
-        except ImportError:
-            warning = debug = lambda x: None
-            LogRecord = dict
-    
-    # Skip quality validation for HTTP error status codes
-    if http_status_code is not None and http_status_code >= 400:
-        debug(
-            LogRecord(
-                "response_quality_check_skip_http_error",
-                f"Skipping quality validation due to HTTP error status {http_status_code} from provider: {provider_name}",
-                request_id,
-                {"provider": provider_name, "http_status_code": http_status_code}
-            )
-        )
-        return False
-    
-    if not collected_chunks:
-        warning(
-            LogRecord(
-                "response_quality_check_empty",
-                f"Empty response detected from provider: {provider_name}",
-                request_id,
-                {
-                    "provider": provider_name, 
-                    "chunk_count": 0,
-                    "content_preview": ""
-                }
-            )
-        )
-        return False
-    
-    full_content = "".join(collected_chunks)
-    
-    # Check for HTTP error responses in content (e.g., "503 Service Unavailable")
-    error_indicators = ["503 Service Unavailable", "502 Bad Gateway", "500 Internal Server Error", 
-                       "504 Gateway Timeout", "404 Not Found", "401 Unauthorized", "403 Forbidden"]
-    if any(error_msg in full_content for error_msg in error_indicators):
-        warning(
-            LogRecord(
-                "response_quality_check_http_error_in_content",
-                f"HTTP error detected in response content from provider: {provider_name}",
-                request_id,
-                {
-                    "provider": provider_name, 
-                    "chunk_count": len(collected_chunks),
-                    "content_preview": full_content[:200] + "..." if len(full_content) > 200 else full_content
-                }
-            )
-        )
-        return False
-    
-    # 基础格式检查：必须包含有效的SSE格式
-    if not any(line.startswith("data:") for line in full_content.split('\n')):
-        warning(
-            LogRecord(
-                "response_quality_check_no_sse",
-                f"No valid SSE format detected from provider: {provider_name}",
-                request_id,
-                {
-                    "provider": provider_name, 
-                    "chunk_count": len(collected_chunks),
-                    "content_preview": full_content[:200] + "..." if len(full_content) > 200 else full_content
-                }
-            )
-        )
-        return False
-    
-    # 检查是否包含明显的错误响应
-    if ("event: error" in full_content) or \
-       ('"error"' in full_content and '"type"' in full_content and len(full_content) < 500):
-        warning(
-            LogRecord(
-                "response_quality_check_error",
-                f"Error response detected from provider: {provider_name}",
-                request_id,
-                {
-                    "provider": provider_name, 
-                    "chunk_count": len(collected_chunks),
-                    "content_preview": full_content[:200] + "..." if len(full_content) > 200 else full_content
-                }
-            )
-        )
-        return False
-    
-    # 检查完整性标志（支持Anthropic和OpenAI格式）
-    has_completion_marker = any(marker in full_content for marker in [
-        "event: message_stop",           # Anthropic
-        "event: content_block_stop",     # Anthropic 
-        "stop_reason",                   # Anthropic
-        '"type": "message_stop"',        # Anthropic
-        '"finish_reason"',               # OpenAI
-        'data: [DONE]'                   # OpenAI
-    ])
-    
-    if not has_completion_marker:
-        warning(
-            LogRecord(
-                "response_quality_check_incomplete",
-                f"Response appears incomplete from provider: {provider_name}",
-                request_id,
-                {
-                    "provider": provider_name, 
-                    "chunk_count": len(collected_chunks),
-                    "has_completion_marker": has_completion_marker,
-                    "content_length": len(full_content),
-                    "content_preview": full_content[:200] + "..." if len(full_content) > 200 else full_content
-                }
-            )
-        )
-        return False
-    
-    # 尝试解析为结构化响应并验证内容
-    total_text_length = 0  # 初始化变量
-    try:
-        extracted_content = extract_content_from_sse_chunks(collected_chunks)
-        
-            
-    except Exception as e:
-        warning(
-            LogRecord(
-                "response_quality_check_parse_error",
-                f"Failed to parse response from provider: {provider_name}",
-                request_id,
-                {
-                    "provider": provider_name,
-                    "error": str(e),
-                    "content_preview": full_content[:200] + "..." if len(full_content) > 200 else full_content
-                }
-            )
-        )
-        return False
-    
-    debug(
-        LogRecord(
-            "response_quality_check_passed",
-            f"Response quality validation passed for provider: {provider_name}",
-            request_id,
-            {
-                "provider": provider_name, 
-                "chunk_count": len(collected_chunks),
-                "has_completion_marker": has_completion_marker,
-                "content_length": len(full_content),
-                "total_text_length": total_text_length
-            }
-        )
-    )
-    return True
 
 
 def extract_content_from_sse_chunks(sse_chunks: List[str]) -> Dict[str, Any]:

@@ -454,6 +454,285 @@ class TestClientDisconnect:
             print(f"❌ 快速连接断开测试失败: {e}")
             return False
     
+    def test_duplicate_requests_after_original_disconnect(self):
+        """测试原始请求断开后重复请求仍能正常工作"""
+        print("测试: 原始请求断开后重复请求继续工作")
+        
+        # 使用相同的payload确保触发去重机制，内容要足够长以产生流式响应
+        payload = {
+            "model": "claude-3-5-haiku-20241022",
+            "messages": [{"role": "user", "content": "请详细写一篇超长的文章，至少2000字，关于以下所有主题：1) Python编程语言的完整历史从1989年至今 2) Python的所有核心特性和语法 3) 面向对象编程的详细解释 4) 函数式编程概念 5) Python的标准库介绍 6) Web开发框架比较 7) 数据科学和机器学习应用 8) 并发和异步编程 9) 测试和调试最佳实践 10) Python的未来发展趋势。每个主题都要详细展开，给出具体例子和代码示例。"}],
+            "max_tokens": 2000,
+            "stream": True
+        }
+        
+        original_chunks = []
+        duplicate_chunks = []
+        original_disconnected = False
+        duplicate_completed = False
+        
+        def original_request():
+            """原始请求 - 会在开始后很快断开"""
+            nonlocal original_chunks, original_disconnected
+            try:
+                response = requests.post(
+                    f"{self.base_url}/v1/messages",
+                    headers=self.headers,
+                    json=payload,
+                    stream=True,
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    chunks_received = 0
+                    # 简化逻辑：收到响应后立即延迟一下再断开
+                    import time
+                    time.sleep(0.1)  # 让服务端开始处理
+                    
+                    for line in response.iter_lines():
+                        if line:
+                            line_str = line.decode('utf-8')
+                            print(f"   原始请求收到行: {line_str[:50]}")
+                            chunks_received += 1
+                            
+                            # 收到任何数据后立即断开
+                            if chunks_received >= 1:
+                                print(f"   原始请求在收到 {chunks_received} 行后断开")
+                                response.close()
+                                original_disconnected = True
+                                break
+                            
+            except Exception as e:
+                print(f"   原始请求异常: {e}")
+                original_disconnected = True
+        
+        def duplicate_request():
+            """重复请求 - 应该能获得完整响应"""
+            nonlocal duplicate_chunks, duplicate_completed
+            try:
+                # 稍微延迟确保原始请求先发送
+                time.sleep(0.5)
+                
+                response = requests.post(
+                    f"{self.base_url}/v1/messages",
+                    headers=self.headers,
+                    json=payload,  # 完全相同的payload
+                    stream=True,
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    chunks_received = 0
+                    for line in response.iter_lines():
+                        if line:
+                            line_str = line.decode('utf-8')
+                            if line_str.startswith('data: '):
+                                data_str = line_str[6:]
+                                if data_str.strip() == '[DONE]':
+                                    break
+                                try:
+                                    chunk_data = json.loads(data_str)
+                                    if chunk_data.get("type") == "content_block_delta":
+                                        duplicate_chunks.append(chunk_data)
+                                        chunks_received += 1
+                                    elif chunk_data.get("type") == "message_stop":
+                                        duplicate_completed = True
+                                        break
+                                except json.JSONDecodeError:
+                                    continue
+                    
+                    print(f"   重复请求收到 {chunks_received} 个数据块")
+                            
+            except Exception as e:
+                print(f"   重复请求异常: {e}")
+        
+        try:
+            # 启动两个并发请求
+            original_thread = threading.Thread(target=original_request)
+            duplicate_thread = threading.Thread(target=duplicate_request)
+            
+            original_thread.start()
+            duplicate_thread.start()
+            
+            # 等待两个请求完成
+            original_thread.join(timeout=60)
+            duplicate_thread.join(timeout=60)
+            
+            # 分析结果
+            original_count = len(original_chunks)
+            duplicate_count = len(duplicate_chunks)
+            
+            print(f"   原始请求收到: {original_count} 个数据块")
+            print(f"   重复请求收到: {duplicate_count} 个数据块")
+            print(f"   原始请求断开: {original_disconnected}")
+            print(f"   重复请求完成: {duplicate_completed}")
+            
+            # 验证逻辑：
+            # 1. 原始请求应该断开
+            # 2. 重复请求应该收到更多或相等的数据块（因为provider继续收集数据）
+            # 3. 重复请求应该能正常完成
+            
+            if (original_disconnected and 
+                duplicate_count >= original_count and 
+                duplicate_count > 0):
+                print("✅ 重复请求在原始断开后正常工作测试通过")
+                return True
+            else:
+                print("❌ 重复请求未能在原始断开后正常工作")
+                print(f"   期望: 原始断开={original_disconnected}, 重复数据>={original_count}")
+                print(f"   实际: 重复数据={duplicate_count}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ 重复请求测试失败: {e}")
+            return False
+    
+    def test_multiple_duplicates_after_original_disconnect(self):
+        """测试原始请求断开后多个重复请求都能正常工作"""
+        print("测试: 原始请求断开后多个重复请求工作")
+        
+        # 使用相同的payload确保触发去重机制，内容要足够长以产生流式响应
+        payload = {
+            "model": "claude-3-5-haiku-20241022", 
+            "messages": [{"role": "user", "content": "多重复请求测试：请写一篇关于机器学习基础概念的详细文章，包括监督学习、无监督学习、强化学习的区别和应用"}],
+            "max_tokens": 600,
+            "stream": True
+        }
+        
+        results = {}
+        
+        def make_request(request_id, disconnect_early=False):
+            """发送请求"""
+            nonlocal results
+            try:
+                # 为原始请求添加延迟确保它先启动
+                if request_id == "original":
+                    pass  # 立即启动
+                else:
+                    time.sleep(0.3)  # 重复请求稍后启动
+                
+                response = requests.post(
+                    f"{self.base_url}/v1/messages",
+                    headers=self.headers,
+                    json=payload,
+                    stream=True,
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    chunks_received = 0
+                    disconnected = False
+                    
+                    for line in response.iter_lines():
+                        if line:
+                            line_str = line.decode('utf-8')
+                            if line_str.startswith('data: '):
+                                data_str = line_str[6:]
+                                if data_str.strip() == '[DONE]':
+                                    break
+                                try:
+                                    chunk_data = json.loads(data_str)
+                                    if chunk_data.get("type") == "content_block_delta":
+                                        chunks_received += 1
+                                        
+                                        # 原始请求在中途断开
+                                        if disconnect_early and chunks_received >= 1:
+                                            print(f"   {request_id} 在第 {chunks_received} 个数据块后断开")
+                                            response.close()
+                                            disconnected = True
+                                            # 增加延迟让服务端检测到断开
+                                            import time
+                                            time.sleep(0.1)
+                                            break
+                                            
+                                except json.JSONDecodeError:
+                                    continue
+                    
+                    results[request_id] = {
+                        "chunks": chunks_received,
+                        "disconnected": disconnected,
+                        "success": True
+                    }
+                else:
+                    results[request_id] = {
+                        "chunks": 0,
+                        "disconnected": False,
+                        "success": False,
+                        "error": f"Status: {response.status_code}"
+                    }
+                            
+            except Exception as e:
+                results[request_id] = {
+                    "chunks": 0,
+                    "disconnected": True,
+                    "success": False,
+                    "error": str(e)
+                }
+        
+        try:
+            # 创建多个请求：1个原始请求（会断开）+ 3个重复请求
+            threads = []
+            
+            # 原始请求 - 会断开
+            original_thread = threading.Thread(
+                target=make_request, 
+                args=("original", True)
+            )
+            threads.append(original_thread)
+            
+            # 3个重复请求 - 不会断开
+            for i in range(3):
+                duplicate_thread = threading.Thread(
+                    target=make_request,
+                    args=(f"duplicate_{i}", False)
+                )
+                threads.append(duplicate_thread)
+            
+            # 启动所有请求
+            for thread in threads:
+                thread.start()
+            
+            # 等待所有请求完成
+            for thread in threads:
+                thread.join(timeout=60)
+            
+            # 分析结果
+            print("   请求结果:")
+            for req_id, result in results.items():
+                if result["success"]:
+                    status = "断开" if result["disconnected"] else "完成"
+                    print(f"     {req_id}: {result['chunks']} 个数据块 ({status})")
+                else:
+                    print(f"     {req_id}: 失败 - {result.get('error', '未知错误')}")
+            
+            # 验证逻辑
+            original = results.get("original", {})
+            duplicates = [results.get(f"duplicate_{i}", {}) for i in range(3)]
+            
+            # 原始请求应该断开
+            original_disconnected = original.get("disconnected", False)
+            original_chunks = original.get("chunks", 0)
+            
+            # 重复请求应该收到数据且数量 >= 原始请求
+            successful_duplicates = 0
+            for dup in duplicates:
+                if (dup.get("success", False) and 
+                    dup.get("chunks", 0) >= original_chunks and
+                    dup.get("chunks", 0) > 0):
+                    successful_duplicates += 1
+            
+            if original_disconnected and successful_duplicates >= 2:
+                print(f"✅ 多重复请求测试通过 ({successful_duplicates}/3 重复请求成功)")
+                return True
+            else:
+                print(f"❌ 多重复请求测试失败")
+                print(f"   原始断开: {original_disconnected}, 成功重复: {successful_duplicates}/3")
+                return False
+                
+        except Exception as e:
+            print(f"❌ 多重复请求测试失败: {e}")
+            return False
+
     def test_server_recovery_after_disconnects(self):
         """测试断开后服务器恢复"""
         print("测试: 断开后服务器恢复")
@@ -538,6 +817,8 @@ class TestClientDisconnect:
             self.test_abrupt_connection_close,
             self.test_timeout_vs_disconnect,
             self.test_rapid_connect_disconnect,
+            self.test_duplicate_requests_after_original_disconnect,
+            self.test_multiple_duplicates_after_original_disconnect,
             self.test_server_recovery_after_disconnects
         ]
         

@@ -643,9 +643,21 @@ class OAuthManager:
                     event="oauth_refresh_response_status",
                     message=f"Token refresh response status: {response.status_code}"
                 ))
+                # Redact sensitive token information from response
+                response_text = response.text
+                try:
+                    # Try to parse as JSON and redact tokens
+                    import re
+                    # Redact access_token and refresh_token fields
+                    response_text = re.sub(r'"access_token"\s*:\s*"[^"]*"', '"access_token":"[REDACTED]"', response_text)
+                    response_text = re.sub(r'"refresh_token"\s*:\s*"[^"]*"', '"refresh_token":"[REDACTED]"', response_text)
+                except:
+                    # If regex fails, truncate the response
+                    response_text = response_text[:200] + "..." if len(response_text) > 200 else response_text
+                
                 debug(LogRecord(
                     event="oauth_refresh_response_text",
-                    message=f"Token refresh response text: {response.text}"
+                    message=f"Token refresh response text: {response_text}"
                 ))
                 
                 if not response.is_success:
