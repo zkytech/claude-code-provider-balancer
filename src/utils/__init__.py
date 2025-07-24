@@ -11,7 +11,8 @@ This package contains various utility functions and classes:
 from .logging import (
     LogRecord, LogEvent, LogError,
     ColoredConsoleFormatter, JSONFormatter, ConsoleJSONFormatter,
-    init_logger, debug, info, warning, error, critical
+    init_logger, debug, info, warning, error, critical,
+    create_debug_request_info
 )
 
 # Re-export validation functions
@@ -22,6 +23,7 @@ __all__ = [
     "LogRecord", "LogEvent", "LogError",
     "ColoredConsoleFormatter", "JSONFormatter", "ConsoleJSONFormatter", 
     "init_logger", "debug", "info", "warning", "error", "critical",
+    "create_debug_request_info",
     # Validation utilities
     "validate_provider_health"
 ]

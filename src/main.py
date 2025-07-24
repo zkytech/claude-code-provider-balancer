@@ -40,7 +40,8 @@ from oauth import oauth_manager, init_oauth_manager, start_oauth_auto_refresh
 from utils import (
     LogRecord, LogEvent, LogError,
     ColoredConsoleFormatter, JSONFormatter, ConsoleJSONFormatter,
-    init_logger, debug, info, warning, error, critical
+    init_logger, debug, info, warning, error, critical,
+    create_debug_request_info
 )
 from models import (
     MessagesRequest, TokenCountRequest, TokenCountResponse,
@@ -641,6 +642,14 @@ def select_model_and_provider_options(client_model_name: str, request_id: str, p
     return provider_manager.select_model_and_provider_options(client_model_name)
 
 
+def _create_no_providers_error_message(model: str, provider_name: str = None) -> str:
+    """Create a unified error message for when no providers are available."""
+    if provider_name:
+        return f"Provider '{provider_name}' not found, unhealthy, or not configured for model: {model}"
+    else:
+        return f"All configured providers for model '{model}' are currently unable to process requests."
+
+
 async def _log_and_return_error_response(
     request: Request,
     exc: Exception,
@@ -756,10 +765,7 @@ async def create_message_proxy(
             messages_request.model, request_id, provider_name
         )
         if not provider_options:
-            if provider_name:
-                error_msg = f"Provider '{provider_name}' not found, unhealthy, or not configured for model: {messages_request.model}"
-            else:
-                error_msg = f"No available providers for model: {messages_request.model}"
+            error_msg = _create_no_providers_error_message(messages_request.model, provider_name)
             return await _log_and_return_error_response(
                 request, Exception(error_msg), request_id, 404
             )
@@ -1487,7 +1493,7 @@ async def create_message_proxy(
         )
         
         # Create a generic error message for the client that doesn't expose provider details
-        client_error_message = f"Service temporarily unavailable. All configured providers for model '{messages_request.model}' are currently unable to process requests."
+        client_error_message = _create_no_providers_error_message(messages_request.model)
         client_error = Exception(client_error_message)
         
         complete_and_cleanup_request(signature, last_exception, None, False, "unknown")
