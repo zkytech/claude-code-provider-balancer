@@ -23,12 +23,12 @@ except ImportError:
     KEYRING_AVAILABLE = False
     # Import will be available after this block
 
-from utils import info, warning, error, debug, LogRecord
+from utils import info, warning, error, debug, LogRecord, LogEvent
 
 # Warn about missing keyring if needed
 if not KEYRING_AVAILABLE:
     warning(LogRecord(
-        event="oauth_keyring_unavailable",
+        event=LogEvent.OAUTH_KEYRING_UNAVAILABLE.value,
         message="keyring library not available. Token persistence will be disabled."
     ))
 
@@ -144,13 +144,13 @@ class OAuthManager:
                 )
                 
                 debug(LogRecord(
-                    event="oauth_tokens_saved",
+                    event=LogEvent.OAUTH_TOKENS_SAVED.value,
                     message=f"Saved {len(tokens_data)} tokens to keyring"
                 ))
                 
         except Exception as e:
             warning(LogRecord(
-                event="oauth_save_failed",
+                event=LogEvent.OAUTH_SAVE_FAILED.value,
                 message=f"Failed to save tokens to keyring: {str(e)}"
             ))
     
@@ -184,14 +184,14 @@ class OAuthManager:
             )
             
             debug(LogRecord(
-                event="oauth_tokens_saved_async",
-                message=f"Saved {len(tokens_data)} tokens to keyring (async)"
+                event=LogEvent.OAUTH_TOKENS_SAVED_ASYNC.value,
+                message=f"Saved {len(tokens_data)} tokens usage statistics to keyring (async)"
             ))
             
         except Exception as e:
             warning(LogRecord(
-                event="oauth_save_failed_async",
-                message=f"Failed to save tokens to keyring (async): {str(e)}"
+                event=LogEvent.OAUTH_SAVE_FAILED_ASYNC.value,
+                message=f"Failed to save tokens usage statistics to keyring (async): {str(e)}"
             ))
     
     def _load_from_keyring(self):
@@ -203,7 +203,7 @@ class OAuthManager:
             stored_data = keyring.get_password(self.service_name, "oauth_tokens")
             if not stored_data:
                 debug(LogRecord(
-                    event="oauth_no_tokens_found",
+                    event=LogEvent.OAUTH_NO_TOKENS_FOUND.value,
                     message="No tokens found in keyring"
                 ))
                 return
@@ -230,7 +230,7 @@ class OAuthManager:
             saved_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_saved))
             
             info(LogRecord(
-                event="oauth_tokens_loaded",
+                event=LogEvent.OAUTH_TOKENS_LOADED.value,
                 message=f"Loaded {len(self.token_credentials)} tokens from keyring (saved: {saved_time})"
             ))
             
@@ -239,7 +239,7 @@ class OAuthManager:
                 
         except Exception as e:
             warning(LogRecord(
-                event="oauth_load_failed",
+                event=LogEvent.OAUTH_LOAD_FAILED.value,
                 message=f"Failed to load tokens from keyring: {str(e)}"
             ))
     
@@ -265,7 +265,7 @@ class OAuthManager:
                     self.current_token_index = 0
                 
                 info(LogRecord(
-                    event="oauth_tokens_cleaned",
+                    event=LogEvent.OAUTH_TOKENS_CLEANED.value,
                     message=f"Cleaned up {removed_count} expired tokens from storage"
                 ))
         
@@ -294,13 +294,13 @@ class OAuthManager:
                 )
                 
                 debug(LogRecord(
-                    event="oauth_tokens_saved_after_cleanup",
+                    event=LogEvent.OAUTH_TOKENS_SAVED_AFTER_CLEANUP.value,
                     message=f"Saved {len(tokens_data)} tokens to keyring after cleanup"
                 ))
                 
             except Exception as e:
                 warning(LogRecord(
-                    event="oauth_save_failed_after_cleanup",
+                    event=LogEvent.OAUTH_SAVE_FAILED_AFTER_CLEANUP.value,
                     message=f"Failed to save tokens to keyring after cleanup: {str(e)}"
                 ))
         
@@ -345,11 +345,11 @@ class OAuthManager:
         url = f"{OAUTH_AUTHORIZE_URL}?{urlencode(params)}"
         
         info(LogRecord(
-            event="oauth_url_generated",
+            event=LogEvent.OAUTH_URL_GENERATED.value,
             message="Generated OAuth login URL for Claude Code authentication"
         ))
         debug(LogRecord(
-            event="oauth_url_debug",
+            event=LogEvent.OAUTH_URL_DEBUG.value,
             message=f"OAuth URL: {url}"
         ))
         
@@ -359,7 +359,7 @@ class OAuthManager:
         """Exchange authorization code for access and refresh tokens"""
         if not self.oauth_state:
             error(LogRecord(
-                event="oauth_no_state",
+                event=LogEvent.OAUTH_NO_STATE.value,
                 message="No OAuth state found. Please generate login URL first."
             ))
             return None
@@ -367,7 +367,7 @@ class OAuthManager:
         # Check if state is expired
         if time.time() > self.oauth_state.expires_at:
             error(LogRecord(
-                event="oauth_state_expired",
+                event=LogEvent.OAUTH_STATE_EXPIRED.value,
                 message="OAuth state has expired (older than 10 minutes). Please generate new login URL."
             ))
             return None
@@ -409,7 +409,7 @@ class OAuthManager:
                 if not response.is_success:
                     error_text = response.text
                     error(LogRecord(
-                        event="oauth_token_exchange_failed",
+                        event=LogEvent.OAUTH_TOKEN_EXCHANGE_FAILED.value,
                         message=f"Token exchange failed: {response.status_code} - {error_text}"
                     ))
                     return None
@@ -434,7 +434,7 @@ class OAuthManager:
                             existing_creds.account_email.lower() == final_user_email.lower()):
                             is_duplicate = True
                             info(LogRecord(
-                                event="oauth_duplicate_found_email",
+                                event=LogEvent.OAUTH_DUPLICATE_FOUND_EMAIL.value,
                                 message=f"Found duplicate by email: {existing_creds.account_email}"
                             ))
                         
@@ -443,7 +443,7 @@ class OAuthManager:
                               existing_creds.access_token[:20] == token_data["access_token"][:20]):
                             is_duplicate = True
                             info(LogRecord(
-                                event="oauth_duplicate_found_token",
+                                event=LogEvent.OAUTH_DUPLICATE_FOUND_TOKEN.value,
                                 message=f"Found duplicate by token prefix: {existing_creds.access_token[:10]}..."
                             ))
                         
@@ -452,7 +452,7 @@ class OAuthManager:
                               existing_creds.refresh_token == token_data["refresh_token"]):
                             is_duplicate = True
                             info(LogRecord(
-                                event="oauth_duplicate_found_refresh",
+                                event=LogEvent.OAUTH_DUPLICATE_FOUND_REFRESH.value,
                                 message="Found duplicate by refresh token"
                             ))
                         
@@ -466,7 +466,7 @@ class OAuthManager:
                             if existing_creds.token_fingerprint == new_fingerprint:
                                 is_duplicate = True
                                 info(LogRecord(
-                                    event="oauth_duplicate_found_fingerprint",
+                                    event=LogEvent.OAUTH_DUPLICATE_FOUND_FINGERPRINT.value,
                                     message=f"Found duplicate by token fingerprint: {new_fingerprint}"
                                 ))
                         
@@ -474,7 +474,7 @@ class OAuthManager:
                         elif existing_creds.account_id == account_id:
                             is_duplicate = True
                             info(LogRecord(
-                                event="oauth_duplicate_found_account",
+                                event=LogEvent.OAUTH_DUPLICATE_FOUND_ACCOUNT.value,
                                 message=f"Found duplicate by account_id: {account_id}"
                             ))
                         
@@ -495,7 +495,7 @@ class OAuthManager:
                     for i in sorted(existing_indices, reverse=True):
                         old_creds = self.token_credentials[i]
                         info(LogRecord(
-                            event="oauth_token_removed",
+                            event=LogEvent.OAUTH_TOKEN_REMOVED.value,
                             message=f"Removing existing token for account {old_creds.account_id}"
                         ))
                         
@@ -534,7 +534,7 @@ class OAuthManager:
                 with self._lock:
                     self.token_credentials.append(credentials)
                     info(LogRecord(
-                        event="oauth_token_added",
+                        event=LogEvent.OAUTH_TOKEN_ADDED.value,
                         message=f"Added new token for account {credentials.account_id}"
                     ))
                 
@@ -562,13 +562,13 @@ class OAuthManager:
                         )
                         
                         debug(LogRecord(
-                            event="oauth_tokens_saved_after_exchange",
+                            event=LogEvent.OAUTH_TOKENS_SAVED_AFTER_EXCHANGE.value,
                             message=f"Saved {len(tokens_data)} tokens to keyring after exchange"
                         ))
                         
                     except Exception as e:
                         warning(LogRecord(
-                            event="oauth_save_failed_after_exchange",
+                            event=LogEvent.OAUTH_SAVE_FAILED_AFTER_EXCHANGE.value,
                             message=f"Failed to save tokens to keyring after exchange: {str(e)}"
                         ))
                 
@@ -576,11 +576,11 @@ class OAuthManager:
                 self.oauth_state = None
                 
                 info(LogRecord(
-                    event="oauth_exchange_success",
+                    event=LogEvent.OAUTH_EXCHANGE_SUCCESS.value,
                     message=f"Successfully exchanged authorization code for tokens. Account ID: {credentials.account_id}"
                 ))
                 info(LogRecord(
-                    event="oauth_token_expiry",
+                    event=LogEvent.OAUTH_TOKEN_EXPIRY.value,
                     message=f"Token expires at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(credentials.expires_at))}"
                 ))
                 
@@ -590,7 +590,7 @@ class OAuthManager:
                     task = asyncio.create_task(self._auto_refresh_loop(credentials))
                     self._refresh_tasks[credentials_index] = task
                     debug(LogRecord(
-                        event="oauth_auto_refresh_started",
+                        event=LogEvent.OAUTH_AUTO_REFRESH_STARTED.value,
                         message=f"Started auto-refresh for newly acquired token: {credentials.account_id}"
                     ))
                 
@@ -598,7 +598,7 @@ class OAuthManager:
                 
         except Exception as e:
             error(LogRecord(
-                event="oauth_exchange_error",
+                event=LogEvent.OAUTH_EXCHANGE_ERROR.value,
                 message=f"Error exchanging authorization code: {str(e)}"
             ))
             return None
@@ -627,7 +627,7 @@ class OAuthManager:
                 client_kwargs["proxy"] = self.proxy
             
             debug(LogRecord(
-                event="oauth_refresh_request",
+                event=LogEvent.OAUTH_REFRESH_REQUEST.value,
                 message=f"Token refresh request for {credentials.account_id} with proxy: {self.proxy}"
             ))
             
@@ -640,7 +640,7 @@ class OAuthManager:
                 )
                 
                 debug(LogRecord(
-                    event="oauth_refresh_response_status",
+                    event=LogEvent.OAUTH_REFRESH_RESPONSE_STATUS.value,
                     message=f"Token refresh response status: {response.status_code}"
                 ))
                 # Redact sensitive token information from response
@@ -656,7 +656,7 @@ class OAuthManager:
                     response_text = response_text[:200] + "..." if len(response_text) > 200 else response_text
                 
                 debug(LogRecord(
-                    event="oauth_refresh_response_text",
+                    event=LogEvent.OAUTH_REFRESH_RESPONSE_TEXT.value,
                     message=f"Token refresh response text: {response_text}"
                 ))
                 
@@ -664,14 +664,14 @@ class OAuthManager:
                     error_text = response.text
                     error_message = f"HTTP {response.status_code}: {error_text}"
                     error(LogRecord(
-                        event="oauth_refresh_failed",
+                        event=LogEvent.OAUTH_REFRESH_FAILED.value,
                         message=f"Token refresh failed for {credentials.account_id}: {error_message}"
                     ))
                     return None, error_message
                 
                 token_data = response.json()
                 debug(LogRecord(
-                    event="oauth_refresh_successful",
+                    event=LogEvent.OAUTH_REFRESH_SUCCESSFUL.value,
                     message="Token refresh successful, received new tokens"
                 ))
                 
@@ -687,11 +687,11 @@ class OAuthManager:
                     asyncio.create_task(self._safe_save_to_keyring())
                 
                 info(LogRecord(
-                    event="oauth_token_refreshed",
+                    event=LogEvent.OAUTH_TOKEN_REFRESHED.value,
                     message=f"Successfully refreshed token for {credentials.account_id}"
                 ))
                 debug(LogRecord(
-                    event="oauth_new_token_expiry",
+                    event=LogEvent.OAUTH_NEW_TOKEN_EXPIRY.value,
                     message=f"New token expires at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(credentials.expires_at))}"
                 ))
                 
@@ -700,7 +700,7 @@ class OAuthManager:
         except Exception as e:
             error_message = f"Network/Connection error: {str(e)}"
             error(LogRecord(
-                event="oauth_refresh_error",
+                event=LogEvent.OAUTH_REFRESH_ERROR.value,
                 message=f"Error refreshing token for {credentials.account_id}: {error_message}"
             ))
             return None, error_message
@@ -728,7 +728,7 @@ class OAuthManager:
                     # Move to next token for next request
                     self.current_token_index = (self.current_token_index + 1) % len(self.token_credentials)
                     debug(LogRecord(
-                        event="oauth_token_used",
+                        event=LogEvent.OAUTH_TOKEN_USED.value,
                         message=f"Using token from {credentials.account_id} (usage: {credentials.usage_count})"
                     ))
                     
@@ -750,7 +750,7 @@ class OAuthManager:
                 attempts += 1
             
             warning(LogRecord(
-                event="oauth_all_tokens_invalid",
+                event=LogEvent.OAUTH_ALL_TOKENS_INVALID.value,
                 message="All tokens are expired or invalid"
             ))
             return None
@@ -863,7 +863,7 @@ class OAuthManager:
                 task = asyncio.create_task(self._auto_refresh_loop(credentials))
                 self._refresh_tasks[i] = task
                 debug(LogRecord(
-                    event="oauth_auto_refresh_started",
+                    event=LogEvent.OAUTH_AUTO_REFRESH_STARTED.value,
                     message=f"Started auto-refresh for {credentials.account_id}"
                 ))
     
@@ -874,14 +874,14 @@ class OAuthManager:
                 # Check if token needs refresh (5 minutes before expiry)
                 if credentials.is_expired(300):
                     info(LogRecord(
-                        event="oauth_token_needs_refresh",
+                        event=LogEvent.OAUTH_TOKEN_NEEDS_REFRESH.value,
                         message=f"Token for {credentials.account_id} needs refresh"
                     ))
                     
                     refreshed, error_details = await self.refresh_token(credentials)
                     if not refreshed:
                         error(LogRecord(
-                            event="oauth_auto_refresh_failed",
+                            event=LogEvent.OAUTH_AUTO_REFRESH_FAILED.value,
                             message=f"Failed to refresh token for {credentials.account_id}"
                         ))
                         # Wait 1 hour before retry
@@ -891,7 +891,7 @@ class OAuthManager:
                 # Calculate next refresh time (5 minutes before expiry)
                 sleep_time = max(60, credentials.expires_at - time.time() - 300)
                 debug(LogRecord(
-                    event="oauth_next_refresh_scheduled",
+                    event=LogEvent.OAUTH_NEXT_REFRESH_SCHEDULED.value,
                     message=f"Next refresh for {credentials.account_id} in {sleep_time/60:.1f} minutes"
                 ))
                 
@@ -899,13 +899,13 @@ class OAuthManager:
                 
             except asyncio.CancelledError:
                 info(LogRecord(
-                    event="oauth_auto_refresh_cancelled",
+                    event=LogEvent.OAUTH_AUTO_REFRESH_CANCELLED.value,
                     message=f"Auto-refresh cancelled for {credentials.account_id} (likely due to manual token refresh or shutdown)"
                 ))
                 break
             except Exception as e:
                 error(LogRecord(
-                    event="oauth_auto_refresh_loop_error",
+                    event=LogEvent.OAUTH_AUTO_REFRESH_LOOP_ERROR.value,
                     message=f"Error in auto-refresh loop for {credentials.account_id}: {str(e)}"
                 ))
                 await asyncio.sleep(300)  # Wait 5 minutes before retry
@@ -929,7 +929,7 @@ class OAuthManager:
         if not target_credentials:
             error_msg = f"No token found for account email: {account_email}"
             warning(LogRecord(
-                event="oauth_refresh_by_email_not_found",
+                event=LogEvent.OAUTH_REFRESH_BY_EMAIL_NOT_FOUND.value,
                 message=error_msg
             ))
             return None, error_msg
@@ -937,13 +937,13 @@ class OAuthManager:
         if not target_credentials.refresh_token:
             error_msg = f"No refresh token available for account: {account_email}"
             warning(LogRecord(
-                event="oauth_refresh_by_email_no_refresh_token",
+                event=LogEvent.OAUTH_REFRESH_BY_EMAIL_NO_REFRESH_TOKEN.value,
                 message=error_msg
             ))
             return None, error_msg
         
         info(LogRecord(
-            event="oauth_refresh_by_email_start",
+            event=LogEvent.OAUTH_REFRESH_BY_EMAIL_START.value,
             message=f"Starting manual token refresh for account: {account_email}"
         ))
         
@@ -952,13 +952,13 @@ class OAuthManager:
         
         if refreshed_credentials:
             info(LogRecord(
-                event="oauth_refresh_by_email_success",
+                event=LogEvent.OAUTH_REFRESH_BY_EMAIL_SUCCESS.value,
                 message=f"Successfully refreshed token for account: {account_email}"
             ))
             return refreshed_credentials, None
         else:
             error(LogRecord(
-                event="oauth_refresh_by_email_failed",
+                event=LogEvent.OAUTH_REFRESH_BY_EMAIL_FAILED.value,
                 message=f"Failed to refresh token for account: {account_email}"
             ))
             return None, error_details
@@ -995,7 +995,7 @@ class OAuthManager:
                         self.current_token_index = 0
                     
                     info(LogRecord(
-                        event="oauth_token_removed_by_email",
+                        event=LogEvent.OAUTH_TOKEN_REMOVED_BY_EMAIL.value,
                         message=f"Removed token for {account_email}"
                     ))
                     
@@ -1023,13 +1023,13 @@ class OAuthManager:
                             )
                             
                             debug(LogRecord(
-                                event="oauth_tokens_saved_after_removal",
+                                event=LogEvent.OAUTH_TOKENS_SAVED_AFTER_REMOVAL.value,
                                 message=f"Saved {len(tokens_data)} tokens to keyring after removal"
                             ))
                             
                         except Exception as e:
                             warning(LogRecord(
-                                event="oauth_save_failed_after_removal",
+                                event=LogEvent.OAUTH_SAVE_FAILED_AFTER_REMOVAL.value,
                                 message=f"Failed to save tokens to keyring after removal: {str(e)}"
                             ))
                     
@@ -1056,7 +1056,7 @@ class OAuthManager:
             self.current_token_index = 0
             
             info(LogRecord(
-                event="oauth_all_tokens_cleared",
+                event=LogEvent.OAUTH_ALL_TOKENS_CLEARED.value,
                 message="Cleared all stored tokens"
             ))
         
@@ -1084,13 +1084,13 @@ class OAuthManager:
                 )
                 
                 debug(LogRecord(
-                    event="oauth_tokens_saved_after_clear",
+                    event=LogEvent.OAUTH_TOKENS_SAVED_AFTER_CLEAR.value,
                     message=f"Saved {len(tokens_data)} tokens to keyring after clear"
                 ))
                 
             except Exception as e:
                 warning(LogRecord(
-                    event="oauth_save_failed_after_clear",
+                    event=LogEvent.OAUTH_SAVE_FAILED_AFTER_CLEAR.value,
                     message=f"Failed to save tokens to keyring after clear: {str(e)}"
                 ))
 
@@ -1104,7 +1104,7 @@ def init_oauth_manager(config_settings: Optional[Dict[str, Any]] = None):
     # Don't reinitialize if already exists and has tokens
     if oauth_manager and oauth_manager.token_credentials:
         info(LogRecord(
-            event="oauth_existing_tokens_found",
+            event=LogEvent.OAUTH_EXISTING_TOKENS_FOUND.value,
             message="OAuth manager already initialized with tokens, skipping reinitialization"
         ))
         return oauth_manager
@@ -1125,7 +1125,7 @@ def init_oauth_manager(config_settings: Optional[Dict[str, Any]] = None):
     oauth_manager.service_name = service_name
     
     info(LogRecord(
-        event="oauth_manager_initialized",
+        event=LogEvent.OAUTH_MANAGER_INITIALIZED.value,
         message=f"OAuth manager initialized (persistence: {enable_persistence}, service: {service_name}, proxy: {proxy})"
     ))
     
@@ -1142,11 +1142,11 @@ async def start_oauth_auto_refresh(auto_refresh_enabled: bool = True):
     if oauth_manager and oauth_manager.token_credentials and auto_refresh_enabled:
         await oauth_manager.start_auto_refresh()
         info(LogRecord(
-            event="oauth_auto_refresh_all_started",
+            event=LogEvent.OAUTH_AUTO_REFRESH_ALL_STARTED.value,
             message=f"Started auto-refresh for {len(oauth_manager.token_credentials)} loaded tokens"
         ))
     elif not auto_refresh_enabled:
         info(LogRecord(
-            event="oauth_auto_refresh_disabled",
+            event=LogEvent.OAUTH_AUTO_REFRESH_DISABLED.value,
             message="Auto-refresh disabled by configuration"
         ))

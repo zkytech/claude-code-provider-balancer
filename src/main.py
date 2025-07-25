@@ -34,7 +34,7 @@ if current_dir not in sys.path:
 from core.provider_manager import ProviderManager
 from oauth import init_oauth_manager, start_oauth_auto_refresh
 from utils import (
-    LogRecord, ColoredConsoleFormatter, JSONFormatter,
+    LogRecord, LogEvent, ColoredConsoleFormatter, JSONFormatter,
     init_logger, info, warning
 )
 
@@ -251,11 +251,11 @@ async def lifespan(app: fastapi.FastAPI):
     """FastAPI lifespan event handler"""
     # Startup
     info(LogRecord(
-        event="fastapi_startup_complete",
+        event=LogEvent.FASTAPI_STARTUP_COMPLETE.value,
         message="FastAPI application startup complete"
     ))
     info(LogRecord(
-        event="oauth_manager_ready",
+        event=LogEvent.OAUTH_MANAGER_READY.value,
         message="OAuth manager ready for Claude Code Official authentication"
     ))
     
@@ -266,7 +266,7 @@ async def lifespan(app: fastapi.FastAPI):
         await start_oauth_auto_refresh(auto_refresh_enabled)
     except Exception as e:
         warning(LogRecord(
-            event="oauth_auto_refresh_start_failed",
+            event=LogEvent.OAUTH_AUTO_REFRESH_START_FAILED.value,
             message=f"Failed to start OAuth auto-refresh: {e}"
         ))
     
@@ -274,7 +274,7 @@ async def lifespan(app: fastapi.FastAPI):
     
     # Shutdown
     info(LogRecord(
-        event="fastapi_shutdown",
+        event=LogEvent.FASTAPI_SHUTDOWN.value,
         message="FastAPI application shutting down"
     ))
 
@@ -335,7 +335,7 @@ async def logging_middleware(request: Request, call_next):
     from utils import debug
     debug(
         LogRecord(
-            event="http_request",
+            event=LogEvent.HTTP_REQUEST.value,
             message=f"{request.method} {request.url.path}",
             data={
                 "method": request.method,

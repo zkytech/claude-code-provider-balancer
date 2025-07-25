@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from oauth import get_oauth_manager
-from utils import LogRecord, info, error
+from utils import LogRecord, LogEvent, info, error
 from core.provider_manager import ProviderManager
 
 
@@ -81,7 +81,7 @@ def create_oauth_router(provider_manager: ProviderManager) -> APIRouter:
             
         except Exception as e:
             error(LogRecord(
-                event="oauth_url_generation_error",
+                event=LogEvent.OAUTH_URL_GENERATION_ERROR.value,
                 message=f"Error generating OAuth URL: {str(e)}"
             ))
             return JSONResponse(
@@ -127,7 +127,7 @@ def create_oauth_router(provider_manager: ProviderManager) -> APIRouter:
                     await oauth_manager.start_auto_refresh()
                 else:
                     info(LogRecord(
-                        event="oauth_auto_refresh_disabled",
+                        event=LogEvent.OAUTH_AUTO_REFRESH_DISABLED.value,
                         message="Auto-refresh disabled - new token will not be auto-refreshed"
                     ))
                 
@@ -294,7 +294,7 @@ def create_oauth_router(provider_manager: ProviderManager) -> APIRouter:
             
         except Exception as e:
             error(LogRecord(
-                event="oauth_manual_refresh_error",
+                event=LogEvent.OAUTH_MANUAL_REFRESH_ERROR.value,
                 message=f"Error during manual token refresh for {account_email}: {str(e)}"
             ))
             return JSONResponse(

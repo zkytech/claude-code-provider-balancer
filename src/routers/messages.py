@@ -46,6 +46,21 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
             raw_body = await request.body()
             parsed_body = json.loads(raw_body.decode('utf-8'))
             
+            # Debug: Log client request headers and body
+            debug(
+                LogRecord(
+                    event=LogEvent.CLIENT_REQUEST_DEBUG.value,
+                    message="Client request received - DEBUG",
+                    request_id=request_id,
+                    data={
+                        "headers": dict(request.headers),
+                        "request_body": parsed_body,
+                        "method": request.method,
+                        "url": str(request.url)
+                    }
+                )
+            )
+            
             # Extract provider parameter separately before validation
             provider_name = parsed_body.pop("provider", None)
             
@@ -598,7 +613,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                         
                         info(
                             LogRecord(
-                                event="error_not_retryable",
+                                event=LogEvent.ERROR_NOT_RETRYABLE.value,
                                 message=f"Error type '{error_type}' not configured for failover, returning to client",
                                 request_id=request_id,
                                 data={
@@ -618,7 +633,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                         next_target_model, next_provider = provider_options[attempt + 1]
                         info(
                             LogRecord(
-                                event="provider_fallback",
+                                event=LogEvent.PROVIDER_FALLBACK.value,
                                 message=f"Falling back to provider: {next_provider.name} with model: {next_target_model}",
                                 request_id=request_id,
                                 data={
@@ -636,7 +651,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
             # All providers failed, return the last exception
             error(
                 LogRecord(
-                    event="all_providers_failed",
+                    event=LogEvent.ALL_PROVIDERS_FAILED.value,
                     message=f"All {max_attempts} provider(s) failed for model: {messages_request.model}",
                     request_id=request_id,
                     data={

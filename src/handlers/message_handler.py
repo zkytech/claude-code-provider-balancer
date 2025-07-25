@@ -135,7 +135,7 @@ class MessageHandler:
 
         info(
             LogRecord(
-                event="provider_request",
+                event=LogEvent.PROVIDER_REQUEST.value,
                 message=f"Making request to provider: {provider.name}",
                 request_id=request_id,
                 data={
@@ -150,11 +150,29 @@ class MessageHandler:
         await simulate_testing_delay(data, request_id)
 
         async with httpx.AsyncClient(timeout=timeout_config, proxy=proxy_config) as client:
-            if stream:
-                response = await client.post(url, json=data, headers=headers)
-                return response
-            else:
-                response = await client.post(url, json=data, headers=headers)
+            try:
+                if stream:
+                    response = await client.post(url, json=data, headers=headers)
+                    return response
+                else:
+                    response = await client.post(url, json=data, headers=headers)
+            except Exception as http_error:
+                # Log the specific HTTP/connection error before it propagates up
+                error_type = type(http_error).__name__
+                error(
+                    LogRecord(
+                        event=LogEvent.PROVIDER_REQUEST_ERROR.value,
+                        message=f"Provider {provider.name} request failed: {error_type}: {str(http_error)}",
+                        request_id=request_id,
+                        data={
+                            "provider": provider.name,
+                            "error_type": error_type,
+                            "error_message": str(http_error),
+                            "url": url
+                        }
+                    )
+                )
+                raise  # Re-raise the exception to maintain existing error handling flow
                 
                 # Check for HTTP error status codes first
                 if response.status_code >= 400:
@@ -170,7 +188,7 @@ class MessageHandler:
                     from utils.logging.handlers import error_file_only
                     error_file_only(
                         LogRecord(
-                            event="provider_http_error_details",
+                            event=LogEvent.PROVIDER_HTTP_ERROR_DETAILS.value,
                             message=f"Provider {provider.name} returned HTTP {response.status_code}",
                             request_id=request_id,
                             data={
@@ -209,7 +227,7 @@ class MessageHandler:
                     debug_info = create_debug_request_info(url, headers, data)
                     error(
                         LogRecord(
-                            event="provider_api_error_details",
+                            event=LogEvent.PROVIDER_API_ERROR_DETAILS.value,
                             message=f"Provider {provider.name} returned API error: {error_message}",
                             request_id=request_id,
                             data={
@@ -256,7 +274,7 @@ class MessageHandler:
 
             info(
                 LogRecord(
-                    event="provider_request",
+                    event=LogEvent.PROVIDER_REQUEST.value,
                     message=f"Making request to provider: {provider.name}",
                     request_id=request_id,
                     data={
@@ -315,6 +333,21 @@ class MessageHandler:
 
             return await client.chat.completions.create(**openai_params)
         except Exception as e:
+            # Log the specific OpenAI client error before it propagates up
+            error_type = type(e).__name__
+            error(
+                LogRecord(
+                    event=LogEvent.PROVIDER_REQUEST_ERROR.value,
+                    message=f"Provider {provider.name} OpenAI client request failed: {error_type}: {str(e)}",
+                    request_id=request_id,
+                    data={
+                        "provider": provider.name,
+                        "error_type": error_type,
+                        "error_message": str(e),
+                        "base_url": provider.base_url
+                    }
+                )
+            )
             raise e
 
     async def _log_and_return_error_response(

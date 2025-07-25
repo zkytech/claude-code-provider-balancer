@@ -1072,10 +1072,10 @@ def extract_content_from_sse_chunks(sse_chunks: List[str]) -> Dict[str, Any]:
     
     # 记录最终提取结果
     try:
-        from utils.logging.handlers import debug, LogRecord
+        from utils.logging.handlers import debug, LogRecord, LogEvent
         debug(
             LogRecord(
-                event="sse_extraction_complete",
+                event=LogEvent.SSE_EXTRACTION_COMPLETE.value,
                 message=f"SSE extraction complete: {len(content_blocks)} content blocks",
                 request_id=None,
                 data={

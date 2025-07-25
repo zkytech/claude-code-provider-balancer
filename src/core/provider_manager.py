@@ -16,7 +16,7 @@ from enum import Enum
 import httpx
 
 # OAuth manager will be imported dynamically when needed
-from utils import info, warning, error, debug, LogRecord
+from utils import info, warning, error, debug, LogRecord, LogEvent
 
 
 class ProviderType(str, Enum):
@@ -165,7 +165,7 @@ class ProviderManager:
                         streaming_mode=streaming_mode
                     )
                     debug(LogRecord(
-                        event="provider_loaded",
+                        event=LogEvent.PROVIDER_LOADED.value,
                         message=f"Loaded provider {provider.name} with auth_type={provider.auth_type}, auth_value={provider.auth_value}"
                     ))
                     self.providers.append(provider)
@@ -402,7 +402,7 @@ class ProviderManager:
         }
         
         debug(LogRecord(
-            event="get_provider_headers_start",
+            event=LogEvent.GET_PROVIDER_HEADERS_START.value,
             message=f"Provider {provider.name}: auth_type={provider.auth_type}, auth_value={provider.auth_value}"
         ))
         
@@ -436,7 +436,7 @@ class ProviderManager:
                 oauth_manager = None
             
             debug(LogRecord(
-                event="oauth_manager_check", 
+                event=LogEvent.OAUTH_MANAGER_CHECK.value, 
                 message=f"OAuth manager status: {oauth_manager is not None}, type: {type(oauth_manager)}"
             ))
             if not oauth_manager:
