@@ -291,7 +291,7 @@ app = fastapi.FastAPI(
 app.include_router(create_messages_router(provider_manager, settings))
 app.include_router(create_oauth_router(provider_manager))
 app.include_router(create_health_router(provider_manager, settings.app_name, settings.app_version))
-app.include_router(create_management_router())
+app.include_router(create_management_router(provider_manager))
 
 # Exception handlers
 @app.exception_handler(ValidationError)
