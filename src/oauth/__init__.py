@@ -11,10 +11,10 @@ It provides functionality for:
 
 from .oauth_manager import (
     OAuthManager, TokenCredentials, 
-    oauth_manager, init_oauth_manager, start_oauth_auto_refresh
+    oauth_manager, init_oauth_manager, start_oauth_auto_refresh, get_oauth_manager
 )
 
 __all__ = [
     "OAuthManager", "TokenCredentials",
-    "oauth_manager", "init_oauth_manager", "start_oauth_auto_refresh"
+    "oauth_manager", "init_oauth_manager", "start_oauth_auto_refresh", "get_oauth_manager"
 ]

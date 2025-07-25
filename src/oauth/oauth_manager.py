@@ -1131,6 +1131,11 @@ def init_oauth_manager(config_settings: Optional[Dict[str, Any]] = None):
     
     return oauth_manager
 
+def get_oauth_manager():
+    """Get the current OAuth manager instance"""
+    global oauth_manager
+    return oauth_manager
+
 async def start_oauth_auto_refresh(auto_refresh_enabled: bool = True):
     """Start auto-refresh for loaded tokens (should be called after app startup)"""
     global oauth_manager

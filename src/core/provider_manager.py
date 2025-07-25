@@ -15,8 +15,7 @@ from dataclasses import dataclass
 from enum import Enum
 import httpx
 
-# Import OAuth manager for Claude Code Official authentication  
-from oauth import oauth_manager
+# OAuth manager will be imported dynamically when needed
 from utils import info, warning, error, debug, LogRecord
 
 
@@ -28,6 +27,7 @@ class ProviderType(str, Enum):
 class AuthType(str, Enum):
     API_KEY = "api_key"
     AUTH_TOKEN = "auth_token"
+    OAUTH = "oauth"
 
 
 class SelectionStrategy(str, Enum):
@@ -164,6 +164,10 @@ class ProviderManager:
                         proxy=provider_config.get('proxy'),
                         streaming_mode=streaming_mode
                     )
+                    debug(LogRecord(
+                        event="provider_loaded",
+                        message=f"Loaded provider {provider.name} with auth_type={provider.auth_type}, auth_value={provider.auth_value}"
+                    ))
                     self.providers.append(provider)
             
             # 加载模型路由配置
@@ -397,6 +401,11 @@ class ProviderManager:
             "Content-Type": "application/json"
         }
         
+        debug(LogRecord(
+            event="get_provider_headers_start",
+            message=f"Provider {provider.name}: auth_type={provider.auth_type}, auth_value={provider.auth_value}"
+        ))
+        
         
         # 如果提供了原始请求头，先复制它们（排除需要替换的认证头、host头和content-length头）
         if original_headers:
@@ -418,8 +427,18 @@ class ProviderManager:
             # 为Anthropic类型的provider添加版本头
             if provider.type == ProviderType.ANTHROPIC:
                 headers["anthropic-version"] = "2023-06-01"
-        elif provider.auth_value == "oauth":
+        elif provider.auth_type == AuthType.OAUTH:
             # OAuth模式：从OAuth manager获取token
+            try:
+                from oauth import get_oauth_manager
+                oauth_manager = get_oauth_manager()
+            except ImportError:
+                oauth_manager = None
+            
+            debug(LogRecord(
+                event="oauth_manager_check", 
+                message=f"OAuth manager status: {oauth_manager is not None}, type: {type(oauth_manager)}"
+            ))
             if not oauth_manager:
                 # OAuth manager未初始化，触发OAuth授权流程
                 self.handle_oauth_authorization_required(provider)
@@ -446,11 +465,8 @@ class ProviderManager:
                 )
                 raise HTTPStatusError("401 Unauthorized", request=response.request, response=response)
             
-            # 使用内存中的token
-            if provider.auth_type == AuthType.AUTH_TOKEN:
-                headers["Authorization"] = f"Bearer {access_token}"
-            elif provider.auth_type == AuthType.API_KEY:
-                headers["x-api-key"] = access_token
+            # 使用OAuth token作为Bearer token
+            headers["Authorization"] = f"Bearer {access_token}"
             
             # 为Anthropic类型的provider添加版本头
             if provider.type == ProviderType.ANTHROPIC:
@@ -511,6 +527,12 @@ class ProviderManager:
         """Handle 401/403 authorization required error for OAuth providers"""
         if provider.name == "Claude Code Official":
             # Check if OAuth manager is available
+            try:
+                from oauth import get_oauth_manager
+                oauth_manager = get_oauth_manager()
+            except ImportError:
+                oauth_manager = None
+                
             if not oauth_manager:
                 print("\n" + "="*80)
                 print("❌ OAUTH MANAGER NOT AVAILABLE")

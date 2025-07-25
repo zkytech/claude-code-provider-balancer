@@ -1,7 +1,7 @@
 """
-Claude Code Provider Balancer - Main Application Entry Point (Refactored)
+Claude Code Provider Balancer - Main Application Entry Point
 
-Refactored modular FastAPI application with separated concerns:
+Modular FastAPI application with separated concerns:
 - Routers: API endpoint definitions
 - Handlers: Business logic
 - Core: Provider management, streaming, etc.
@@ -403,7 +403,7 @@ def _display_startup_banner():
         
         config_details_text = Text.assemble(
             ("   Version       : ", "default"),
-            (f"v{settings.app_version} (Refactored)", "bold cyan"),
+            (f"v{settings.app_version}", "bold cyan"),
             ("\n   Providers     : ", "default"),
             (f"{healthy_count}/{total_count} healthy", "bold green" if healthy_count > 0 else "bold red"),
             (providers_text, "default"),
@@ -424,7 +424,7 @@ def _display_startup_banner():
         
         config_details_text = Text.assemble(
             ("   Version       : ", "default"),
-            (f"v{settings.app_version} (Refactored)", "bold cyan"),
+            (f"v{settings.app_version}", "bold cyan"),
             ("\n   Status        : ", "default"),
             ("Provider manager failed to initialize", "bold red"),
             ("\n   Log Level     : ", "default"),

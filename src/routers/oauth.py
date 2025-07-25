@@ -8,7 +8,7 @@ from typing import Dict, Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from oauth import oauth_manager
+from oauth import get_oauth_manager
 from utils import LogRecord, info, error
 from core.provider_manager import ProviderManager
 
@@ -43,6 +43,7 @@ def create_oauth_router(provider_manager: ProviderManager) -> APIRouter:
         without waiting for a 401 error. Useful for proactive account setup.
         """
         try:
+            oauth_manager = get_oauth_manager()
             if not oauth_manager:
                 return JSONResponse(
                     status_code=500,
@@ -52,13 +53,6 @@ def create_oauth_router(provider_manager: ProviderManager) -> APIRouter:
                 )
             
             # Generate OAuth login URL
-            if not oauth_manager:
-                return JSONResponse(
-                    status_code=500,
-                    content={
-                        "error": "OAuth manager not initialized. Please check server logs."
-                    }
-                )
             
             login_url = oauth_manager.generate_login_url()
             
@@ -118,6 +112,7 @@ def create_oauth_router(provider_manager: ProviderManager) -> APIRouter:
                 )
             
             # Exchange code for tokens (with required account email)
+            oauth_manager = get_oauth_manager()
             if not oauth_manager:
                 return JSONResponse(
                     status_code=500,
@@ -166,6 +161,7 @@ def create_oauth_router(provider_manager: ProviderManager) -> APIRouter:
     async def get_oauth_status() -> JSONResponse:
         """Get comprehensive status of stored OAuth tokens and system state"""
         try:
+            oauth_manager = get_oauth_manager()
             if not oauth_manager:
                 return JSONResponse(
                     status_code=500,
@@ -230,6 +226,7 @@ def create_oauth_router(provider_manager: ProviderManager) -> APIRouter:
     async def remove_oauth_token(account_email: str) -> JSONResponse:
         """Remove a specific OAuth token"""
         try:
+            oauth_manager = get_oauth_manager()
             if not oauth_manager:
                 return JSONResponse(
                     status_code=500,
@@ -257,6 +254,7 @@ def create_oauth_router(provider_manager: ProviderManager) -> APIRouter:
     async def refresh_oauth_token(account_email: str) -> JSONResponse:
         """Manually refresh OAuth token for a specific account"""
         try:
+            oauth_manager = get_oauth_manager()
             if not oauth_manager:
                 return JSONResponse(
                     status_code=500,
@@ -308,6 +306,7 @@ def create_oauth_router(provider_manager: ProviderManager) -> APIRouter:
     async def clear_all_oauth_tokens() -> JSONResponse:
         """Clear all stored OAuth tokens"""
         try:
+            oauth_manager = get_oauth_manager()
             if not oauth_manager:
                 return JSONResponse(
                     status_code=500,
