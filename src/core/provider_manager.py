@@ -16,7 +16,7 @@ from enum import Enum
 import httpx
 
 # Import OAuth manager for Claude Code Official authentication  
-from oauth import oauth_manager as oauth_module
+from oauth import oauth_manager
 from utils import info, warning, error, debug, LogRecord
 
 
@@ -420,7 +420,7 @@ class ProviderManager:
                 headers["anthropic-version"] = "2023-06-01"
         elif provider.auth_value == "oauth":
             # OAuth模式：从OAuth manager获取token
-            if not oauth_module.oauth_manager:
+            if not oauth_manager:
                 # OAuth manager未初始化，触发OAuth授权流程
                 self.handle_oauth_authorization_required(provider)
                 from httpx import HTTPStatusError
@@ -432,7 +432,7 @@ class ProviderManager:
                 )
                 raise HTTPStatusError("401 Unauthorized", request=response.request, response=response)
             
-            access_token = oauth_module.oauth_manager.get_current_token()
+            access_token = oauth_manager.get_current_token()
             if not access_token:
                 # 触发OAuth授权流程 (永远启用)
                 self.handle_oauth_authorization_required(provider)
@@ -511,7 +511,7 @@ class ProviderManager:
         """Handle 401/403 authorization required error for OAuth providers"""
         if provider.name == "Claude Code Official":
             # Check if OAuth manager is available
-            if not oauth_module.oauth_manager:
+            if not oauth_manager:
                 print("\n" + "="*80)
                 print("❌ OAUTH MANAGER NOT AVAILABLE")
                 print("="*80)
