@@ -37,6 +37,34 @@ class LogEvent(enum.Enum):
     STREAMING_REQUEST = "streaming_request"
     STREAM_INTERRUPTED = "stream_interrupted"
     SSE_EXTRACTION_COMPLETE = "sse_extraction_complete"
+    FRIENDLY_ERROR_SENT_TO_CLIENT = "friendly_error_sent_to_client"
+    FAILED_TO_SEND_FRIENDLY_ERROR = "failed_to_send_friendly_error"
+    PROVIDER_STREAM_ERROR = "provider_stream_error"
+    CHUNK_AVAILABLE_FOR_DUPLICATES = "chunk_available_for_duplicates"
+    
+    # Client streaming events
+    CHUNK_PREPARED_FOR_CLIENT = "chunk_prepared_for_client"
+    CLIENT_DISCONNECTED_DURING_SEND = "client_disconnected_during_send"
+    CLIENT_ADDED_TO_BROADCASTER = "client_added_to_broadcaster"
+    DUPLICATE_REQUEST_MID_STREAM = "duplicate_request_mid_stream"
+    HISTORICAL_CHUNK_YIELDED_TO_DUPLICATE = "historical_chunk_yielded_to_duplicate"
+    DUPLICATE_DISCONNECTED_DURING_HISTORICAL_CHUNK = "duplicate_disconnected_during_historical_chunk"
+    LIVE_CHUNK_YIELDED_TO_DUPLICATE = "live_chunk_yielded_to_duplicate"
+    DUPLICATE_DISCONNECTED_DURING_LIVE_CHUNK = "duplicate_disconnected_during_live_chunk"
+    NO_ACTIVE_CLIENTS_FOR_BROADCAST = "no_active_clients_for_broadcast"
+    BROADCAST_CHUNK_COMPLETED = "broadcast_chunk_completed"
+    PARALLEL_BROADCAST_STARTED = "parallel_broadcast_started"
+    CHUNK_YIELDED_TO_ORIGINAL_CLIENT = "chunk_yielded_to_original_client"
+    ORIGINAL_CLIENT_DISCONNECTED_DURING_YIELD = "original_client_disconnected_during_yield"
+    CONTINUING_FOR_DUPLICATE_CLIENTS = "continuing_for_duplicate_clients"
+    STOPPING_NO_DUPLICATE_CLIENTS = "stopping_no_duplicate_clients"
+    BROADCAST_SESSION_SUMMARY = "broadcast_session_summary"
+    
+    # Broadcaster registry events
+    BROADCASTER_REGISTERED = "broadcaster_registered"
+    BROADCASTER_UNREGISTERED = "broadcaster_unregistered"
+    DUPLICATE_REQUEST_FOUND_ACTIVE_BROADCASTER = "duplicate_request_found_active_broadcaster"
+    DUPLICATE_REQUEST_NO_ACTIVE_BROADCASTER = "duplicate_request_no_active_broadcaster"
     
     # Token counting events
     TOKEN_COUNT = "token_count"

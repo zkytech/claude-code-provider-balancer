@@ -6,7 +6,7 @@ Handles client disconnections gracefully through exception-based detection.
 import asyncio
 from typing import List, AsyncGenerator, Tuple, Optional
 from fastapi import Request
-from utils.logging import debug, info, error, LogRecord
+from utils.logging import debug, info, error, LogRecord, LogEvent
 
 
 class ClientStream:
@@ -41,7 +41,7 @@ class ClientStream:
             self.chunks_sent += 1
             debug(
                 LogRecord(
-                    "chunk_prepared_for_client",
+                    LogEvent.CHUNK_PREPARED_FOR_CLIENT.value,
                     f"Prepared chunk {chunk_index} for {self.client_type} client ({len(chunk)} bytes)",
                     self.request_id,
                     {
@@ -60,7 +60,7 @@ class ClientStream:
             self.last_error = e
             debug(
                 LogRecord(
-                    "client_disconnected_during_send",
+                    LogEvent.CLIENT_DISCONNECTED_DURING_SEND.value,
                     f"Client disconnected during chunk {chunk_index} send: {type(e).__name__}: {e}",
                     self.request_id,
                     {
@@ -97,7 +97,7 @@ class ParallelBroadcaster:
         self.clients.append(client)
         info(
             LogRecord(
-                "client_added_to_broadcaster",
+                LogEvent.CLIENT_ADDED_TO_BROADCASTER.value,
                 f"Added {client_type} client to broadcaster",
                 self.request_id,
                 {
@@ -117,7 +117,7 @@ class ParallelBroadcaster:
         """
         info(
             LogRecord(
-                "duplicate_request_mid_stream",
+                LogEvent.DUPLICATE_REQUEST_MID_STREAM.value,
                 f"Adding duplicate request mid-stream after {len(self.collected_chunks)} chunks",
                 self.request_id,
                 {
@@ -138,7 +138,7 @@ class ParallelBroadcaster:
                 yield chunk
                 debug(
                     LogRecord(
-                        "historical_chunk_yielded_to_duplicate",
+                        LogEvent.HISTORICAL_CHUNK_YIELDED_TO_DUPLICATE.value,
                         f"Yielded historical chunk {i+1}/{len(self.collected_chunks)} to duplicate ({len(chunk)} bytes)",
                         duplicate_request_id,
                         {
@@ -152,7 +152,7 @@ class ParallelBroadcaster:
             except Exception as e:
                 error(
                     LogRecord(
-                        "duplicate_disconnected_during_historical_chunk",
+                        LogEvent.DUPLICATE_DISCONNECTED_DURING_HISTORICAL_CHUNK.value,
                         f"Duplicate client disconnected during historical chunk {i+1}: {type(e).__name__}: {e}",
                         duplicate_request_id,
                         {
@@ -183,7 +183,7 @@ class ParallelBroadcaster:
                         yield chunk
                         debug(
                             LogRecord(
-                                "live_chunk_yielded_to_duplicate",
+                                LogEvent.LIVE_CHUNK_YIELDED_TO_DUPLICATE.value,
                                 f"Yielded live chunk {i+1} to duplicate ({len(chunk)} bytes)",
                                 duplicate_request_id,
                                 {
@@ -197,7 +197,7 @@ class ParallelBroadcaster:
                     except Exception as e:
                         error(
                             LogRecord(
-                                "duplicate_disconnected_during_live_chunk",
+                                LogEvent.DUPLICATE_DISCONNECTED_DURING_LIVE_CHUNK.value,
                                 f"Duplicate client disconnected during live chunk {i+1}: {type(e).__name__}: {e}",
                                 duplicate_request_id,
                                 {
@@ -230,7 +230,7 @@ class ParallelBroadcaster:
         if not active_clients:
             debug(
                 LogRecord(
-                    "no_active_clients_for_broadcast",
+                    LogEvent.NO_ACTIVE_CLIENTS_FOR_BROADCAST.value,
                     f"No active clients remaining for chunk {self.total_chunks_processed}",
                     self.request_id,
                     {
@@ -258,7 +258,7 @@ class ParallelBroadcaster:
         
         debug(
             LogRecord(
-                "broadcast_chunk_completed",
+                LogEvent.BROADCAST_CHUNK_COMPLETED.value,
                 f"Broadcasted chunk {self.total_chunks_processed} to {successful_sends}/{len(active_clients)} clients",
                 self.request_id,
                 {
@@ -281,7 +281,7 @@ class ParallelBroadcaster:
         """
         debug(
             LogRecord(
-                "parallel_broadcast_started",
+                LogEvent.PARALLEL_BROADCAST_STARTED.value,
                 f"Starting parallel broadcast to {len(self.clients)} clients",
                 self.request_id,
                 {
@@ -306,7 +306,7 @@ class ParallelBroadcaster:
                     yield chunk
                     debug(
                         LogRecord(
-                            "chunk_yielded_to_original_client",
+                            LogEvent.CHUNK_YIELDED_TO_ORIGINAL_CLIENT.value,
                             f"Successfully yielded chunk {self.total_chunks_processed} to original client ({len(chunk)} bytes)",
                             self.request_id,
                             {
@@ -321,7 +321,7 @@ class ParallelBroadcaster:
                     # Original client disconnected during yield
                     debug(
                         LogRecord(
-                            "original_client_disconnected_during_yield",
+                            LogEvent.ORIGINAL_CLIENT_DISCONNECTED_DURING_YIELD.value,
                             f"Original client disconnected during yield: {type(e).__name__}: {e}",
                             self.request_id,
                             {
@@ -341,7 +341,7 @@ class ParallelBroadcaster:
                     if remaining_active > 0:
                         info(
                             LogRecord(
-                                "continuing_for_duplicate_clients",
+                                LogEvent.CONTINUING_FOR_DUPLICATE_CLIENTS.value,
                                 f"Original client disconnected but continuing for {remaining_active} duplicate clients",
                                 self.request_id,
                                 {
@@ -358,7 +358,7 @@ class ParallelBroadcaster:
                         # No duplicate clients, stop provider stream
                         info(
                             LogRecord(
-                                "stopping_no_duplicate_clients",
+                                LogEvent.STOPPING_NO_DUPLICATE_CLIENTS.value,
                                 f"Original client disconnected and no duplicate clients, stopping provider stream",
                                 self.request_id,
                                 {
@@ -374,7 +374,7 @@ class ParallelBroadcaster:
                 if duplicate_count > 0:
                     debug(
                         LogRecord(
-                            "chunk_available_for_duplicates",
+                            LogEvent.CHUNK_AVAILABLE_FOR_DUPLICATES.value,
                             f"Chunk {self.total_chunks_processed} stored and available for {duplicate_count} duplicate clients",
                             self.request_id,
                             {
@@ -389,7 +389,7 @@ class ParallelBroadcaster:
         except Exception as e:
             error(
                 LogRecord(
-                    "provider_stream_error",
+                    LogEvent.PROVIDER_STREAM_ERROR.value,
                     f"Error in provider stream: {type(e).__name__}: {e}",
                     self.request_id,
                     {
@@ -400,17 +400,129 @@ class ParallelBroadcaster:
                     }
                 )
             )
-            raise
+            
+            # Send friendly error message to client before ending stream
+            try:
+                error_message = self._generate_friendly_error_message(e)
+                
+                # Send error message as content delta
+                error_chunk = {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {
+                        "type": "text_delta", 
+                        "text": error_message
+                    }
+                }
+                
+                import json
+                yield f"event: content_block_delta\ndata: {json.dumps(error_chunk)}\n\n"
+                
+                # Send content block stop
+                content_block_stop = {
+                    "type": "content_block_stop",
+                    "index": 0
+                }
+                yield f"event: content_block_stop\ndata: {json.dumps(content_block_stop)}\n\n"
+                
+                # Send message delta with stop reason
+                message_delta = {
+                    "type": "message_delta",
+                    "delta": {
+                        "stop_reason": "error",
+                        "stop_sequence": None
+                    }
+                }
+                yield f"event: message_delta\ndata: {json.dumps(message_delta)}\n\n"
+                
+                # Send message stop to properly end the stream
+                message_stop = {"type": "message_stop"}
+                yield f"event: message_stop\ndata: {json.dumps(message_stop)}\n\n"
+                
+                debug(
+                    LogRecord(
+                        LogEvent.FRIENDLY_ERROR_SENT_TO_CLIENT.value,
+                        f"Sent friendly error message to client after provider error",
+                        self.request_id,
+                        {
+                            "provider": self.provider_name,
+                            "error_type": type(e).__name__,
+                            "chunks_processed": self.total_chunks_processed,
+                            "error_message": error_message
+                        }
+                    )
+                )
+                
+            except Exception as yield_error:
+                # If we can't send the friendly error, log it and raise the original error
+                error(
+                    LogRecord(
+                        LogEvent.FAILED_TO_SEND_FRIENDLY_ERROR.value,
+                        f"Failed to send friendly error message: {type(yield_error).__name__}: {yield_error}",
+                        self.request_id,
+                        {
+                            "provider": self.provider_name,
+                            "original_error": str(e),
+                            "yield_error": str(yield_error)
+                        }
+                    )
+                )
+                raise
         finally:
             self.streaming_active = False  # Signal that streaming has ended
             self._log_broadcast_summary()
     
+    def _generate_friendly_error_message(self, error: Exception) -> str:
+        """Generate a user-friendly error message based on the exception type"""
+        error_type = type(error).__name__
+        error_str = str(error).lower()
+        
+        # Determine error category and generate appropriate message
+        if "remoteprotocolerror" in error_type.lower():
+            if "peer closed connection" in error_str:
+                return ("\n\n⚠️ **Connection Interrupted**\n\n"
+                       "The response was unexpectedly interrupted due to a network connection issue. This is usually a temporary problem.\n\n"
+                       "**Recommended actions:**\n"
+                       "• Please resend your request to get the complete response\n"
+                       "• If the problem persists, please try again later")
+        
+        elif any(keyword in error_str for keyword in ["timeout", "timed out"]):
+            return ("\n\n⏱️ **Request Timeout**\n\n"
+                   "The request took too long to process and timed out.\n\n"
+                   "**Recommended actions:**\n"
+                   "• Please resend your request\n"
+                   "• For complex tasks, try breaking them into simpler requests")
+        
+        elif any(keyword in error_str for keyword in ["connection", "network"]):
+            return ("\n\n🌐 **Network Connection Issue**\n\n"
+                   "There was a problem with the network connection to the server.\n\n"
+                   "**Recommended actions:**\n"
+                   "• Check your network connection\n"
+                   "• Resend your request\n"
+                   "• If the issue persists, please try again later")
+        
+        elif "rate limit" in error_str or "too many requests" in error_str:
+            return ("\n\n🚦 **Rate Limit Exceeded**\n\n"
+                   "Requests are too frequent and have triggered rate limiting.\n\n"
+                   "**Recommended actions:**\n"
+                   "• Please wait a few minutes before retrying\n"
+                   "• Reduce request frequency")
+        
+        else:
+            # Generic error message for unknown errors
+            return ("\n\n❌ **Service Temporarily Unavailable**\n\n"
+                   f"The service encountered a technical issue ({error_type}).\n\n"
+                   "**Recommended actions:**\n"
+                   "• Please resend your request\n"
+                   "• If the problem persists, please try again later\n"
+                   "• You may try using other available service providers")
+
     def _log_broadcast_summary(self):
         """Log summary of broadcast session"""
         active_clients = self.get_active_clients()
         info(
             LogRecord(
-                "broadcast_session_summary",
+                LogEvent.BROADCAST_SESSION_SUMMARY.value,
                 f"Broadcast session completed: {self.total_chunks_processed} chunks to {len(self.clients)} clients",
                 self.request_id,
                 {
@@ -444,7 +556,7 @@ def register_broadcaster(signature: str, broadcaster: ParallelBroadcaster):
     _active_broadcasters[signature] = broadcaster
     debug(
         LogRecord(
-            "broadcaster_registered",
+            LogEvent.BROADCASTER_REGISTERED.value,
             f"Broadcaster registered for signature {signature[:16]}...",
             broadcaster.request_id,
             {
@@ -461,7 +573,7 @@ def unregister_broadcaster(signature: str):
         broadcaster = _active_broadcasters.pop(signature)
         debug(
             LogRecord(
-                "broadcaster_unregistered",
+                LogEvent.BROADCASTER_UNREGISTERED.value,
                 f"Broadcaster unregistered for signature {signature[:16]}...",
                 broadcaster.request_id,
                 {
@@ -486,7 +598,7 @@ async def handle_duplicate_stream_request(signature: str, duplicate_request: Req
         broadcaster = _active_broadcasters[signature]
         info(
             LogRecord(
-                "duplicate_request_found_active_broadcaster",
+                LogEvent.DUPLICATE_REQUEST_FOUND_ACTIVE_BROADCASTER.value,
                 f"Found active broadcaster for duplicate request",
                 duplicate_request_id,
                 {
@@ -505,7 +617,7 @@ async def handle_duplicate_stream_request(signature: str, duplicate_request: Req
         # No active broadcaster found
         debug(  # Changed from error to debug since this is expected behavior
             LogRecord(
-                "duplicate_request_no_active_broadcaster",
+                LogEvent.DUPLICATE_REQUEST_NO_ACTIVE_BROADCASTER.value,
                 f"No active broadcaster found for duplicate request",
                 duplicate_request_id,
                 {
