@@ -96,15 +96,19 @@ class MessageHandler:
                 return []
             
             # Find model route for this specific provider
-            model_provider_options = self.provider_manager.select_model_and_provider_options(client_model_name)
-            for target_model, candidate_provider in model_provider_options:
-                if candidate_provider.name == provider_name:
-                    return [(target_model, candidate_provider)]
+            # Look for the target model in the provider's configured models
+            target_model = client_model_name  # Default to passthrough
             
-            # If no specific model route found, try to use the provider with passthrough
-            # Check if provider supports the model or has passthrough capability
-            # For now, assume the provider can handle the model as-is (passthrough mode)
-            return [(client_model_name, target_provider)]
+            # Check if there's a specific model mapping for this provider
+            for pattern, routes in self.provider_manager.model_routes.items():
+                if self.provider_manager._matches_pattern(client_model_name, pattern):
+                    for route in routes:
+                        if route.provider == provider_name:
+                            target_model = route.model if route.model != "passthrough" else client_model_name
+                            break
+                    break
+            
+            return [(target_model, target_provider)]
         
         # Default behavior: return all available options for failover
         return self.provider_manager.select_model_and_provider_options(client_model_name)
@@ -249,6 +253,19 @@ class MessageHandler:
 
             # 根据请求类型获取相应的超时配置
             openai_timeouts = self.provider_manager.get_timeouts_for_request(stream)
+
+            info(
+                LogRecord(
+                    event="provider_request",
+                    message=f"Making request to provider: {provider.name}",
+                    request_id=request_id,
+                    data={
+                        "provider": provider.name, 
+                        "type": provider.type.value,
+                        "timeouts": openai_timeouts
+                    }
+                )
+            )
             
             # Configure proxy and timeouts for http_client
             http_client = None

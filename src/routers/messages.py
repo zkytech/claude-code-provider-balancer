@@ -353,11 +353,127 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                     headers=stream_headers
                                 )
                         else:
-                            # For OpenAI providers - create streaming response handler
-                            # This would include the complex OpenAI streaming logic
-                            # (keeping the original complex streaming logic here for now)
-                            # ... OpenAI streaming implementation would go here
-                            pass
+                            # For OpenAI providers - handle streaming response
+                            if hasattr(response, '__aiter__'):
+                                # Response is an AsyncStream object, collect chunks for caching while streaming
+                                collected_chunks = []
+                                
+                                async def stream_openai_response():
+                                    """Handle OpenAI streaming response and convert to Anthropic format"""
+                                    broadcaster = None
+                                    try:
+                                        # Create parallel broadcaster for handling multiple clients
+                                        broadcaster = create_broadcaster(request, request_id, current_provider.name)
+                                        
+                                        # Register broadcaster for duplicate request handling
+                                        register_broadcaster(signature, broadcaster)
+                                        
+                                        # Create provider stream from OpenAI AsyncStream
+                                        async def provider_stream():
+                                            try:
+                                                async for chunk in response:
+                                                    # Convert OpenAI chunk to Anthropic SSE format
+                                                    if hasattr(chunk, 'choices') and chunk.choices:
+                                                        choice = chunk.choices[0]
+                                                        if hasattr(choice, 'delta') and choice.delta:
+                                                            delta = choice.delta
+                                                            if hasattr(delta, 'content') and delta.content:
+                                                                # Create Anthropic-style text delta event
+                                                                anthropic_chunk = {
+                                                                    "type": "content_block_delta",
+                                                                    "index": 0,
+                                                                    "delta": {
+                                                                        "type": "text_delta",
+                                                                        "text": delta.content
+                                                                    }
+                                                                }
+                                                                sse_data = f"data: {json.dumps(anthropic_chunk)}\n\n"
+                                                                collected_chunks.append(sse_data)
+                                                                yield sse_data
+                                                            elif hasattr(choice, 'finish_reason') and choice.finish_reason:
+                                                                # Create Anthropic-style message stop event
+                                                                stop_chunk = {
+                                                                    "type": "message_stop"
+                                                                }
+                                                                sse_data = f"data: {json.dumps(stop_chunk)}\n\n"
+                                                                collected_chunks.append(sse_data)
+                                                                yield sse_data
+                                            except Exception as e:
+                                                error(
+                                                    LogRecord(
+                                                        "openai_stream_error",
+                                                        f"Error in OpenAI stream: {type(e).__name__}: {e}",
+                                                        request_id,
+                                                        {
+                                                            "provider": current_provider.name,
+                                                            "error": str(e)
+                                                        }
+                                                    )
+                                                )
+                                                raise
+                                        
+                                        # Use broadcaster to handle parallel streaming with disconnect detection
+                                        async for chunk in broadcaster.stream_from_provider(provider_stream()):
+                                            yield chunk
+                                            
+                                    except Exception as e:
+                                        error(
+                                            LogRecord(
+                                                "stream_openai_error",
+                                                f"Error in OpenAI streaming: {type(e).__name__}: {e}",
+                                                request_id,
+                                                {
+                                                    "provider": current_provider.name,
+                                                    "error": str(e)
+                                                }
+                                            )
+                                        )
+                                        raise
+                                    finally:
+                                        # Unregister broadcaster when streaming completes
+                                        if broadcaster:
+                                            unregister_broadcaster(signature)
+                                        
+                                        # Complete the request with collected chunks
+                                        complete_and_cleanup_request(signature, collected_chunks, collected_chunks, True, current_provider.name)
+                                        
+                                        # Log request completion
+                                        info(
+                                            LogRecord(
+                                                event=LogEvent.REQUEST_COMPLETED.value,
+                                                message=f"OpenAI streaming request completed: {current_provider.name}",
+                                                request_id=request_id,
+                                                data={
+                                                    "provider": current_provider.name,
+                                                    "model": target_model,
+                                                    "stream": True,
+                                                    "provider_type": "openai",
+                                                    "chunks_count": len(collected_chunks),
+                                                    "attempt": attempt + 1,
+                                                }
+                                            )
+                                        )
+                                
+                                return StreamingResponse(
+                                    stream_openai_response(),
+                                    media_type="text/event-stream",
+                                    headers=stream_headers
+                                )
+                            else:
+                                # If response is not streamable, convert to streaming format
+                                response_data = response.json() if hasattr(response, 'json') else response
+                                collected_chunks = [f"data: {json.dumps(response_data)}\n\n"]
+                                
+                                async def convert_to_stream():
+                                    yield f"data: {json.dumps(response_data)}\n\n"
+                                
+                                complete_and_cleanup_request(signature, response_data, collected_chunks, True, current_provider.name)
+                                
+                                return StreamingResponse(
+                                    convert_to_stream(),
+                                    media_type="text/event-stream",
+                                    headers=stream_headers
+                                )
                     
                     # Handle non-streaming response
                     if current_provider.type == ProviderType.OPENAI:
