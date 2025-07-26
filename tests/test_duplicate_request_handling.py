@@ -10,6 +10,7 @@ from conftest import (
     async_client, claude_headers, test_messages_request, 
     test_streaming_request, mock_provider_manager
 )
+from test_config import get_test_provider_url
 
 
 class TestDuplicateRequestHandling:
@@ -30,7 +31,7 @@ class TestDuplicateRequestHandling:
                 "usage": {"input_tokens": 10, "output_tokens": 15}
             }
             
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(200, json=mock_response)
             )
             
@@ -60,59 +61,44 @@ class TestDuplicateRequestHandling:
     @pytest.mark.asyncio
     async def test_duplicate_streaming_requests(self, async_client: AsyncClient, claude_headers, test_streaming_request):
         """Test duplicate streaming requests are handled appropriately."""
-        with respx.mock:
-            # Mock streaming response with a delay to ensure overlap
-            async def mock_streaming_response():
-                yield b'event: message_start\ndata: {"type": "message_start", "message": {"id": "stream_duplicate"}}\n\n'
-                await asyncio.sleep(0.1)  # Delay to allow second request to overlap
-                yield b'event: content_block_delta\ndata: {"type": "content_block_delta", "delta": {"text": "Stream response"}}\n\n'
-                await asyncio.sleep(0.1)  # Another delay
-                yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
-            
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
-                return_value=Response(
-                    200,
-                    headers={"content-type": "text/event-stream"},
-                    stream=mock_streaming_response()
-                )
+        # No respx mock needed - use our real mock provider on localhost:8998
+        
+        # Make both streaming requests concurrently to ensure they overlap
+        async def make_streaming_request():
+            response = await async_client.post(
+                "/v1/messages",
+                json=test_streaming_request,
+                headers=claude_headers
             )
             
-            # Make both streaming requests concurrently to ensure they overlap
-            async def make_streaming_request():
-                response = await async_client.post(
-                    "/v1/messages",
-                    json=test_streaming_request,
-                    headers=claude_headers
-                )
-                
-                assert response.status_code == 200
-                assert "text/event-stream" in response.headers.get("content-type", "")
-                
-                # Collect response chunks
-                chunks = []
-                async for chunk in response.aiter_text():
-                    if chunk.strip():
-                        chunks.append(chunk.strip())
-                
-                return chunks
+            assert response.status_code == 200
+            assert "text/event-stream" in response.headers.get("content-type", "")
             
-            # Start both requests concurrently with a small delay between them
-            async def request_with_delay(delay=0):
-                if delay > 0:
-                    await asyncio.sleep(delay)
-                return await make_streaming_request()
+            # Collect response chunks
+            chunks = []
+            async for chunk in response.aiter_text():
+                if chunk.strip():
+                    chunks.append(chunk.strip())
             
-            # Make the first request immediately, second after 0.05s delay
-            tasks = [
-                request_with_delay(0),      # First request starts immediately
-                request_with_delay(0.05)    # Second request starts after 0.05s
-            ]
-            
-            chunks1, chunks2 = await asyncio.gather(*tasks)
-            
-            # Both should have streaming content
-            assert len(chunks1) > 0, f"First request got no chunks: {chunks1}"
-            assert len(chunks2) > 0, f"Second request got no chunks: {chunks2}"
+            return chunks
+        
+        # Start both requests concurrently with a small delay between them
+        async def request_with_delay(delay=0):
+            if delay > 0:
+                await asyncio.sleep(delay)
+            return await make_streaming_request()
+        
+        # Make the first request immediately, second after 0.05s delay
+        tasks = [
+            request_with_delay(0),      # First request starts immediately
+            request_with_delay(0.05)    # Second request starts after 0.05s
+        ]
+        
+        chunks1, chunks2 = await asyncio.gather(*tasks)
+        
+        # Both should have streaming content
+        assert len(chunks1) > 0, f"First request got no chunks: {chunks1}"
+        assert len(chunks2) > 0, f"Second request got no chunks: {chunks2}"
 
     @pytest.mark.asyncio
     async def test_mixed_streaming_non_streaming_duplicates(self, async_client: AsyncClient, claude_headers):
@@ -128,71 +114,42 @@ class TestDuplicateRequestHandling:
             ]
         }
         
-        with respx.mock:
-            # Mock non-streaming response
-            non_streaming_response = {
-                "id": "msg_mixed_test",
-                "type": "message",
-                "role": "assistant",
-                "content": [{"type": "text", "text": "Non-streaming response"}],
-                "model": base_request["model"],
-                "stop_reason": "end_turn",
-                "usage": {"input_tokens": 12, "output_tokens": 18}
-            }
-            
-            # Mock streaming response
-            async def mock_streaming_response():
-                yield b'event: message_start\ndata: {"type": "message_start", "message": {"id": "mixed_stream"}}\n\n'
-                yield b'event: content_block_delta\ndata: {"type": "content_block_delta", "delta": {"text": "Streaming response"}}\n\n'
-                yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
-            
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
-                return_value=Response(200, json=non_streaming_response)
-            )
-            
-            # Make non-streaming request first
-            non_streaming_request = base_request.copy()
-            non_streaming_request["stream"] = False
-            
-            response1 = await async_client.post(
-                "/v1/messages",
-                json=non_streaming_request,
-                headers=claude_headers
-            )
-            
-            assert response1.status_code == 200
-            data1 = response1.json()
-            assert data1["type"] == "message"
-            
-            # Now make streaming request with same content
-            streaming_request = base_request.copy()
-            streaming_request["stream"] = True
-            
-            # Update mock for streaming response
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
-                return_value=Response(
-                    200,
-                    headers={"content-type": "text/event-stream"},
-                    stream=mock_streaming_response()
-                )
-            )
-            
-            response2 = await async_client.post(
-                "/v1/messages",
-                json=streaming_request,
-                headers=claude_headers
-            )
-            
-            assert response2.status_code == 200
-            assert "text/event-stream" in response2.headers.get("content-type", "")
-            
-            # Both should work despite different streaming modes
-            chunks2 = []
-            async for chunk in response2.aiter_text():
-                if chunk.strip():
-                    chunks2.append(chunk.strip())
-            
-            assert len(chunks2) > 0
+        # No respx mock needed - use our real mock provider on localhost:8998
+        
+        # Make non-streaming request first
+        non_streaming_request = base_request.copy()
+        non_streaming_request["stream"] = False
+        
+        response1 = await async_client.post(
+            "/v1/messages",
+            json=non_streaming_request,
+            headers=claude_headers
+        )
+        
+        assert response1.status_code == 200
+        data1 = response1.json()
+        assert data1["type"] == "message"
+        
+        # Now make streaming request with same content
+        streaming_request = base_request.copy()
+        streaming_request["stream"] = True
+        
+        response2 = await async_client.post(
+            "/v1/messages",
+            json=streaming_request,
+            headers=claude_headers
+        )
+        
+        assert response2.status_code == 200
+        assert "text/event-stream" in response2.headers.get("content-type", "")
+        
+        # Both should work despite different streaming modes
+        chunks2 = []
+        async for chunk in response2.aiter_text():
+            if chunk.strip():
+                chunks2.append(chunk.strip())
+        
+        assert len(chunks2) > 0
 
     @pytest.mark.asyncio
     async def test_concurrent_duplicate_requests(self, async_client: AsyncClient, claude_headers, test_messages_request):
@@ -211,7 +168,7 @@ class TestDuplicateRequestHandling:
                     "usage": {"input_tokens": 10, "output_tokens": 15}
                 })
             
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 side_effect=delayed_response
             )
             
@@ -278,7 +235,7 @@ class TestDuplicateRequestHandling:
                 "usage": {"input_tokens": 10, "output_tokens": 15}
             }
             
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 side_effect=[
                     Response(200, json=response1_mock),
                     Response(200, json=response2_mock)
@@ -348,7 +305,7 @@ class TestDuplicateRequestHandling:
                 "usage": {"input_tokens": 15, "output_tokens": 20}
             }
             
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(200, json=mock_response)
             )
             
@@ -420,7 +377,7 @@ class TestDuplicateRequestHandling:
                 "usage": {"input_tokens": 25, "output_tokens": 10}
             }
             
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(200, json=mock_response)
             )
             
@@ -473,7 +430,7 @@ class TestDuplicateRequestHandling:
                 "usage": {"input_tokens": 10, "output_tokens": 15}
             }
             
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 side_effect=[
                     Response(200, json=first_response),
                     Response(200, json=second_response)
@@ -510,7 +467,7 @@ class TestDuplicateRequestHandling:
         """Test duplicate detection when provider failover occurs."""
         with respx.mock:
             # Mock first provider failure
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 side_effect=[
                     Response(500, json={"error": {"message": "Server error"}}),
                     Response(200, json={
@@ -526,7 +483,7 @@ class TestDuplicateRequestHandling:
             )
             
             # Mock secondary provider success
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(200, json={
                     "id": "msg_secondary_duplicate",
                     "type": "message",

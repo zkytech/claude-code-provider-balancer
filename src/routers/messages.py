@@ -231,12 +231,16 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                         # Register broadcaster for duplicate request handling
                                         register_broadcaster(signature, broadcaster)
                                         
-                                        # Create provider stream from response
+                                        # Create provider stream from response using real-time streaming
                                         async def provider_stream():
                                             try:
-                                                async for chunk in response.aiter_text():
-                                                    collected_chunks.append(chunk)
-                                                    yield chunk
+                                                # Use the new streaming method that maintains httpx context
+                                                async for response_obj in message_handler.make_anthropic_streaming_request(
+                                                    current_provider, clean_request_body, request_id, original_headers
+                                                ):
+                                                    async for chunk in response_obj.aiter_text():
+                                                        collected_chunks.append(chunk)
+                                                        yield chunk
                                             except Exception as e:
                                                 error(
                                                     LogRecord(

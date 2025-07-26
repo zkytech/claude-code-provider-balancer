@@ -307,7 +307,7 @@ class ParallelBroadcaster:
                     debug(
                         LogRecord(
                             LogEvent.CHUNK_YIELDED_TO_ORIGINAL_CLIENT.value,
-                            f"Successfully yielded chunk {self.total_chunks_processed} to original client ({len(chunk)} bytes)",
+                            f"Yielded chunk {self.total_chunks_processed} to original client ({len(chunk)} bytes)",
                             self.request_id,
                             {
                                 "provider": self.provider_name,

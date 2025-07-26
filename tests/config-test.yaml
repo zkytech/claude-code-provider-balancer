@@ -2,10 +2,18 @@
 # 专用于测试的配置文件，使用 mock providers
 
 providers:
-  # 测试用的成功提供者 - base_url 不包含完整路径，因为 anthropic 类型会自动添加 /v1/messages
+  # 测试用的SSE错误提供者 - 专门用于测试重复请求处理
+  - name: "Test SSE Error Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/anthropic-sse-error"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  # 测试用的成功提供者 - 使用独立测试mock provider
   - name: "Test Success Provider"
     type: "anthropic"
-    base_url: "http://localhost:9090/test-providers/anthropic"
+    base_url: "http://localhost:8998/test-providers/anthropic"
     auth_type: "api_key"
     auth_value: "test-key"
     enabled: true
@@ -13,7 +21,7 @@ providers:
   # 测试用的错误提供者
   - name: "Test Error Provider"
     type: "anthropic"
-    base_url: "http://localhost:9090/test-providers/anthropic"
+    base_url: "http://localhost:8998/test-providers/anthropic"
     auth_type: "api_key"
     auth_value: "test-key"
     enabled: true
@@ -21,7 +29,7 @@ providers:
   # 测试用的 OpenAI 提供者
   - name: "Test OpenAI Provider"
     type: "openai"
-    base_url: "http://localhost:9090/test-providers/openai"
+    base_url: "http://localhost:8998/test-providers/openai"
     auth_type: "api_key"
     auth_value: "test-key"
     enabled: true
@@ -30,20 +38,26 @@ providers:
 model_routes:
   # Claude 模型路由 - 用于测试 sonnet/haiku/opus
   "*claude*":
-    - provider: "Test Success Provider"
+    - provider: "Test SSE Error Provider"
       model: "passthrough"
       priority: 1
-    - provider: "Test Error Provider"
+    - provider: "Test Success Provider"
       model: "passthrough"
       priority: 2
+    - provider: "Test Error Provider"
+      model: "passthrough"
+      priority: 3
 
   "*sonnet*":
-    - provider: "Test Success Provider"
+    - provider: "Test SSE Error Provider"
       model: "passthrough"
       priority: 1
-    - provider: "Test Error Provider"
+    - provider: "Test Success Provider"
       model: "passthrough"
       priority: 2
+    - provider: "Test Error Provider"
+      model: "passthrough"
+      priority: 3
 
   "*haiku*":
     - provider: "Test Success Provider"
@@ -122,9 +136,9 @@ settings:
   log_color: true
   log_file_path: "logs/test-logs.jsonl"
 
-  # 服务器配置
+  # 服务器配置 - 测试用独立端口
   host: "127.0.0.1"
-  port: 9090
+  port: 8999
 
   # 应用信息
   app_name: "ClaudeCode Providers Balancer - Test Mode"
@@ -139,19 +153,9 @@ settings:
   deduplication:
     enabled: true
     include_max_tokens_in_signature: false
+    sse_error_cleanup_delay: 3
 
   # 测试设置 - 禁用延迟
   testing:
     simulate_delay: false
     delay_seconds: 0
-
-  # 测试提供商设置
-  test_providers:
-    enabled: true
-    default_delay_ms: 50
-    error_delay_ms: 25
-    streaming_chunks: 3
-    chunk_delay_ms: 100
-    random_error_rate: 0.0  # 测试时不要随机错误
-    success_response_text: "Test response from mock provider"
-    streaming_response_text: "Streaming test response from mock provider"

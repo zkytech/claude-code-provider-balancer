@@ -1,19 +1,41 @@
-# Claude Provider Balancer Tests
+# Claude Code Provider Balancer - 测试文档
 
-This directory contains comprehensive tests for the Claude Provider Balancer application using pytest.
+## 测试概述
 
-## Test Structure
+本项目包含 **65个测试用例**，全面覆盖了Claude Code Provider Balancer的所有功能特性，包括流式传输、负载均衡、故障转移、重复请求处理等核心功能。
 
-### Test Files
+## 测试架构设计
 
-- **`conftest.py`** - Pytest configuration and shared fixtures
-- **`test_streaming_requests.py`** - Tests for streaming request handling
-- **`test_non_streaming_requests.py`** - Tests for non-streaming request handling  
-- **`test_multi_provider_management.py`** - Tests for provider management and failover
-- **`test_mixed_provider_responses.py`** - Tests for mixed OpenAI/Anthropic provider responses
-- **`test_duplicate_request_handling.py`** - Tests for request deduplication and caching
-- **`run_tests.py`** - Test runner script
-- **`test_utils.py`** - Common test utilities
+### 服务分离架构
+
+- **主服务端口**: 9090 (生产环境)
+- **测试Mock服务端口**: 8998 (测试环境)
+- **完全独立**: 测试服务与生产服务完全分离，互不干扰
+
+### Mock Provider系统
+
+我们使用真实的Mock Provider (`src/routers/mock_provider.py`) 而不是respx模拟，因为：
+
+1. **真实流式传输**: 能够测试真正的streaming延迟和时序
+2. **问题检测能力**: 能够发现"假streaming"问题（批量缓冲vs实时流式）
+3. **完整功能覆盖**: 支持SSE错误、连接错误、超时等各种场景
+
+## 测试文件结构
+
+```
+tests/
+├── README.md                           # 本文档
+├── conftest.py                         # 测试配置和fixtures
+├── config-test.yaml                    # 测试环境配置
+├── test_config.py                      # 测试URL配置管理
+├── run_mock_server.py                  # 独立Mock服务器
+├── test_utils.py                       # 测试工具函数
+├── test_streaming_requests.py          # 流式传输测试 (20个测试)
+├── test_duplicate_request_handling.py  # 重复请求处理测试 (9个测试)
+├── test_non_streaming_requests.py      # 非流式传输测试 (12个测试)
+├── test_multi_provider_management.py   # 多Provider管理测试 (11个测试)
+└── test_mixed_provider_responses.py    # 混合Provider响应测试 (13个测试)
+```
 
 ### Test Categories
 
@@ -72,29 +94,31 @@ This directory contains comprehensive tests for the Claude Provider Balancer app
 - ✅ Cache expiration behavior
 - ✅ Duplicate detection with provider failover
 
-## Running Tests
+## 测试运行方式
 
-### Prerequisites
-
-```bash
-# Install test dependencies
-pip install pytest pytest-asyncio respx httpx
-```
-
-### Run All Tests
+### 方式一：自动化测试（推荐）
 
 ```bash
-# Using the test runner script
-python tests/run_tests.py
+cd /Users/alanguo/Projects/claude-code-provider-balancer
 
-# Or directly with pytest
+# 运行所有测试
 python -m pytest tests/ -v
 
-# Run specific test file
+# 运行特定测试文件
 python -m pytest tests/test_streaming_requests.py -v
+python -m pytest tests/test_duplicate_request_handling.py -v
+```
 
-# Run specific test function
-python -m pytest tests/test_streaming_requests.py::TestStreamingRequests::test_successful_streaming_response -v
+### 方式二：手动启动Mock服务
+
+如果需要调试或查看详细的Mock Provider行为：
+
+```bash
+# 终端1: 启动Mock Provider服务器
+python tests/run_mock_server.py
+
+# 终端2: 运行测试
+python -m pytest tests/ -v
 ```
 
 ### Test Configuration

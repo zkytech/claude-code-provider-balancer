@@ -6,6 +6,7 @@ Contains the core logic for processing chat completion requests.
 import json
 import uuid
 import time
+import os
 from typing import Any, Dict, List, Optional, Union, Tuple
 
 import httpx
@@ -151,11 +152,12 @@ class MessageHandler:
 
         async with httpx.AsyncClient(timeout=timeout_config, proxy=proxy_config) as client:
             try:
+                response = await client.post(url, json=data, headers=headers)
+                
                 if stream:
-                    response = await client.post(url, json=data, headers=headers)
+                    # For streaming requests, return the response object directly
+                    # The caller will handle streaming with aiter_bytes
                     return response
-                else:
-                    response = await client.post(url, json=data, headers=headers)
                 
                 # Check for HTTP error status codes first
                 if response.status_code >= 400:
@@ -255,9 +257,76 @@ class MessageHandler:
                 )
                 raise  # Re-raise the exception to maintain existing error handling flow
 
+    async def make_streaming_request(self, provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, original_headers: Optional[Dict[str, str]] = None):
+        """Make a streaming request to a specific provider using proper streaming context"""
+        url = self.provider_manager.get_request_url(provider, endpoint)
+        headers = self.provider_manager.get_provider_headers(provider, original_headers)
+        # Get streaming timeouts
+        http_timeouts = self.provider_manager.get_timeouts_for_request(True)
+        
+        # Build httpx timeout configuration
+        timeout_config = httpx.Timeout(
+            connect=http_timeouts['connect_timeout'],
+            read=http_timeouts['read_timeout'],
+            write=http_timeouts['read_timeout'],
+            pool=http_timeouts['pool_timeout']
+        )
+
+        # Configure proxy if specified
+        proxy_config = None
+        if provider.proxy:
+            proxy_config = provider.proxy
+
+        info(
+            LogRecord(
+                event=LogEvent.PROVIDER_REQUEST.value,
+                message=f"Making streaming request to provider: {provider.name}",
+                request_id=request_id,
+                data={
+                    "provider": provider.name, 
+                    "type": provider.type.value,
+                    "timeouts": http_timeouts
+                }
+            )
+        )
+
+        # Simulate testing delay if configured
+        await simulate_testing_delay(data, request_id)
+
+        # Use stream context manager for true real-time streaming
+        async with httpx.AsyncClient(timeout=timeout_config, proxy=proxy_config) as client:
+            async with client.stream("POST", url, json=data, headers=headers) as response:
+                # Check for HTTP error status codes first
+                if response.status_code >= 400:
+                    error_text = await response.aread()
+                    from httpx import HTTPStatusError
+                    request_obj = httpx.Request("POST", url)
+                    http_error = HTTPStatusError(
+                        f"HTTP {response.status_code} from provider {provider.name}",
+                        request=request_obj,
+                        response=response
+                    )
+                    http_error.status_code = response.status_code
+                    raise http_error
+                
+                # Return the streaming response context for real-time processing
+                yield response
+
+    async def make_anthropic_streaming_request(self, provider: Provider, messages_data: Dict[str, Any], request_id: str, original_headers: Optional[Dict[str, str]] = None):
+        """Make a streaming request to an Anthropic-compatible provider"""
+        # Always use new streaming method for real-time streaming
+        # This ensures tests can detect fake streaming issues
+        
+        # Use new streaming method for real-time streaming
+        async for response in self.make_streaming_request(provider, "v1/messages", messages_data, request_id, original_headers):
+            yield response
+
     async def make_anthropic_request(self, provider: Provider, messages_data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
         """Make a request to an Anthropic-compatible provider"""
-        return await self.make_provider_request(provider, "v1/messages", messages_data, request_id, stream, original_headers)
+        response = await self.make_provider_request(provider, "v1/messages", messages_data, request_id, stream, original_headers)
+        
+        
+        return response
 
     async def make_openai_request(self, provider: Provider, openai_params: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Any:
         """Make a request to an OpenAI-compatible provider using openai client"""

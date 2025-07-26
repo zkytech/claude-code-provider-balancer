@@ -8,6 +8,7 @@ from conftest import (
     async_client, claude_headers, test_messages_request, 
     test_openai_request, mock_provider_manager
 )
+from test_config import get_test_provider_url
 
 
 class TestNonStreamingRequests:
@@ -28,7 +29,7 @@ class TestNonStreamingRequests:
                 "stop_sequence": None,
                 "usage": {"input_tokens": 10, "output_tokens": 8}
             }
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(200, json=mock_response)
             )
             
@@ -80,7 +81,7 @@ class TestNonStreamingRequests:
                 "stop_sequence": None,
                 "usage": {"input_tokens": 15, "output_tokens": 12}
             }
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(200, json=mock_response)
             )
             
@@ -113,7 +114,7 @@ class TestNonStreamingRequests:
                 "stop_sequence": None,
                 "usage": {"input_tokens": 10, "output_tokens": 8}
             }
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(200, json=mock_response)
             )
             
@@ -132,7 +133,7 @@ class TestNonStreamingRequests:
         """Test non-streaming request with provider returning 500 error."""
         with respx.mock:
             # Mock provider to return 500 error
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(
                     500,
                     json={
@@ -168,7 +169,7 @@ class TestNonStreamingRequests:
                 }
             }
             # Mock all possible provider URLs that might be tried
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(401, json=error_response)
             )
             # Mock any other routes as well
@@ -202,7 +203,7 @@ class TestNonStreamingRequests:
                 }
             }
             # Mock all possible provider URLs that might be tried
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(429, json=error_response, headers={"retry-after": "60"})
             )
             # Mock any other routes as well
@@ -228,7 +229,7 @@ class TestNonStreamingRequests:
         """Test non-streaming request with connection error."""
         with respx.mock:
             # Mock connection error
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 side_effect=ConnectError("Connection failed")
             )
             
@@ -246,7 +247,7 @@ class TestNonStreamingRequests:
         """Test non-streaming request with timeout."""
         with respx.mock:
             # Mock timeout error
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 side_effect=ReadTimeout("Request timeout")
             )
             
@@ -264,7 +265,7 @@ class TestNonStreamingRequests:
         """Test non-streaming request with invalid JSON response."""
         with respx.mock:
             # Mock response with invalid JSON
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(200, content="invalid json response")
             )
             
@@ -282,7 +283,7 @@ class TestNonStreamingRequests:
         """Test non-streaming request with empty response."""
         with respx.mock:
             # Mock empty response
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(200, content="")
             )
             
@@ -307,7 +308,7 @@ class TestNonStreamingRequests:
                     "message": "Invalid request parameters"
                 }
             }
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(200, json=error_content)
             )
             
@@ -363,7 +364,7 @@ class TestNonStreamingRequests:
                 }
             }
             # Mock the OpenAI chat completions endpoint
-            respx.post("http://localhost:9090/test-providers/openai/v1/chat/completions").mock(
+            respx.post(get_test_provider_url("openai", "v1/chat/completions")).mock(
                 return_value=Response(200, json=mock_response)
             )
             # Mock any other routes that might be tried
@@ -432,7 +433,7 @@ class TestNonStreamingRequests:
                 "stop_sequence": None,
                 "usage": {"input_tokens": 25, "output_tokens": 15}
             }
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(200, json=mock_response)
             )
             
@@ -490,3 +491,114 @@ class TestNonStreamingRequests:
         )
         
         assert response.status_code == 400  # Validation error
+
+    @pytest.mark.asyncio
+    async def test_multi_provider_non_streaming_failover_from_json_error(self, async_client: AsyncClient, claude_headers):
+        """
+        测试场景: 非流式请求中首个provider返回JSON错误，自动failover到健康provider
+        预期结果: 首个provider被标记不健康，请求成功failover到第二个provider并返回正常响应
+        
+        注意: 这测试的是真正的failover（单个请求内的provider切换），针对非流式请求
+        """
+        from unittest.mock import patch
+        
+        request_data = {
+            "model": "claude-3-5-sonnet-20241022",
+            "max_tokens": 1000,
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": False
+        }
+        
+        # Track which request attempt we're on to simulate failover
+        call_count = 0
+        
+        def mock_anthropic_request_with_failover(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            
+            if call_count == 1:
+                # First provider returns JSON error response (should trigger failover)
+                error_response_data = {
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": "Request contains invalid parameters"
+                    }
+                }
+                
+                # Create a mock response object that simulates a JSON error response
+                class MockErrorResponse:
+                    def __init__(self):
+                        self.status_code = 400  # HTTP 400 should trigger failover
+                        self.headers = {"content-type": "application/json"}
+                        self._json_data = error_response_data
+                    
+                    def json(self):
+                        return self._json_data
+                    
+                    def raise_for_status(self):
+                        from httpx import HTTPStatusError, Request
+                        raise HTTPStatusError(
+                            "HTTP 400 Bad Request",
+                            request=Request("POST", "http://test.example.com"),
+                            response=self
+                        )
+                
+                return MockErrorResponse()
+            else:
+                # Second provider returns successful response
+                healthy_response_data = {
+                    "id": "msg_healthy_123",
+                    "type": "message",
+                    "role": "assistant", 
+                    "model": "claude-3-5-sonnet-20241022",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Hello! How can I help you today?"
+                        }
+                    ],
+                    "stop_reason": "end_turn",
+                    "stop_sequence": None,
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 15
+                    }
+                }
+                
+                class MockSuccessResponse:
+                    def __init__(self):
+                        self.status_code = 200
+                        self.headers = {"content-type": "application/json"}
+                        self._json_data = healthy_response_data
+                    
+                    def json(self):
+                        return self._json_data
+                    
+                    def raise_for_status(self):
+                        pass  # No error for successful response
+                
+                return MockSuccessResponse()
+        
+        # Patch the non-streaming request method
+        with patch('handlers.message_handler.MessageHandler.make_anthropic_request') as mock_request:
+            mock_request.side_effect = mock_anthropic_request_with_failover
+            
+            # Execute request
+            response = await async_client.post(
+                "/v1/messages",
+                json=request_data,
+                headers=claude_headers
+            )
+            
+            # Verify successful response (from second provider after failover)
+            assert response.status_code == 200
+            
+            # Verify response content
+            response_data = response.json()
+            assert response_data["content"][0]["text"] == "Hello! How can I help you today?"
+            assert response_data["stop_reason"] == "end_turn"
+            assert "error" not in response_data  # Should not contain error
+            
+            # Verify that failover actually occurred by checking call count
+            assert call_count >= 2, f"Expected at least 2 calls indicating failover occurred, got {call_count}"

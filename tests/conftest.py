@@ -57,10 +57,9 @@ async def async_client() -> AsyncGenerator[AsyncClient, None]:
     import os
     from pathlib import Path
     
-    # Get the project root directory
+    # Get the test directory (where config-test.yaml is now located)
     current_dir = Path(__file__).parent
-    project_root = current_dir.parent
-    test_config_path = project_root / "config-test.yaml"
+    test_config_path = current_dir / "config-test.yaml"
     
     # Create test provider manager
     from core.provider_manager import ProviderManager
@@ -90,11 +89,13 @@ async def async_client() -> AsyncGenerator[AsyncClient, None]:
     from routers.oauth import create_oauth_router
     from routers.health import create_health_router
     from routers.management import create_management_router
+    from routers.mock_provider import create_mock_provider_router
     
     test_app.include_router(create_messages_router(test_provider_manager, test_settings))
     test_app.include_router(create_oauth_router(test_provider_manager))
     test_app.include_router(create_health_router(test_provider_manager, test_settings.app_name, test_settings.app_version))
     test_app.include_router(create_management_router())
+    test_app.include_router(create_mock_provider_router())  # Add mock provider for testing
     
     # Set up test deduplication
     from caching.deduplication import set_provider_manager

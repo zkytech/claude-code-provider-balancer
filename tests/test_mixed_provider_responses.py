@@ -8,6 +8,7 @@ from conftest import (
     async_client, claude_headers, test_messages_request, 
     test_openai_request, mock_provider_manager
 )
+from test_config import get_test_provider_url
 
 
 class TestMixedProviderResponses:
@@ -50,7 +51,7 @@ class TestMixedProviderResponses:
                 }
             }
             
-            respx.post("http://localhost:9090/test-providers/openai/v1/chat/completions").mock(
+            respx.post(get_test_provider_url("openai", "v1/chat/completions")).mock(
                 return_value=Response(200, json=openai_response)
             )
             
@@ -123,7 +124,7 @@ class TestMixedProviderResponses:
                 }
             }
             
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(200, json=anthropic_response)
             )
             
@@ -171,7 +172,7 @@ class TestMixedProviderResponses:
                 for chunk in chunks:
                     yield chunk.encode()
             
-            respx.post("http://localhost:9090/test-providers/openai/v1/chat/completions").mock(
+            respx.post(get_test_provider_url("openai", "v1/chat/completions")).mock(
                 return_value=Response(
                     200,
                     headers={"content-type": "text/event-stream"},
@@ -231,7 +232,7 @@ class TestMixedProviderResponses:
                 }
             }
             
-            respx.post("http://localhost:9090/test-providers/openai/v1/chat/completions").mock(
+            respx.post(get_test_provider_url("openai", "v1/chat/completions")).mock(
                 return_value=Response(401, json=openai_error)
             )
             
@@ -284,7 +285,7 @@ class TestMixedProviderResponses:
                 }
             }
             
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(401, json=anthropic_error)
             )
             
@@ -366,7 +367,7 @@ class TestMixedProviderResponses:
                 }
             }
             
-            respx.post("http://localhost:9090/test-providers/openai/v1/chat/completions").mock(
+            respx.post(get_test_provider_url("openai", "v1/chat/completions")).mock(
                 return_value=Response(200, json=openai_response)
             )
             
@@ -407,12 +408,12 @@ class TestMixedProviderResponses:
         
         with respx.mock:
             # Mock primary Anthropic provider failure
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(500, json={"error": {"message": "Internal error"}})
             )
             
             # Mock fallback to secondary Anthropic provider (configured as error provider)
-            respx.post("http://localhost:9090/test-providers/anthropic/v1/messages").mock(
+            respx.post(get_test_provider_url("anthropic")).mock(
                 return_value=Response(
                     200,
                     json={
@@ -501,7 +502,7 @@ class TestMixedProviderResponses:
                 }
             }
             
-            respx.post("http://localhost:9090/test-providers/openai/v1/chat/completions").mock(
+            respx.post(get_test_provider_url("openai", "v1/chat/completions")).mock(
                 return_value=Response(200, json=openai_response)
             )
             
