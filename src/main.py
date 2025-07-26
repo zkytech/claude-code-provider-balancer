@@ -43,6 +43,7 @@ from routers.messages import create_messages_router
 from routers.oauth import create_oauth_router
 from routers.health import create_health_router
 from routers.management import create_management_router
+from routers.mock_provider import create_mock_provider_router
 
 load_dotenv()
 
@@ -86,7 +87,7 @@ def _initialize_oauth_manager(provider_manager_instance: ProviderManager, is_rel
         
         # Only log success if we actually did initialization (not skipped due to existing tokens)
         if not had_existing_tokens:
-            event_name = "oauth_manager_reinitialized" if is_reload else "oauth_manager_ready"
+            event_name = LogEvent.OAUTH_MANAGER_REINITIALIZED.value if is_reload else LogEvent.OAUTH_MANAGER_READY.value
             message = "OAuth manager re-initialized after config reload" if is_reload else "OAuth manager initialization completed successfully"
             
             info(LogRecord(
@@ -96,7 +97,7 @@ def _initialize_oauth_manager(provider_manager_instance: ProviderManager, is_rel
         
         return True
     except Exception as e:
-        event_name = "oauth_manager_reinit_failed" if is_reload else "oauth_manager_init_failed"
+        event_name = LogEvent.OAUTH_MANAGER_REINIT_FAILED.value if is_reload else LogEvent.OAUTH_MANAGER_INIT_FAILED.value
         message = f"Failed to re-initialize OAuth manager after config reload: {e}" if is_reload else f"Failed to initialize OAuth manager: {str(e)}"
         
         from utils import error
@@ -292,6 +293,7 @@ app.include_router(create_messages_router(provider_manager, settings))
 app.include_router(create_oauth_router(provider_manager))
 app.include_router(create_health_router(provider_manager, settings.app_name, settings.app_version))
 app.include_router(create_management_router(provider_manager))
+app.include_router(create_mock_provider_router())
 
 # Exception handlers
 @app.exception_handler(ValidationError)

@@ -94,6 +94,26 @@ class LogEvent(enum.Enum):
     FASTAPI_SHUTDOWN = "fastapi_shutdown"
     HTTP_REQUEST = "http_request"
     
+    # Request deduplication and cleanup events
+    SIGNATURE_GENERATED = "signature_generated"
+    REQUEST_COMPLETED_DELAY_CLEANUP = "request_completed_delay_cleanup"
+    DUPLICATE_REQUESTS_COMPLETED_DELAY_CLEANUP = "duplicate_requests_completed_delay_cleanup"
+    NO_DUPLICATE_REQUESTS_FOUND = "no_duplicate_requests_found"
+    LATE_DUPLICATE_REQUESTS_FOUND = "late_duplicate_requests_found"
+    LATE_DUPLICATE_FUTURE_SET_RESULT = "late_duplicate_future_set_result"
+    LATE_DUPLICATE_COMPLETION_SUMMARY = "late_duplicate_completion_summary"
+    DELAYED_CLEANUP_COMPLETED = "delayed_cleanup_completed"
+    ORIGINAL_REQUEST_COMPLETED = "original_request_completed"
+    STREAMING_COMPLETED = "streaming_completed"
+    REQUEST_CLEANUP = "request_cleanup"
+    REQUEST_CLEANUP_SKIP = "request_cleanup_skip"
+    STUCK_REQUEST_CLEANUP = "stuck_request_cleanup"
+    ERROR_CLEANUP = "error_cleanup"
+    
+    # Provider health check events
+    PROVIDER_HEALTH_CHECK_SSE_ERROR = "provider_health_check_sse_error"
+    PROVIDER_UNHEALTHY_STREAM_ANTHROPIC = "provider_unhealthy_stream_anthropic"
+
     # OAuth events
     OAUTH_KEYRING_UNAVAILABLE = "oauth_keyring_unavailable"
     OAUTH_TOKENS_SAVED = "oauth_tokens_saved"
@@ -159,6 +179,9 @@ class LogEvent(enum.Enum):
     OAUTH_URL_GENERATION_ERROR = "oauth_url_generation_error"
     OAUTH_MANUAL_REFRESH_ERROR = "oauth_manual_refresh_error"
     OAUTH_MANAGER_CHECK = "oauth_manager_check"
+    OAUTH_MANAGER_REINITIALIZED = "oauth_manager_reinitialized"
+    OAUTH_MANAGER_REINIT_FAILED = "oauth_manager_reinit_failed"
+    OAUTH_MANAGER_INIT_FAILED = "oauth_manager_init_failed"
 
 
 # Initialize logger - will be set up when module is initialized

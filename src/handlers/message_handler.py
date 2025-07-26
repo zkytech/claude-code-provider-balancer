@@ -156,23 +156,6 @@ class MessageHandler:
                     return response
                 else:
                     response = await client.post(url, json=data, headers=headers)
-            except Exception as http_error:
-                # Log the specific HTTP/connection error before it propagates up
-                error_type = type(http_error).__name__
-                error(
-                    LogRecord(
-                        event=LogEvent.PROVIDER_REQUEST_ERROR.value,
-                        message=f"Provider {provider.name} request failed: {error_type}: {str(http_error)}",
-                        request_id=request_id,
-                        data={
-                            "provider": provider.name,
-                            "error_type": error_type,
-                            "error_message": str(http_error),
-                            "url": url
-                        }
-                    )
-                )
-                raise  # Re-raise the exception to maintain existing error handling flow
                 
                 # Check for HTTP error status codes first
                 if response.status_code >= 400:
@@ -253,6 +236,24 @@ class MessageHandler:
                     raise http_error
                     
                 return response_data
+            
+            except Exception as http_error:
+                # Log the specific HTTP/connection error before it propagates up
+                error_type = type(http_error).__name__
+                error(
+                    LogRecord(
+                        event=LogEvent.PROVIDER_REQUEST_ERROR.value,
+                        message=f"Provider {provider.name} request failed: {error_type}: {str(http_error)}",
+                        request_id=request_id,
+                        data={
+                            "provider": provider.name,
+                            "error_type": error_type,
+                            "error_message": str(http_error),
+                            "url": url
+                        }
+                    )
+                )
+                raise  # Re-raise the exception to maintain existing error handling flow
 
     async def make_anthropic_request(self, provider: Provider, messages_data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
         """Make a request to an Anthropic-compatible provider"""

@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from utils.logging.handlers import info
+from utils.logging.handlers import info, LogEvent
 
 # Global references - set by main application
 _provider_manager = None
@@ -148,7 +148,7 @@ def cleanup_stuck_requests(force_cleanup_all: bool = False):
             for signature, request_id, reason in stuck_requests:
                 warning(
                     LogRecord(
-                        "stuck_request_cleanup",
+                        LogEvent.STUCK_REQUEST_CLEANUP.value,
                         f"Cleaned up stuck request: {reason}",
                         request_id,
                         {
@@ -282,7 +282,7 @@ def generate_request_signature(data: Dict[str, Any]) -> str:
     
     debug(
         LogRecord(
-            "signature_generated",
+            LogEvent.SIGNATURE_GENERATED.value,
             f"Generated signature: {signature_hash[:16]}... for data: {signature_str[:200]}...",
             None,
             {
@@ -302,6 +302,254 @@ def cleanup_completed_request(signature: str):
         if signature in _pending_requests:
             del _pending_requests[signature]
 
+
+def complete_and_cleanup_request_delayed(signature: str, result: Any, cache_content: Optional[Union[Dict[str, Any], List[str]]] = None, is_streaming: bool = False, provider_name: Optional[str] = None, delay_seconds: int = 30):
+    """完成请求并延迟清理去重状态（用于SSE错误等场景）"""
+    try:
+        from utils.logging.handlers import debug, info, error, LogRecord
+    except ImportError:
+        try:
+            from utils.logging import debug, info, error, LogRecord
+        except ImportError:
+            debug = info = error = lambda x: None
+            LogRecord = dict
+    
+    # 先完成请求，但不立即清理
+    if signature:
+        try:
+            with _request_cleanup_lock:
+                # 处理原始请求
+                if signature in _pending_requests:
+                    future, original_request_id = _pending_requests[signature]
+                    if not future.done():
+                        future.set_result(result)
+                    # 注意：这里不删除 _pending_requests[signature]，延迟删除
+                    
+                    debug(
+                        LogRecord(
+                            LogEvent.REQUEST_COMPLETED_DELAY_CLEANUP.value,
+                            f"Request completed, cleanup delayed by {delay_seconds} seconds",
+                            original_request_id,
+                            {
+                                "signature": signature[:16] + "...",
+                                "result_type": type(result).__name__,
+                                "delay_seconds": delay_seconds
+                            }
+                        )
+                    )
+                
+                # 处理duplicate请求 - 给它们相同的结果
+                if signature in _duplicate_requests:
+                    duplicate_requests = _duplicate_requests[signature]
+                    completed_count = 0
+                    
+                    debug(
+                        LogRecord(
+                            "processing_duplicate_requests_delayed",
+                            f"Found {len(duplicate_requests)} duplicate requests to process",
+                            original_request_id,
+                            {
+                                "signature": signature[:16] + "...",
+                                "duplicate_count": len(duplicate_requests),
+                                "result_type": type(result).__name__
+                            }
+                        )
+                    )
+                    
+                    for duplicate_future, duplicate_request_id, _, _, _ in duplicate_requests:
+                        if not duplicate_future.done():
+                            duplicate_future.set_result(result)
+                            completed_count += 1
+                            debug(
+                                LogRecord(
+                                    "duplicate_future_set_result",
+                                    f"Set result for duplicate request {duplicate_request_id[:8]}",
+                                    original_request_id,
+                                    {
+                                        "duplicate_request_id": duplicate_request_id[:8],
+                                        "signature": signature[:16] + "...",
+                                        "result_type": type(result).__name__
+                                    }
+                                )
+                            )
+                        else:
+                            debug(
+                                LogRecord(
+                                    "duplicate_future_already_done",
+                                    f"Duplicate request {duplicate_request_id[:8]} already completed",
+                                    original_request_id,
+                                    {
+                                        "duplicate_request_id": duplicate_request_id[:8],
+                                        "signature": signature[:16] + "...",
+                                    }
+                                )
+                            )
+                    # 延迟清理duplicate requests
+                    debug(
+                        LogRecord(
+                            LogEvent.DUPLICATE_REQUESTS_COMPLETED_DELAY_CLEANUP.value,
+                            f"Duplicate requests completed, cleanup delayed by {delay_seconds} seconds",
+                            original_request_id,
+                            {
+                                "signature": signature[:16] + "...",
+                                "duplicate_count": len(_duplicate_requests[signature]),
+                                "completed_count": completed_count
+                            }
+                        )
+                    )
+                else:
+                    debug(
+                        LogRecord(
+                            LogEvent.NO_DUPLICATE_REQUESTS_FOUND.value,
+                            f"No duplicate requests found for signature during delayed cleanup",
+                            original_request_id,
+                            {
+                                "signature": signature[:16] + "...",
+                                "result_type": type(result).__name__
+                            }
+                        )
+                    )
+        except Exception as e:
+            error(
+                LogRecord(
+                    "request_delayed_completion_error", 
+                    f"Error during delayed request completion: {str(e)}",
+                    "",
+                    {"signature": signature[:16] + "...", "error": str(e)}
+                )
+            )
+    
+    # 启动延迟清理任务（使用asyncio而不是线程，避免阻塞）
+    import asyncio
+    
+    async def delayed_cleanup_async():
+        try:
+            await asyncio.sleep(delay_seconds)
+            with _request_cleanup_lock:
+                # 在延迟清理时，再次检查是否有新的重复请求到达
+                # 如果有，为它们设置结果
+                if signature in _duplicate_requests:
+                    duplicate_requests = _duplicate_requests[signature]
+                    late_completion_count = 0
+                    
+                    debug(
+                        LogRecord(
+                            LogEvent.LATE_DUPLICATE_REQUESTS_FOUND.value,
+                            f"Found {len(duplicate_requests)} duplicate requests during delayed cleanup",
+                            "",
+                            {
+                                "signature": signature[:16] + "...",
+                                "duplicate_count": len(duplicate_requests),
+                                "result_type": type(result).__name__
+                            }
+                        )
+                    )
+                    
+                    for duplicate_future, duplicate_request_id, _, _, _ in duplicate_requests:
+                        if not duplicate_future.done():
+                            duplicate_future.set_result(result)
+                            late_completion_count += 1
+                            debug(
+                                LogRecord(
+                                    LogEvent.LATE_DUPLICATE_FUTURE_SET_RESULT.value,
+                                    f"Set result for late duplicate request {duplicate_request_id[:8]}",
+                                    "",
+                                    {
+                                        "duplicate_request_id": duplicate_request_id[:8],
+                                        "signature": signature[:16] + "...",
+                                        "result_type": type(result).__name__
+                                    }
+                                )
+                            )
+                    
+                    if late_completion_count > 0:
+                        debug(
+                            LogRecord(
+                                LogEvent.LATE_DUPLICATE_COMPLETION_SUMMARY.value,
+                                f"Completed {late_completion_count} late duplicate requests during cleanup",
+                                "",
+                                {
+                                    "signature": signature[:16] + "...",
+                                    "late_completion_count": late_completion_count
+                                }
+                            )
+                        )
+                
+                # 延迟后执行清理
+                cleaned_items = []
+                if signature in _pending_requests:
+                    del _pending_requests[signature]
+                    cleaned_items.append("pending_requests")
+                if signature in _duplicate_requests:
+                    del _duplicate_requests[signature]
+                    cleaned_items.append("duplicate_requests")
+                
+                if cleaned_items:
+                    debug(
+                        LogRecord(
+                            LogEvent.DELAYED_CLEANUP_COMPLETED.value,
+                            f"Delayed cleanup completed for signature",
+                            "",
+                            {
+                                "signature": signature[:16] + "...", 
+                                "delay_seconds": delay_seconds,
+                                "cleaned_items": cleaned_items
+                            }
+                        )
+                    )
+        except Exception as e:
+            error(
+                LogRecord(
+                    "delayed_cleanup_error",
+                    f"Error during delayed cleanup: {str(e)}",
+                    "",
+                    {"signature": signature[:16] + "...", "error": str(e)}
+                )
+            )
+    
+    # 在后台任务中执行延迟清理，不阻塞当前请求
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(delayed_cleanup_async())
+    except RuntimeError:
+        # 如果没有运行的事件循环，回退到线程方式
+        def delayed_cleanup_thread():
+            try:
+                time.sleep(delay_seconds)
+                with _request_cleanup_lock:
+                    cleaned_items = []
+                    if signature in _pending_requests:
+                        del _pending_requests[signature]
+                        cleaned_items.append("pending_requests")
+                    if signature in _duplicate_requests:
+                        del _duplicate_requests[signature]
+                        cleaned_items.append("duplicate_requests")
+                    
+                    if cleaned_items:
+                        debug(
+                            LogRecord(
+                                LogEvent.DELAYED_CLEANUP_COMPLETED.value,
+                                f"Delayed cleanup completed for signature",
+                                "",
+                                {
+                                    "signature": signature[:16] + "...", 
+                                    "delay_seconds": delay_seconds,
+                                    "cleaned_items": cleaned_items
+                                }
+                            )
+                        )
+            except Exception as e:
+                error(
+                    LogRecord(
+                        "delayed_cleanup_error",
+                        f"Error during delayed cleanup: {str(e)}",
+                        "",
+                        {"signature": signature[:16] + "...", "error": str(e)}
+                    )
+                )
+        
+        cleanup_thread = threading.Thread(target=delayed_cleanup_thread, daemon=True)
+        cleanup_thread.start()
 
 def complete_and_cleanup_request(signature: str, result: Any, cache_content: Optional[Union[Dict[str, Any], List[str]]] = None, is_streaming: bool = False, provider_name: Optional[str] = None):
     """完成请求并清理去重状态"""
@@ -330,7 +578,7 @@ def complete_and_cleanup_request(signature: str, result: Any, cache_content: Opt
                     del _pending_requests[signature]
                     debug(
                         LogRecord(
-                            "original_request_completed",
+                            LogEvent.ORIGINAL_REQUEST_COMPLETED.value,
                             f"Original request completed and cleaned up",
                             original_request_id,
                             {"signature": signature[:16] + "...", "result_type": type(result).__name__}
@@ -339,7 +587,7 @@ def complete_and_cleanup_request(signature: str, result: Any, cache_content: Opt
                 else:
                     debug(
                         LogRecord(
-                            "request_cleanup_skip",
+                            LogEvent.REQUEST_CLEANUP_SKIP.value,
                             f"No pending request found for signature (non-duplicate request)",
                             None,
                             {"signature": signature[:16] + "...", "result_type": type(result).__name__}
@@ -465,18 +713,18 @@ def complete_and_cleanup_request(signature: str, result: Any, cache_content: Opt
                         message = f"Request failed and cleaned up (duplicate request cleared): {str(result)}"
                     elif isinstance(result, str):
                         if "streaming" in result:
-                            cleanup_reason = "streaming_completed"
+                            cleanup_reason = LogEvent.STREAMING_COMPLETED.value
                             message = f"Streaming request completed and cleaned up (duplicate request cleared)"
                         else:
-                            cleanup_reason = "request_completed"
+                            cleanup_reason = LogEvent.REQUEST_COMPLETED.value
                             message = f"Request completed and cleaned up (duplicate request cleared)"
                     else:
-                        cleanup_reason = "request_completed"
+                        cleanup_reason = LogEvent.REQUEST_COMPLETED.value
                         message = f"Request completed and cleaned up (duplicate request cleared)"
                     
                     info(
                         LogRecord(
-                            "request_cleanup",
+                            LogEvent.REQUEST_CLEANUP.value,
                             message,
                             original_request_id,
                             {
@@ -492,7 +740,7 @@ def complete_and_cleanup_request(signature: str, result: Any, cache_content: Opt
                     # 这种情况是正常的，因为非重复请求不会在pending_requests中
                     debug(
                         LogRecord(
-                            "request_cleanup_skip",
+                            LogEvent.REQUEST_CLEANUP_SKIP.value,
                             f"No pending request found for signature (non-duplicate request)",
                             None,
                             {"signature": signature[:16] + "..."},
@@ -709,18 +957,6 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                     # 添加调试信息
                     try:
                         from utils.logging.handlers import info, LogRecord
-                        info(
-                            LogRecord(
-                                "stream_cached_content_debug",
-                                f"Returning cached content for duplicate stream request",
-                                request_id,
-                                {
-                                    "chunks_count": len(result),
-                                    "chunks_preview": [chunk[:100] + "..." if len(chunk) > 100 else chunk for chunk in result[:3]],
-                                    "signature": signature[:16] + "..."
-                                }
-                            )
-                        )
                     except:
                         pass
                         
@@ -758,7 +994,27 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                                     if line.startswith('data:'):
                                         error_data = line[5:].strip()  # Remove 'data:' prefix
                                         error_json = json.loads(error_data)
-                                        return JSONResponse(content=error_json, status_code=400)
+                                        
+                                        # 确定正确的HTTP状态码
+                                        status_code = 500  # 默认为500
+                                        if isinstance(error_json, dict) and "error" in error_json:
+                                            error_type = error_json.get("error", {}).get("type", "")
+                                            # 根据错误类型确定状态码
+                                            if error_type in ["invalid_request_error", "authentication_error"]:
+                                                status_code = 400
+                                            elif error_type in ["permission_error", "forbidden"]:
+                                                status_code = 403
+                                            elif error_type in ["not_found_error"]:
+                                                status_code = 404
+                                            elif error_type in ["rate_limit_error"]:
+                                                status_code = 429
+                                            elif error_type in ["overloaded_error"]:
+                                                status_code = 529
+                                            else:
+                                                status_code = 500
+                                        
+                                        from fastapi.responses import JSONResponse
+                                        return JSONResponse(content=error_json, status_code=status_code)
                             except Exception:
                                 pass
                     

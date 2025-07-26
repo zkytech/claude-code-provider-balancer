@@ -166,7 +166,7 @@ class ProviderManager:
                     )
                     debug(LogRecord(
                         event=LogEvent.PROVIDER_LOADED.value,
-                        message=f"Loaded provider {provider.name} with auth_type={provider.auth_type}, auth_value={provider.auth_value}"
+                        message=f"Loaded provider {provider.name} with auth_type={provider.auth_type}, auth_value=[DREDACTED]"
                     ))
                     self.providers.append(provider)
             
@@ -403,7 +403,7 @@ class ProviderManager:
         
         debug(LogRecord(
             event=LogEvent.GET_PROVIDER_HEADERS_START.value,
-            message=f"Provider {provider.name}: auth_type={provider.auth_type}, auth_value={provider.auth_value}"
+            message=f"Provider {provider.name}: auth_type={provider.auth_type}, auth_value=[REDACTED]"
         ))
         
         

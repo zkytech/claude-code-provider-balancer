@@ -24,13 +24,16 @@ def validate_provider_health(response_content: Union[List[str], str, Dict[str, A
         Tuple[bool, Optional[str]]: (provider是否不健康, 错误类型)
     """
     try:
-        from utils.logging.handlers import warning, debug, LogRecord
+        from utils.logging.handlers import warning, debug, LogRecord, LogEvent
     except ImportError:
         try:
-            from utils.logging import warning, debug, LogRecord
+            from utils.logging import warning, debug, LogRecord, LogEvent
         except ImportError:
             warning = debug = lambda x: None
             LogRecord = dict
+            class MockLogEvent:
+                PROVIDER_HEALTH_CHECK_SSE_ERROR = type('MockValue', (), {'value': 'provider_health_check_sse_error'})()
+            LogEvent = MockLogEvent()
     
     failover_error_types = failover_error_types or []
     failover_http_codes = failover_http_codes or []
@@ -122,7 +125,7 @@ def validate_provider_health(response_content: Union[List[str], str, Dict[str, A
     if "event: error" in full_content and "invalid_request_error" in failover_error_types:
         warning(
             LogRecord(
-                "provider_health_check_sse_error",
+                LogEvent.PROVIDER_HEALTH_CHECK_SSE_ERROR.value,
                 f"SSE error event indicates unhealthy provider: {provider_name}",
                 request_id,
                 {

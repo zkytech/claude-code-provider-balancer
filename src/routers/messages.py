@@ -47,19 +47,20 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
             parsed_body = json.loads(raw_body.decode('utf-8'))
             
             # Debug: Log client request headers and body
-            debug(
-                LogRecord(
-                    event=LogEvent.CLIENT_REQUEST_DEBUG.value,
-                    message="Client request received - DEBUG",
-                    request_id=request_id,
-                    data={
-                        "headers": dict(request.headers),
-                        "request_body": parsed_body,
-                        "method": request.method,
-                        "url": str(request.url)
-                    }
-                )
-            )
+            # Uncomment for debugging purposes
+            # debug(
+            #     LogRecord(
+            #         event=LogEvent.CLIENT_REQUEST_DEBUG.value,
+            #         message="Client request received",
+            #         request_id=request_id,
+            #         data={
+            #             "headers": dict(request.headers),
+            #             "request_body": parsed_body,
+            #             "method": request.method,
+            #             "url": str(request.url)
+            #         }
+            #     )
+            # )
             
             # Extract provider parameter separately before validation
             provider_name = parsed_body.pop("provider", None)
@@ -295,7 +296,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                             
                                             warning(
                                                 LogRecord(
-                                                    "provider_unhealthy_stream_anthropic",
+                                                    LogEvent.PROVIDER_UNHEALTHY_STREAM_ANTHROPIC.value,
                                                     f"Anthropic provider {current_provider.name} marked unhealthy due to stream content, cannot failover",
                                                     request_id,
                                                     {
@@ -307,9 +308,41 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                                 )
                                             )
                                             
-                                            # Cannot failover for streaming, but still complete the request
-                                            health_validation_error = Exception(f"Anthropic stream provider health validation failed: {error_type}")
-                                            complete_and_cleanup_request(signature, health_validation_error, None, True, current_provider.name)
+                                            # Cannot failover for streaming, use delayed cleanup to allow client retry
+                                            # Get cleanup delay from settings
+                                            cleanup_delay = 3  # default
+                                            if provider_manager and hasattr(provider_manager, 'settings'):
+                                                cleanup_delay = provider_manager.settings.get('deduplication', {}).get('sse_error_cleanup_delay', 3)
+                                            
+                                            # Use delayed cleanup to keep request available for duplicate detection
+                                            from caching.deduplication import complete_and_cleanup_request_delayed
+                                            complete_and_cleanup_request_delayed(
+                                                signature, 
+                                                collected_chunks,  # Cache the actual stream content including errors
+                                                collected_chunks, 
+                                                True, 
+                                                current_provider.name, 
+                                                cleanup_delay
+                                            )
+                                            
+                                            # Log that we're using delayed cleanup for SSE error
+                                            info(
+                                                LogRecord(
+                                                    event=LogEvent.REQUEST_COMPLETED.value,
+                                                    message=f"SSE error response cached with delayed cleanup: {current_provider.name}",
+                                                    request_id=request_id,
+                                                    data={
+                                                        "provider": current_provider.name,
+                                                        "model": target_model,
+                                                        "stream": True,
+                                                        "provider_type": "anthropic",
+                                                        "chunks_count": len(collected_chunks),
+                                                        "attempt": attempt + 1,
+                                                        "cleanup_delay": cleanup_delay,
+                                                        "error_type": error_type
+                                                    }
+                                                )
+                                            )
                                         else:
                                             # Provider is healthy, complete the request with collected chunks
                                             complete_and_cleanup_request(signature, collected_chunks, collected_chunks, True, current_provider.name)
@@ -559,6 +592,22 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                     
                     # Provider is healthy, complete the request and cleanup
                     # For non-streaming responses, cache the actual content dict instead of JSON string array
+                    
+                    # uncomment this if you want to debug the response content before returning
+                    # # Debug: Log response content before return
+                    # debug(
+                    #     LogRecord(
+                    #         event="response_content",
+                    #         message=f"Response content before return: type={type(response_content)}, content={str(response_content)[:500]}...",
+                    #         request_id=request_id,
+                    #         data={
+                    #             "provider": current_provider.name,
+                    #             "response_type": type(response_content).__name__,
+                    #             "content_length": len(str(response_content)) if response_content else 0
+                    #         }
+                    #     )
+                    # )
+                    
                     complete_and_cleanup_request(signature, response_content, response_content, False, current_provider.name)
                     
                     info(
