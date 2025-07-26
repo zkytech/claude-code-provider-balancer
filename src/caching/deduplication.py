@@ -283,9 +283,10 @@ def generate_request_signature(data: Dict[str, Any]) -> str:
     debug(
         LogRecord(
             LogEvent.SIGNATURE_GENERATED.value,
-            f"Generated signature: {signature_hash[:16]}... for data: {signature_str[:200]}...",
+            f"Generated signature: {signature_hash[:16]}... for data: {signature_str[:100]}...",
             None,
             {
+                "req_id": signature_hash[:8],
                 "signature": signature_hash,
                 "signature_data": signature_str,
                 "include_max_tokens": include_max_tokens
@@ -1013,7 +1014,6 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                                             else:
                                                 status_code = 500
                                         
-                                        from fastapi.responses import JSONResponse
                                         return JSONResponse(content=error_json, status_code=status_code)
                             except Exception:
                                 pass
