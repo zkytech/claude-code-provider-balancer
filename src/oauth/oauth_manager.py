@@ -1103,7 +1103,7 @@ def init_oauth_manager(config_settings: Optional[Dict[str, Any]] = None):
     
     # Don't reinitialize if already exists and has tokens
     if oauth_manager and oauth_manager.token_credentials:
-        info(LogRecord(
+        debug(LogRecord(
             event=LogEvent.OAUTH_EXISTING_TOKENS_FOUND.value,
             message="OAuth manager already initialized with tokens, skipping reinitialization"
         ))
