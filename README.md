@@ -1,134 +1,247 @@
 # Claude Code Provider Balancer
 
-基于 FastAPI 的智能代理服务，为多个 Claude Code 提供商和 OpenAI 兼容服务提供负载均衡和故障转移功能。
+智能 Claude Code 代理服务，基于 FastAPI 构建，为多个 Claude 服务提供商提供负载均衡、故障转移和智能路由功能。
 
 ![Claude Balancer](docs/cover.png)
 
-## 核心特性
+## ✨ 核心特性
 
-- **🚀 多提供商支持** - 支持 Anthropic API、OpenAI 兼容服务
-- **⚡ 智能负载均衡** - 自动故障转移、健康监控
-- **🔐 OAuth 认证** - 支持 Claude Code 官方 OAuth 2.0 认证
-- **🎯 智能路由** - 基于模型名称的路由策略
-- **📊 请求去重** - 智能缓存，减少重复请求
-- **🔧 热配置重载** - 无需重启即可更新配置
+- **🚀 多提供商支持** - 完美支持 Anthropic API、OpenAI 兼容服务及其他主流供应商
+- **⚡ 智能负载均衡** - 自动故障转移、实时健康监控、智能提供商选择
+- **🔐 OAuth 认证支持** - 集成 Claude Code 官方 OAuth 2.0 认证流程
+- **🎯 智能路由系统** - 基于模型名称和优先级的动态路由策略
+- **📊 请求去重优化** - 智能缓存机制，自动识别并合并重复请求
+- **🔧 热配置重载** - 零停机时间配置更新，即时生效
+- **🛡️ 错误分类处理** - 智能错误识别与自动重试机制
+- **📈 性能监控** - 详细的性能指标和日志记录
 
-## 快速开始
+## 🚀 快速开始
 
 ### 1. 安装依赖
 
 ```bash
-# 推荐使用 uv
+# 推荐使用 uv (更快的 Python 包管理器)
 uv sync
 
-# 或使用 pip
+# 或使用传统 pip 方式
 pip install -r requirements.txt
 ```
 
 ### 2. 配置服务
 
 ```bash
-# 复制配置文件
+# 复制示例配置文件
 cp config.example.yaml config.yaml
 
-# 编辑配置文件，添加你的 API 密钥
+# 编辑配置文件，添加你的 API 密钥和提供商信息
 vim config.yaml
 ```
+
+**配置说明：**
+- 添加你的 Anthropic API 密钥
+- 配置其他兼容服务的 API 密钥
+- 设置提供商优先级和权重
+- 配置 OAuth 设置（可选）
 
 ### 3. 启动服务
 
 ```bash
-# 开发模式
+# 开发模式启动（带热重载）
 python src/main.py
 
-# 生产模式
+# 生产模式启动
 uvicorn src.main:app --host 0.0.0.0 --port 9090
+
+# 后台运行
+nohup uvicorn src.main:app --host 0.0.0.0 --port 9090 > logs/server.log 2>&1 &
 ```
 
-### 4. 配置 Claude Code
+### 4. 配置 Claude Code 客户端
 
 ```bash
+# 设置代理 URL
 export ANTHROPIC_BASE_URL=http://localhost:9090
+
+# 启动 Claude Code
 claude
 ```
 
+现在你的 Claude Code 请求将通过负载均衡器处理，享受高可用性和智能路由！
 
-## 核心功能
 
-### 多提供商负载均衡
+## 🔧 核心功能架构
 
-- 支持多个 Claude Code 服务商
-- 自动故障转移和健康检测
-- 基于优先级的智能路由
+### 🎯 智能负载均衡系统
 
-### OAuth 2.0 认证
+- **多提供商管理** - 统一管理多个 Claude Code 服务提供商
+- **健康状态监控** - 实时检测提供商可用性和响应时间
+- **智能故障转移** - 自动切换到健康的提供商，确保服务连续性
+- **基于优先级路由** - 根据配置的权重和优先级智能分配请求
+- **冷却机制** - 失败提供商的智能恢复和重试策略
 
-- 支持 Claude Code 官方 OAuth 认证
-- 自动 token 刷新和持久化
-- 无缝认证体验
+### 🔐 OAuth 2.0 认证集成
 
-### 请求缓存和去重
+- **官方认证支持** - 完整兼容 Claude Code 官方 OAuth 2.0 流程
+- **自动令牌管理** - 智能 token 刷新和安全持久化存储
+- **无缝用户体验** - 透明的认证过程，用户无感知切换
+- **多用户支持** - 支持多个用户的并发认证会话
 
-- 基于请求内容的智能去重
-- 响应缓存提升性能
-- 并发请求合并处理
+### 📊 请求优化系统
 
-### API 兼容性
+- **智能去重** - 基于请求内容哈希的重复请求识别
+- **响应缓存** - 智能缓存机制，显著提升响应速度
+- **并发处理** - 多个相同请求自动合并，减少后端压力
+- **性能优化** - 异步处理和连接池管理
 
-- 完整的 Anthropic Messages API 支持
-- OpenAI 格式自动转换
-- 流式和非流式响应
+### 🌐 完整 API 兼容
 
-## 主要端点
+- **Anthropic Messages API** - 100% 兼容原生 Anthropic API
+- **OpenAI 格式转换** - 自动转换 OpenAI 格式请求和响应
+- **流式响应支持** - 完整支持 SSE 流式和非流式响应
+- **错误透传** - 智能错误处理和状态码映射
 
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/v1/messages` | POST | 发送消息请求 |
-| `/v1/messages/count_tokens` | POST | 计算 token 数量 |
-| `/providers` | GET | 查看提供商状态 |
-| `/providers/reload` | POST | 重新加载配置 |
-| `/oauth/status` | GET | OAuth 状态检查 |
-| `/health` | GET | 服务健康检查 |
+## 📡 API 端点
 
-## 开发和测试
+### 核心消息接口
+| 端点 | 方法 | 描述 | 功能 |
+|------|------|------|------|
+| `/v1/messages` | POST | 发送消息请求 | 智能路由到最佳提供商 |
+| `/v1/messages/count_tokens` | POST | 计算 token 数量 | 精确的 token 计费统计 |
 
+### 管理和监控接口
+| 端点 | 方法 | 描述 | 功能 |
+|------|------|------|------|
+| `/providers` | GET | 查看提供商状态 | 实时健康状态和性能指标 |
+| `/providers/reload` | POST | 重新加载配置 | 热更新配置无需重启 |
+| `/health` | GET | 服务健康检查 | 整体服务状态监控 |
+
+### OAuth 认证接口
+| 端点 | 方法 | 描述 | 功能 |
+|------|------|------|------|
+| `/oauth/status` | GET | OAuth 状态检查 | 认证状态和令牌信息 |
+| `/oauth/authorize` | GET | OAuth 授权入口 | 启动 OAuth 认证流程 |
+| `/oauth/callback` | GET | OAuth 回调处理 | 处理认证回调和令牌交换 |
+
+## 🧪 开发和测试
+
+### 测试执行
 ```bash
-# 运行测试
+# 运行完整测试套件
 python tests/run_tests.py
 
-# 代码格式化
+# 运行特定测试
+python -m pytest tests/test_multi_provider_management.py -v
+
+# 运行模拟服务器进行测试
+python tests/run_mock_server.py
+```
+
+### 代码质量
+```bash
+# 代码格式化 (自动修复格式问题)
 ruff format src/ tests/
 
-# 代码检查
+# 代码静态检查
 ruff check src/ tests/
+
+# 类型检查 (如果使用 mypy)
+mypy src/
 ```
 
-## 故障排除
+### 开发工具
+```bash
+# 开发模式启动 (自动重载)
+python src/main.py
 
-### 常见问题
+# 查看详细日志
+tail -f logs/logs.jsonl | jq '.'
 
-1. **提供商连接失败** - 检查 API 密钥和网络连接
-2. **配置不生效** - 使用 `/providers/reload` 手动重载
-3. **OAuth 认证问题** - 检查 `/oauth/status` 和配置
+# 监控提供商状态
+watch -n 2 'curl -s http://localhost:9090/providers | jq .'
+```
 
-### 监控
+## 🛠️ 故障排除
+
+### 常见问题解决
+
+| 问题类型 | 症状 | 解决方案 |
+|---------|------|----------|
+| **提供商连接失败** | 请求总是失败或超时 | • 检查 API 密钥是否正确<br>• 验证网络连接<br>• 查看 `/providers` 状态 |
+| **配置不生效** | 修改配置后没有变化 | • 使用 `/providers/reload` 热重载<br>• 检查配置文件语法<br>• 查看启动日志 |
+| **OAuth 认证问题** | 认证失败或令牌过期 | • 检查 `/oauth/status` 状态<br>• 验证 OAuth 配置<br>• 重新进行认证流程 |
+| **响应慢或超时** | 请求处理时间过长 | • 检查提供商健康状态<br>• 调整超时配置<br>• 查看负载均衡策略 |
+| **内存使用过高** | 服务器内存占用异常 | • 检查缓存配置<br>• 清理过期缓存<br>• 重启服务 |
+
+### 实时监控命令
 
 ```bash
-# 查看提供商状态
-curl http://localhost:9090/providers
+# 查看所有提供商的实时状态
+curl -s http://localhost:9090/providers | jq '.'
 
-# 查看日志
+# 监控服务健康状态
+curl -s http://localhost:9090/health | jq '.'
+
+# 实时查看结构化日志
 tail -f logs/logs.jsonl | jq '.'
+
+# 监控系统资源使用
+htop  # 或 top
+
+# 查看网络连接状态
+netstat -tlnp | grep :9090
 ```
 
-## 技术特性
+### 日志分析
 
-- **模块化架构** - 清晰的代码组织和职责分离
-- **异步处理** - 基于 asyncio 的高性能并发
-- **类型安全** - 完整的 Pydantic 模型验证
-- **可观测性** - 结构化日志和性能监控
-- **高可用性** - 自动故障转移和健康检测
+```bash
+# 筛选错误日志
+cat logs/logs.jsonl | jq 'select(.level == "ERROR")'
 
-## 许可证
+# 查看最近的认证相关日志
+cat logs/logs.jsonl | jq 'select(.message | contains("oauth"))'
+
+# 统计请求数量
+cat logs/logs.jsonl | jq 'select(.message | contains("request"))' | wc -l
+```
+
+## 🏗️ 技术架构特性
+
+### 核心技术栈
+- **🐍 Python 3.8+** - 现代 Python 异步编程
+- **🚀 FastAPI** - 高性能 Web 框架，自动 API 文档
+- **⚡ Asyncio** - 原生异步编程，高并发处理
+- **🔍 Pydantic** - 数据验证和序列化
+- **📦 UV** - 快速的 Python 包管理器
+
+### 架构设计原则
+- **🎯 模块化设计** - 清晰的代码组织和职责分离
+- **⚡ 高性能异步** - 基于 asyncio 的非阻塞 I/O 处理
+- **🛡️ 类型安全** - 完整的 Pydantic 模型验证和类型注解
+- **📊 可观测性** - 结构化日志、性能监控和链路追踪
+- **🔧 高可用性** - 自动故障转移、健康检测和优雅降级
+- **🔄 热更新** - 零停机时间的配置更新和服务管理
+
+### 项目结构
+```
+src/
+├── main.py              # 应用入口和 FastAPI 实例
+├── core/                # 核心业务逻辑
+│   ├── provider_manager.py  # 提供商管理和负载均衡
+│   └── streaming/       # 流式响应处理
+├── routers/             # API 路由定义
+├── models/              # Pydantic 数据模型
+├── oauth/               # OAuth 认证管理
+├── caching/             # 缓存和去重逻辑
+├── conversion/          # 格式转换 (Anthropic ↔ OpenAI)
+└── utils/               # 工具类和辅助函数
+```
+
+## 📄 许可证
 
 MIT License - 详见 [LICENSE](./LICENSE) 文件
+
+---
+
+⭐ **如果这个项目对你有帮助，请给一个 Star！**
+
+🤝 **欢迎提交 Issue 和 Pull Request 来改进项目！**

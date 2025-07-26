@@ -242,17 +242,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                                         collected_chunks.append(chunk)
                                                         yield chunk
                                             except Exception as e:
-                                                error(
-                                                    LogRecord(
-                                                        "provider_stream_error",
-                                                        f"Error in provider stream: {type(e).__name__}: {e}",
-                                                        request_id,
-                                                        {
-                                                            "provider": current_provider.name,
-                                                            "error": str(e)
-                                                        }
-                                                    )
-                                                )
+                                                # Error will be logged by ParallelBroadcaster.stream_from_provider()
                                                 raise
                                         
                                         # Use broadcaster to handle parallel streaming with disconnect detection
