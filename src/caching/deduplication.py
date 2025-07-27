@@ -46,6 +46,25 @@ _duplicate_requests: Dict[str, List[Tuple[asyncio.Future, str, str, float, bool]
 _request_cleanup_lock = threading.RLock()
 
 
+def clear_all_cache():
+    """Clear all pending requests and duplicate requests cache (for testing)"""
+    global _pending_requests, _duplicate_requests
+    
+    with _request_cleanup_lock:
+        # Cancel any pending futures before clearing
+        for signature, (future, _) in list(_pending_requests.items()):
+            if not future.done():
+                future.cancel()
+        
+        for signature, duplicate_list in list(_duplicate_requests.items()):
+            for future, _, _, _, _ in duplicate_list:
+                if not future.done():
+                    future.cancel()
+        
+        _pending_requests.clear()
+        _duplicate_requests.clear()
+
+
 # 响应缓存功能已删除，只保留去重功能
 
 

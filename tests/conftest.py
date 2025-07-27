@@ -164,7 +164,26 @@ def test_openai_request() -> Dict[str, Any]:
 
 
 @pytest.fixture(autouse=True)
-def cleanup_after_test():
+def cleanup_after_test(provider_manager):
     """Cleanup after each test."""
     yield
-    # Add any cleanup logic here if needed
+    # Reset provider health states to prevent test interference
+    try:
+        from core.provider_manager.health import reset_all_health_states
+        reset_all_health_states()
+    except ImportError:
+        pass  # Skip if module not available
+    
+    # Reset provider manager states
+    if provider_manager:
+        try:
+            provider_manager.reset_all_provider_states()
+        except AttributeError:
+            pass  # Skip if method not available
+    
+    # Also clear any cached deduplication data
+    try:
+        from caching.deduplication import clear_all_cache
+        clear_all_cache()
+    except (ImportError, AttributeError):
+        pass  # Skip if method not available

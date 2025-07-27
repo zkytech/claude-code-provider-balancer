@@ -624,6 +624,11 @@ class ProviderManager:
         """按照超时配置重置错误计数"""
         reset_error_counts_on_timeout(self.unhealthy_reset_timeout)
     
+    def reset_all_provider_states(self):
+        """重置所有provider的状态（用于测试）"""
+        for provider in self.providers:
+            provider.mark_success()  # Reset failure count and last_failure_time
+    
     def get_provider_error_status(self, provider_name: str) -> Dict[str, Any]:
         """获取Provider的错误状态信息"""
         return get_provider_error_status(

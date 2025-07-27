@@ -162,7 +162,7 @@ settings:
       pool_timeout: 10
     streaming:
       connect_timeout: 10
-      read_timeout: 60
+      read_timeout: 30
       pool_timeout: 10
     caching:
       deduplication_timeout: 60
@@ -176,27 +176,43 @@ settings:
   unhealthy_reset_on_success: true
   unhealthy_reset_timeout: 60  # 1分钟超时重置
 
-  # 错误处理策略
-  unhealthy_error_types:
-    - "connection_error"
-    - "timeout_error"
-    - "internal_server_error"
-    - "bad_gateway"
-    - "service_unavailable"
-    - "gateway_timeout"
-    - "too_many_requests"
-    - "rate_limit_exceeded"
-    - "invalid_request_error"
-    - "unknown_error"
-    - "not_found_error"
+  # 分离的错误检测配置
+  # Exception错误模式 - 使用简单字符串匹配（宽松策略）
+  unhealthy_exception_patterns:
+    # === 网络相关错误 ===
+    - "connection"              # 连接相关错误 (connection failed, connection timeout等)
+    - "timeout"                 # 超时错误 (read timeout, connect timeout等)
+    - "ssl"                     # SSL/TLS错误
+    - "network"                 # 网络错误
 
+  # 响应体错误模式 - 使用正则表达式匹配（严格策略）
+  unhealthy_response_body_patterns:
+    # === JSON错误字段模式 ===
+    - '"error"\s*:\s*".*insufficient.*credits"'    # JSON中的余额不足错误
+    - '"error_type"\s*:\s*"quota_exceeded"'         # 配额超限错误
+    - '"message"\s*:\s*".*rate.?limit.*"'           # 速率限制错误
+    - '"detail"\s*:\s*".*没有可用.*"'                # 中文服务商错误
+    
+    # === 流式响应错误模式 ===
+    - 'data:\s*\{"error"'                           # SSE流中的错误消息
+    - 'event:\s*error'                              # SSE错误事件
+    
+  # HTTP状态码映射到unhealthy判断
   unhealthy_http_codes:
-    - 404
-    - 500
-    - 502
-    - 503
-    - 504
-    - 429
+    - 402  # Payment Required
+    - 403  # Forbidden
+    - 404  # Not Found
+    - 408  # Request Timeout
+    - 500  # Internal Server Error
+    - 502  # Bad Gateway
+    - 503  # Service Unavailable
+    - 504  # Gateway Timeout
+    - 429  # Too Many Requests
+    - 520  # Unknown Error (Cloudflare)
+    - 521  # Web Server Is Down
+    - 522  # Connection Timed Out
+    - 523  # Origin Is Unreachable
+    - 524  # A Timeout Occurred
 
   # 日志设置
   log_level: "DEBUG"

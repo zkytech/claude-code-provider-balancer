@@ -563,11 +563,11 @@ class TestStreamingRequests:
         """
         测试场景: Provider因SSE错误被标记为不健康后，新请求应该路由到健康的provider - uses real mock providers
         预期结果:
-        1. 第一个请求触发SSE错误，第一个provider被标记不健康
-        2. 第二个请求（不同signature）应该路由到第二个健康的provider
+        1. 第一和第二个请求触发SSE错误，第一个provider被标记不健康（需要2次错误达到threshold）
+        2. 第三个请求（不同signature）应该路由到第二个健康的provider
         3. 这不是failover，而是provider选择逻辑
         """
-        # 第一个请求 - 会触发SSE错误并标记第一个provider为不健康
+        # 第一个请求 - 会触发SSE错误（第1次错误）
         first_request_data = {
             "model": "claude-3-5-sonnet-20241022",
             "max_tokens": 100,
@@ -576,16 +576,25 @@ class TestStreamingRequests:
             "provider": "Test SSE Error Provider"  # This provider returns SSE errors
         }
         
-        # 第二个请求 - 应该路由到健康的provider
+        # 第二个请求 - 同样会触发SSE错误（第2次错误，达到threshold=2）
         second_request_data = {
+            "model": "claude-3-5-sonnet-20241022",
+            "max_tokens": 100,
+            "stream": True,
+            "messages": [{"role": "user", "content": "Second request that will also cause SSE error"}],
+            "provider": "Test SSE Error Provider"  # This provider returns SSE errors
+        }
+        
+        # 第三个请求 - 应该路由到健康的provider
+        third_request_data = {
             "model": "claude-3-5-sonnet-20241022", 
             "max_tokens": 100,
             "stream": True,
-            "messages": [{"role": "user", "content": "Second request should go to healthy provider"}]
+            "messages": [{"role": "user", "content": "Third request should go to healthy provider"}]
             # No provider specified - should route to healthy provider (Test Success Provider)
         }
         
-        # 第一个请求 - 应该收到SSE错误
+        # 第一个请求 - 应该收到SSE错误（第1次错误）
         response1 = await async_client.post(
             "/v1/messages",
             json=first_request_data,
@@ -601,12 +610,12 @@ class TestStreamingRequests:
         assert "event: error" in content1
         assert "invalid_request_error" in content1
         
-        # 等待一小段时间让provider被标记为不健康和延迟清理完成
+        # 等待延迟清理完成
         await asyncio.sleep(4)  # Wait for delayed cleanup to complete
         
-        # 第二个请求 - 应该路由到健康的provider (Test Success Provider)
+        # 第二个请求 - 应该收到SSE错误（第2次错误，触发unhealthy）
         response2 = await async_client.post(
-            "/v1/messages", 
+            "/v1/messages",
             json=second_request_data,
             headers=claude_headers
         )
@@ -615,15 +624,36 @@ class TestStreamingRequests:
         async for chunk in response2.aiter_text():
             content2 += chunk
         
-        # 验证第二个请求收到了正常响应（来自健康的provider）
+        # 验证第二个请求也收到了SSE错误
         assert response2.status_code == 200
-        assert "机器学习" in content2  # Content from healthy Test Success Provider (Chinese text)
-        assert "event: message_stop" in content2
-        assert "msg_test_stream" in content2  # Message ID from Test Success Provider
+        assert "event: error" in content2
+        assert "invalid_request_error" in content2
         
-        # 验证两个请求的内容不同（不是缓存的重复请求）
-        assert content1 != content2
-        assert "event: error" not in content2  # 第二个请求不应包含错误
+        # 等待延迟清理完成，此时provider应该被标记为不健康
+        await asyncio.sleep(4)  # Wait for delayed cleanup to complete
+        
+        # 第三个请求 - 应该路由到健康的provider (Test Success Provider)
+        response3 = await async_client.post(
+            "/v1/messages", 
+            json=third_request_data,
+            headers=claude_headers
+        )
+        
+        content3 = ""
+        async for chunk in response3.aiter_text():
+            content3 += chunk
+        
+        # 验证第三个请求收到了正常响应（来自健康的provider）
+        assert response3.status_code == 200
+        # Content from healthy Test Success Provider (Chinese text)
+        assert "机器学习" in content3
+        assert "event: message_stop" in content3
+        assert "msg_test_stream" in content3  # Message ID from Test Success Provider
+        
+        # 验证第三个请求的内容与前两个请求不同（不是缓存的重复请求）
+        assert content3 != content1
+        assert content3 != content2
+        assert "event: error" not in content3  # 第三个请求不应包含错误
 
     @pytest.mark.asyncio
     async def test_streaming_multiple_chunks(self, async_client: AsyncClient, claude_headers):

@@ -67,7 +67,7 @@ def create_mock_provider_router() -> APIRouter:
                         "usage": {"input_tokens": 20, "output_tokens": 0}
                     }
                 }
-                yield f"event: message_start\ndata: {json.dumps(start_event)}\n\n"
+                yield f"event: message_start\ndata: {json.dumps(start_event, ensure_ascii=False)}\n\n"
                 
                 # Real delay to simulate network/processing time
                 await asyncio.sleep(0.5)  # 500ms initial delay
@@ -78,7 +78,7 @@ def create_mock_provider_router() -> APIRouter:
                     "index": 0,
                     "content_block": {"type": "text", "text": ""}
                 }
-                yield f"event: content_block_start\ndata: {json.dumps(content_start)}\n\n"
+                yield f"event: content_block_start\ndata: {json.dumps(content_start, ensure_ascii=False)}\n\n"
                 
                 # Simulate real text generation with delays between chunks
                 text_parts = [
@@ -103,11 +103,11 @@ def create_mock_provider_router() -> APIRouter:
                     if i > 0:
                         await asyncio.sleep(0.3)  # 300ms delay between chunks
                     
-                    yield f"event: content_block_delta\ndata: {json.dumps(delta_event)}\n\n"
+                    yield f"event: content_block_delta\ndata: {json.dumps(delta_event, ensure_ascii=False)}\n\n"
                 
                 # Content block stop
                 content_stop = {"type": "content_block_stop", "index": 0}
-                yield f"event: content_block_stop\ndata: {json.dumps(content_stop)}\n\n"
+                yield f"event: content_block_stop\ndata: {json.dumps(content_stop, ensure_ascii=False)}\n\n"
                 
                 # Small delay before final message
                 await asyncio.sleep(0.02)
@@ -116,7 +116,7 @@ def create_mock_provider_router() -> APIRouter:
                 stop_event = {
                     "type": "message_stop"
                 }
-                yield f"event: message_stop\ndata: {json.dumps(stop_event)}\n\n"
+                yield f"event: message_stop\ndata: {json.dumps(stop_event, ensure_ascii=False)}\n\n"
             
             return StreamingResponse(
                 generate_real_stream(),
@@ -200,7 +200,7 @@ def create_mock_provider_router() -> APIRouter:
                     if i > 0:
                         await asyncio.sleep(0.05)
                     
-                    yield f"data: {json.dumps(chunk)}\n\n"
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                 
                 # Final chunk with finish_reason
                 final_chunk = {
@@ -218,7 +218,7 @@ def create_mock_provider_router() -> APIRouter:
                 }
                 
                 await asyncio.sleep(0.02)
-                yield f"data: {json.dumps(final_chunk)}\n\n"
+                yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n"
                 yield "data: [DONE]\n\n"
             
             return StreamingResponse(
@@ -264,7 +264,7 @@ def create_mock_provider_router() -> APIRouter:
                             "usage": {"input_tokens": 10, "output_tokens": 0}
                         }
                     }
-                    yield f"event: message_start\ndata: {json.dumps(message_start)}\n\n"
+                    yield f"event: message_start\ndata: {json.dumps(message_start, ensure_ascii=False)}\n\n"
                     
                     # Small delay to simulate processing
                     await asyncio.sleep(0.1)
@@ -277,7 +277,7 @@ def create_mock_provider_router() -> APIRouter:
                             "message": "Request contains invalid parameters"
                         }
                     }
-                    yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+                    yield f"event: error\ndata: {json.dumps(error_event, ensure_ascii=False)}\n\n"
                 
                 return StreamingResponse(
                     generate_sse_error_stream(),

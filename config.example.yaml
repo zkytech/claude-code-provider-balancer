@@ -196,14 +196,14 @@ settings:
   # 响应体错误模式 - 使用正则表达式匹配（严格策略）
   unhealthy_response_body_patterns:
     # === JSON错误字段模式 ===
-    - '"error"\\s*:\\s*".*insufficient.*credits"'  # JSON中的余额不足错误
-    - '"error_type"\\s*:\\s*"quota_exceeded"'       # 配额超限错误
-    - '"message"\\s*:\\s*".*rate.?limit.*"'         # 速率限制错误
-    - '"detail"\\s*:\\s*".*没有可用.*"'              # 中文服务商错误
+    - '"error"\s*:\s*".*insufficient.*credits"'    # JSON中的余额不足错误
+    - '"error_type"\s*:\s*"quota_exceeded"'         # 配额超限错误
+    - '"message"\s*:\s*".*rate.?limit.*"'           # 速率限制错误
+    - '"detail"\s*:\s*".*没有可用.*"'                # 中文服务商错误
     
     # === 流式响应错误模式 ===
-    - 'data:\\s*\\{"error"'                         # SSE流中的错误消息
-    - 'event:\\s*error'                             # SSE错误事件
+    - 'data:\s*\{"error"'                           # SSE流中的错误消息
+    - 'event:\s*error'                              # SSE错误事件
     
     # 注意：以下错误通过HTTP状态码处理，不在此列表中：
     # - "internal server error" (500) -> unhealthy_http_codes
@@ -215,6 +215,7 @@ settings:
   # HTTP状态码映射到unhealthy判断
   unhealthy_http_codes:
     - 402  # Payment Required
+    - 403  # Forbidden
     - 404  # Not Found
     - 408  # Request Timeout
     - 500  # Internal Server Error
@@ -260,7 +261,9 @@ settings:
     # 是否在签名计算中包含max_tokens参数
     # 设置为false可以避免Claude Code客户端重试时因max_tokens变化导致的签名不同
     include_max_tokens_in_signature: false
-    # 响应缓存已删除，只保留去重功能
+    # SSE错误响应的延迟清理时间（秒）
+    # 当stream请求中检测到SSE错误时，延迟清理缓存以便客户端重试请求能被识别为duplicate
+    sse_error_cleanup_delay: 3
 
   # 测试设置（仅用于开发和测试）
   testing:

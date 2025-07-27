@@ -478,3 +478,15 @@ def is_provider_healthy(provider_name: str, failure_count: int, last_failure_tim
     if failure_count == 0:
         return True
     return time.time() - last_failure_time > cooldown_seconds
+
+
+def reset_all_health_states():
+    """重置所有provider的健康状态（用于测试）"""
+    global _global_health_manager
+    
+    with _health_manager_lock:
+        if _global_health_manager is not None:
+            with _global_health_manager._lock:
+                _global_health_manager._error_counts.clear()
+                _global_health_manager._last_error_time.clear()
+                _global_health_manager._last_success_time.clear()
