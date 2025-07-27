@@ -286,9 +286,8 @@ def generate_request_signature(data: Dict[str, Any]) -> str:
             f"Generated signature: {signature_hash[:16]}... for data: {signature_str[:100]}...",
             None,
             {
-                "req_id": signature_hash[:8],
                 "signature": signature_hash,
-                "signature_data": signature_str,
+                "signature_data": signature_str[:100],
                 "include_max_tokens": include_max_tokens
             }
         )

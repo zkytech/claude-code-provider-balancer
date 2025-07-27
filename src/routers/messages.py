@@ -341,6 +341,11 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                             # Provider is healthy, complete the request with collected chunks
                                             complete_and_cleanup_request(signature, collected_chunks, collected_chunks, True, current_provider.name)
                                             
+                                            # Mark provider success for sticky routing and failure count reset
+                                            current_provider.mark_success()
+                                            if provider_manager:
+                                                provider_manager.mark_provider_success(current_provider.name)
+                                            
                                             # Log request completion for consistency with non-streaming requests
                                             info(
                                                 LogRecord(
@@ -373,6 +378,11 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                 
                                 # For non-streaming responses converted to stream, use the response_data directly
                                 complete_and_cleanup_request(signature, response_data, collected_chunks, True, current_provider.name)
+                                
+                                # Mark provider success for sticky routing and failure count reset
+                                current_provider.mark_success()
+                                if provider_manager:
+                                    provider_manager.mark_provider_success(current_provider.name)
                                 
                                 # Log request completion
                                 info(
@@ -478,6 +488,11 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                         
                                         # Complete the request with collected chunks
                                         complete_and_cleanup_request(signature, collected_chunks, collected_chunks, True, current_provider.name)
+                                        
+                                        # Mark provider success for sticky routing and failure count reset
+                                        current_provider.mark_success()
+                                        if provider_manager:
+                                            provider_manager.mark_provider_success(current_provider.name)
                                         
                                         # Log request completion
                                         info(
@@ -603,6 +618,11 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                     # )
                     
                     complete_and_cleanup_request(signature, response_content, response_content, False, current_provider.name)
+                    
+                    # Mark provider success for sticky routing and failure count reset
+                    current_provider.mark_success()
+                    if provider_manager:
+                        provider_manager.mark_provider_success(current_provider.name)
                     
                     info(
                         LogRecord(
