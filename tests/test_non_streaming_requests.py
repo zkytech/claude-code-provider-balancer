@@ -499,6 +499,7 @@ class TestNonStreamingRequests:
         预期结果: 首个provider被标记不健康，请求成功failover到第二个provider并返回正常响应
         
         注意: 这测试的是真正的failover（单个请求内的provider切换），针对非流式请求
+        更新: 适配新的failover机制，使用500错误码触发failover，并测试错误计数阈值
         """
         from unittest.mock import patch
         
@@ -516,37 +517,36 @@ class TestNonStreamingRequests:
             nonlocal call_count
             call_count += 1
             
-            if call_count == 1:
-                # First provider returns JSON error response (should trigger failover)
-                error_response_data = {
-                    "type": "error",
-                    "error": {
-                        "type": "invalid_request_error",
-                        "message": "Request contains invalid parameters"
-                    }
-                }
+            if call_count <= 2:  # First two calls should trigger failover due to unhealthy_threshold=2
+                # First and second provider calls return server error (triggers failover)
+                # Use HTTP 500 which is in unhealthy_http_codes in test config
+                from httpx import HTTPStatusError, Request
                 
-                # Create a mock response object that simulates a JSON error response
+                # Create mock response for HTTP error
                 class MockErrorResponse:
                     def __init__(self):
-                        self.status_code = 400  # HTTP 400 should trigger failover
+                        self.status_code = 500
                         self.headers = {"content-type": "application/json"}
-                        self._json_data = error_response_data
                     
                     def json(self):
-                        return self._json_data
-                    
-                    def raise_for_status(self):
-                        from httpx import HTTPStatusError, Request
-                        raise HTTPStatusError(
-                            "HTTP 400 Bad Request",
-                            request=Request("POST", "http://test.example.com"),
-                            response=self
-                        )
+                        return {
+                            "type": "error",
+                            "error": {
+                                "type": "internal_server_error", 
+                                "message": "Internal server error occurred"
+                            }
+                        }
                 
-                return MockErrorResponse()
+                mock_response = MockErrorResponse()
+                
+                # Raise HTTPStatusError which triggers failover logic
+                raise HTTPStatusError(
+                    "HTTP 500 Internal Server Error",
+                    request=Request("POST", "http://test.example.com"),
+                    response=mock_response
+                )
             else:
-                # Second provider returns successful response
+                # Third provider returns successful response (after failover)
                 healthy_response_data = {
                     "id": "msg_healthy_123",
                     "type": "message",
@@ -601,4 +601,5 @@ class TestNonStreamingRequests:
             assert "error" not in response_data  # Should not contain error
             
             # Verify that failover actually occurred by checking call count
+            # With the new mechanism, we expect multiple calls for error counting + final success
             assert call_count >= 2, f"Expected at least 2 calls indicating failover occurred, got {call_count}"

@@ -177,7 +177,7 @@ settings:
   unhealthy_reset_timeout: 60  # 1分钟超时重置
 
   # 错误处理策略
-  failover_error_types:
+  unhealthy_error_types:
     - "connection_error"
     - "timeout_error"
     - "internal_server_error"
@@ -190,7 +190,7 @@ settings:
     - "unknown_error"
     - "not_found_error"
 
-  failover_http_codes:
+  unhealthy_http_codes:
     - 404
     - 500
     - 502

@@ -47,7 +47,6 @@ if __name__ == "__main__":
     print("  - POST http://localhost:8998/test-providers/anthropic-unhealthy-test-multiple/v1/messages")
     print("  - POST http://localhost:8998/test-providers/anthropic-unhealthy-test-reset/v1/messages")
     print("  - POST http://localhost:8998/test-providers/anthropic-unhealthy-test-always-fail/v1/messages")
-    print("  - POST http://localhost:8998/test-providers/reset-test-counters")
     print("  - GET  http://localhost:8998/health")
     
     uvicorn.run(

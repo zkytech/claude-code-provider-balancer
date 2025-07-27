@@ -28,7 +28,7 @@ from conversion import (
     convert_anthropic_tool_choice_to_openai, convert_openai_to_anthropic_response
 )
 from utils import LogRecord, LogEvent, info, warning, error, debug
-from utils.validation import validate_provider_health
+from core.provider_manager.health import validate_response_health
 
 
 def create_messages_router(provider_manager: ProviderManager, settings: Any) -> APIRouter:
@@ -267,29 +267,19 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                         if broadcaster:
                                             unregister_broadcaster(signature)
                                         
-                                        # Check provider health based on collected chunks
-                                        failover_config = {}
-                                        if provider_manager:
-                                            failover_config = {
-                                                'failover_error_types': provider_manager.settings.get('failover_error_types', []),
-                                                'failover_http_codes': provider_manager.settings.get('failover_http_codes', [])
-                                            }
-                                        
-                                        is_error_detected, error_type = validate_provider_health(
+                                        # 使用简化的健康检查
+                                        is_error_detected, error_reason = validate_response_health(
                                             collected_chunks, 
-                                            current_provider.name, 
-                                            request_id,
                                             None,  # No HTTP status for successful stream
-                                            failover_config.get('failover_error_types', []),
-                                            failover_config.get('failover_http_codes', []),
-                                            broadcaster.last_exception_info if broadcaster else None
+                                            provider_manager.settings.get('unhealthy_http_codes', []),
+                                            provider_manager.settings.get('unhealthy_error_patterns', [])
                                         )
                                         
                                         # 使用ProviderManager的错误计数机制
                                         should_mark_unhealthy = False
                                         if provider_manager:
                                             should_mark_unhealthy = provider_manager.record_health_check_result(
-                                                current_provider.name, is_error_detected, error_type, request_id
+                                                current_provider.name, is_error_detected, error_reason, request_id
                                             )
                                         else:
                                             # Fallback: 如果没有provider_manager，使用原有逻辑
@@ -306,7 +296,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                                     request_id,
                                                     {
                                                         "provider": current_provider.name,
-                                                        "error_type": error_type,
+                                                        "error_reason": error_reason,
                                                         "can_failover": False,
                                                         "action": "marked_unhealthy_only"
                                                     }
@@ -334,7 +324,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                             info(
                                                 LogRecord(
                                                     event=LogEvent.REQUEST_COMPLETED.value,
-                                                    message=f"SSE error response cached with delayed cleanup: {current_provider.name}",
+                                                    message=f"SSE error response cached with delayed cleanup (unhealthy): {current_provider.name}",
                                                     request_id=request_id,
                                                     data={
                                                         "provider": current_provider.name,
@@ -344,7 +334,43 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                                         "chunks_count": len(collected_chunks),
                                                         "attempt": attempt + 1,
                                                         "cleanup_delay": cleanup_delay,
-                                                        "error_type": error_type
+                                                        "error_reason": error_reason,
+                                                        "marked_unhealthy": True
+                                                    }
+                                                )
+                                            )
+                                        elif is_error_detected:
+                                            # SSE error detected but not reaching unhealthy threshold
+                                            # Still use delayed cleanup for SSE errors to support duplicate request testing
+                                            cleanup_delay = 3  # default
+                                            if provider_manager and hasattr(provider_manager, 'settings'):
+                                                cleanup_delay = provider_manager.settings.get('deduplication', {}).get('sse_error_cleanup_delay', 3)
+                                            
+                                            from caching.deduplication import complete_and_cleanup_request_delayed
+                                            complete_and_cleanup_request_delayed(
+                                                signature, 
+                                                collected_chunks,  # Cache the actual stream content including errors
+                                                collected_chunks, 
+                                                True, 
+                                                current_provider.name, 
+                                                cleanup_delay
+                                            )
+                                            
+                                            info(
+                                                LogRecord(
+                                                    event=LogEvent.REQUEST_COMPLETED.value,
+                                                    message=f"SSE error response cached with delayed cleanup (below threshold): {current_provider.name}",
+                                                    request_id=request_id,
+                                                    data={
+                                                        "provider": current_provider.name,
+                                                        "model": target_model,
+                                                        "stream": True,
+                                                        "provider_type": "anthropic",
+                                                        "chunks_count": len(collected_chunks),
+                                                        "attempt": attempt + 1,
+                                                        "cleanup_delay": cleanup_delay,
+                                                        "error_reason": error_reason,
+                                                        "marked_unhealthy": False
                                                     }
                                                 )
                                             )
@@ -573,36 +599,23 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                     
                     # Check provider health based on response content
                     if provider_manager:
-                        failover_config = {
-                            'failover_error_types': provider_manager.settings.get('failover_error_types', []),
-                            'failover_http_codes': provider_manager.settings.get('failover_http_codes', [])
-                        }
-                        
                         # Get HTTP status code from response
                         response_status_code = None
                         if hasattr(response, 'status_code'):
                             response_status_code = response.status_code
                         
-                        is_error_detected, error_type = validate_provider_health(
-                            response_content, 
-                            current_provider.name, 
-                            request_id,
+                        # 使用简化的健康检查
+                        is_error_detected, error_reason = validate_response_health(
+                            response_content,
                             response_status_code,
-                            failover_config['failover_error_types'],
-                            failover_config['failover_http_codes']
+                            provider_manager.settings.get('unhealthy_http_codes', []),
+                            provider_manager.settings.get('unhealthy_error_patterns', [])
                         )
                         
                         # 使用ProviderManager的错误计数机制
-                        should_mark_unhealthy = False
-                        if provider_manager:
-                            should_mark_unhealthy = provider_manager.record_health_check_result(
-                                current_provider.name, is_error_detected, error_type, request_id
-                            )
-                        else:
-                            # Fallback: 如果没有provider_manager，使用原有逻辑
-                            should_mark_unhealthy = is_error_detected
-                            if should_mark_unhealthy:
-                                current_provider.mark_failure()
+                        should_mark_unhealthy = provider_manager.record_health_check_result(
+                            current_provider.name, is_error_detected, error_reason, request_id
+                        )
                         
                         if should_mark_unhealthy:
                             
@@ -613,7 +626,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                     request_id,
                                     {
                                         "provider": current_provider.name,
-                                        "error_type": error_type,
+                                        "error_reason": error_reason,
                                         "attempt": attempt + 1,
                                         "remaining_attempts": max_attempts - attempt - 1,
                                         "can_failover": True
@@ -622,7 +635,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                             )
                             
                             # Create a health validation exception to trigger failover
-                            health_validation_error = Exception(f"Provider health validation failed: {error_type}")
+                            health_validation_error = Exception(f"Provider health validation failed: {error_reason}")
                             
                             # If we have more providers to try, continue to next iteration
                             if attempt < max_attempts - 1:
@@ -697,16 +710,19 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                 # The user needs to complete the OAuth flow
                                 return await message_handler._log_and_return_error_response(request, e, request_id, http_status_code, signature)
                     
-                    # Use provider_manager to determine if we should failover
+                    # Use provider_manager to determine unhealthy status and failover capability
                     if provider_manager:
-                        error_type, should_failover = provider_manager.get_error_classification(e, http_status_code)
+                        error_reason, should_mark_unhealthy, can_failover = provider_manager.get_error_classification(
+                            e, http_status_code, messages_request.stream, False
+                        )
                     else:
-                        # Default failover behavior if provider_manager is not available
-                        should_failover = True
-                        error_type = "unknown_error"
+                        # Default behavior if provider_manager is not available
+                        should_mark_unhealthy = True
+                        can_failover = True
+                        error_reason = "unknown_error"
                     
-                    # If we shouldn't failover, return the error immediately
-                    if not should_failover:
+                    # If we shouldn't mark provider unhealthy, return the error immediately
+                    if not should_mark_unhealthy:
                         # Mark provider as used for sticky logic
                         if provider_manager:
                             provider_manager.mark_provider_used(current_provider.name)
@@ -714,11 +730,11 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                         info(
                             LogRecord(
                                 event=LogEvent.ERROR_NOT_RETRYABLE.value,
-                                message=f"Error type '{error_type}' not configured for failover, returning to client",
+                                message=f"Error reason '{error_reason}' not configured to mark provider unhealthy, returning to client",
                                 request_id=request_id,
                                 data={
                                     "provider": current_provider.name,
-                                    "error_type": error_type,
+                                    "error_reason": error_reason,
                                     "http_status_code": http_status_code
                                 }
                             )
@@ -730,7 +746,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                     if provider_manager:
                         # Use error counting mechanism before marking as failed
                         should_mark_unhealthy = provider_manager.record_health_check_result(
-                            current_provider.name, True, error_type, request_id
+                            current_provider.name, True, error_reason, request_id
                         )
                         # Only mark as failed if threshold is reached
                         if should_mark_unhealthy:
@@ -739,6 +755,24 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                     else:
                         # Fallback: use original logic if no provider manager
                         current_provider.mark_failure()
+                    
+                    # Check if we can failover to next provider
+                    if not can_failover:
+                        # Cannot failover (e.g., streaming response headers already sent)
+                        info(
+                            LogRecord(
+                                event=LogEvent.ERROR_NOT_RETRYABLE.value,
+                                message=f"Cannot failover for this request type, returning error to client",
+                                request_id=request_id,
+                                data={
+                                    "provider": current_provider.name,
+                                    "error_reason": error_reason,
+                                    "can_failover": can_failover,
+                                    "is_streaming": messages_request.stream
+                                }
+                            )
+                        )
+                        return await message_handler._log_and_return_error_response(request, e, request_id, 500, signature)
                     
                     # If we have more providers to try, continue to next iteration
                     if attempt < max_attempts - 1:

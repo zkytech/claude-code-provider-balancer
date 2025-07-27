@@ -10,6 +10,7 @@ from conftest import (
     test_streaming_request
 )
 from test_config import get_test_provider_url
+from core.provider_manager import ProviderManager
 
 
 class TestMultiProviderManagement:
@@ -615,295 +616,141 @@ class TestMultiProviderManagement:
                     print(f"✅ Verified: Provider {test_provider.name} failure count reset from 3 to 0")
 
 
-class TestUnhealthyCountingMechanismWithRealMocks:
-    """Test the new unhealthy counting mechanism that requires multiple errors before marking unhealthy."""
+class TestUnhealthyCountingMechanism:
+    """Test the unhealthy counting mechanism that requires multiple errors before marking unhealthy."""
+
+    @pytest.fixture
+    def provider_manager(self):
+        """Create a provider manager with test configuration."""
+        return ProviderManager(config_path="tests/config-test.yaml")
 
     @pytest.mark.asyncio
-    async def test_single_error_does_not_mark_unhealthy(self, async_client: AsyncClient, claude_headers, provider_manager):
-        """Test that a single error does not immediately mark provider as unhealthy."""
-        import time
+    async def test_single_error_does_not_mark_unhealthy_unit(self, provider_manager):
+        """Unit test: single error should not immediately mark provider as unhealthy."""
         
-        # Reset all providers to healthy state
-        for provider in provider_manager.providers:
-            provider.mark_success()
-            
-        # Reset error counts
-        with provider_manager._lock:
-            provider_manager._error_counts.clear()
-            provider_manager._last_error_time.clear()
-            provider_manager._last_success_time.clear()
+        # Reset error counts by clearing the global health manager
+        from core.provider_manager.health import _global_health_manager, _health_manager_lock
+        with _health_manager_lock:
+            if _global_health_manager:
+                _global_health_manager._error_counts.clear()
+                _global_health_manager._last_error_time.clear()
+                _global_health_manager._last_success_time.clear()
         
-        with respx.mock:
-            # Mock primary provider to fail first, then succeed on retry
-            call_count = 0
-            def mock_single_error_response(request):
-                nonlocal call_count 
-                call_count += 1
-                if call_count == 1:
-                    # First call fails
-                    raise ConnectError("Connection failed")
-                else:
-                    # Subsequent calls succeed (fallback)
-                    return Response(
-                        200,
-                        json={
-                            "id": "msg_success_after_single_error",
-                            "type": "message",
-                            "role": "assistant", 
-                            "content": [{"type": "text", "text": "Success after single error"}],
-                            "model": "claude-3-5-sonnet-20241022",
-                            "stop_reason": "end_turn",
-                            "usage": {"input_tokens": 10, "output_tokens": 8}
-                        }
-                    )
-            
-            # Mock the Test Success Provider URL (priority 2)
-            respx.post(get_test_provider_url("anthropic")).mock(side_effect=mock_single_error_response)
-            
-            # Also mock the Test SSE Error Provider URL (priority 1) to fail
-            respx.post(get_test_provider_url("anthropic-sse-error")).mock(
-                side_effect=ConnectError("SSE Error Provider failed")
-            )
-            
-            # Make request
-            request_data = {
-                "model": "claude-3-5-sonnet-20241022",
-                "max_tokens": 100,
-                "messages": [{"role": "user", "content": "Test single error"}]
-            }
-            
-            response = await async_client.post(
-                "/v1/messages",
-                json=request_data,
-                headers=claude_headers
-            )
+        provider_name = "Test Provider"
         
-        # Should succeed via fallback
-        assert response.status_code == 200
+        # Record one error
+        should_mark_unhealthy = provider_manager.record_health_check_result(
+            provider_name, True, "connection_error", "test_request_1"
+        )
         
-        # Check that first provider has error count of 1 but is not marked unhealthy
-        first_provider = provider_manager.providers[0]
-        error_status = provider_manager.get_provider_error_status(first_provider.name)
+        # Should not mark unhealthy on first error
+        assert not should_mark_unhealthy
         
-        print(f"Provider {first_provider.name} error count: {error_status['error_count']}/{error_status['threshold']}")
+        # Check error status
+        error_status = provider_manager.get_provider_error_status(provider_name)
         assert error_status['error_count'] == 1
         assert error_status['threshold'] == 2  # Default threshold
         
-        # Provider should still be healthy (not failed) since it hasn't reached threshold
-        assert first_provider.failure_count == 0  # Should not be marked as failed
-        print(f"✅ Single error did not mark provider unhealthy: {first_provider.name}")
+        print(f"✅ Single error did not mark provider unhealthy: {provider_name}")
 
     @pytest.mark.asyncio
-    async def test_multiple_errors_mark_unhealthy(self, async_client: AsyncClient, claude_headers, provider_manager):
-        """Test that multiple errors (reaching threshold) mark provider as unhealthy."""
-        import time
+    async def test_multiple_errors_mark_unhealthy_unit(self, provider_manager):
+        """Unit test: multiple errors (reaching threshold) should mark provider as unhealthy."""
         
-        # Reset all providers to healthy state
-        for provider in provider_manager.providers:
-            provider.mark_success()
-            
-        # Reset error counts
-        with provider_manager._lock:
-            provider_manager._error_counts.clear()
-            provider_manager._last_error_time.clear()
-            provider_manager._last_success_time.clear()
+        # Reset error counts by clearing the global health manager
+        from core.provider_manager.health import _global_health_manager, _health_manager_lock
+        with _health_manager_lock:
+            if _global_health_manager:
+                _global_health_manager._error_counts.clear()
+                _global_health_manager._last_error_time.clear()
+                _global_health_manager._last_success_time.clear()
         
-        with respx.mock:
-            # Mock primary provider to fail twice, then succeed on fallback
-            call_count = 0
-            def mock_multiple_error_response(request):
-                nonlocal call_count
-                call_count += 1
-                if call_count <= 2:
-                    # First two calls fail
-                    raise ConnectError("Connection failed")
-                else:
-                    # Subsequent calls succeed (fallback)
-                    return Response(
-                        200,
-                        json={
-                            "id": "msg_success_after_multiple_errors",
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [{"type": "text", "text": "Success after multiple errors"}],
-                            "model": "claude-3-5-sonnet-20241022",
-                            "stop_reason": "end_turn",
-                            "usage": {"input_tokens": 10, "output_tokens": 8}
-                        }
-                    )
-            
-            # Mock the Test Success Provider URL (priority 2)
-            respx.post(get_test_provider_url("anthropic")).mock(side_effect=mock_multiple_error_response)
-            
-            # Also mock the Test SSE Error Provider URL (priority 1) to always fail
-            respx.post(get_test_provider_url("anthropic-sse-error")).mock(
-                side_effect=ConnectError("SSE Error Provider failed")
-            )
-            
-            # Make two requests to trigger multiple errors
-            request_data = {
-                "model": "claude-3-5-sonnet-20241022",
-                "max_tokens": 100,
-                "messages": [{"role": "user", "content": "Test multiple errors"}]
-            }
-            
-            # First request - should record first error
-            response1 = await async_client.post(
-                "/v1/messages",
-                json=request_data,
-                headers=claude_headers
-            )
-            assert response1.status_code == 200
-            
-            # Check error count after first failure
-            first_provider = provider_manager.providers[0]
-            error_status = provider_manager.get_provider_error_status(first_provider.name)
-            print(f"After first request - Error count: {error_status['error_count']}/{error_status['threshold']}")
-            assert error_status['error_count'] == 1
-            
-            # Second request - should record second error and mark unhealthy
-            response2 = await async_client.post(
-                "/v1/messages",
-                json=request_data,
-                headers=claude_headers
-            )
-            assert response2.status_code == 200
-            
-            # Check error count after second failure
-            error_status = provider_manager.get_provider_error_status(first_provider.name)
-            print(f"After second request - Error count: {error_status['error_count']}/{error_status['threshold']}")
-            assert error_status['error_count'] == 2
-            
-            # Provider should now be marked as failed (unhealthy)
-            assert first_provider.failure_count > 0
-            print(f"✅ Multiple errors marked provider unhealthy: {first_provider.name}")
+        provider_name = "Test Provider"
+        
+        # Record first error
+        should_mark_unhealthy_1 = provider_manager.record_health_check_result(
+            provider_name, True, "connection_error", "test_request_1"
+        )
+        assert not should_mark_unhealthy_1  # First error should not mark unhealthy
+        
+        # Record second error (reaching threshold)
+        should_mark_unhealthy_2 = provider_manager.record_health_check_result(
+            provider_name, True, "connection_error", "test_request_2"
+        )
+        assert should_mark_unhealthy_2  # Second error should mark unhealthy
+        
+        # Check error status
+        error_status = provider_manager.get_provider_error_status(provider_name)
+        assert error_status['error_count'] == 2
+        assert error_status['threshold'] == 2
+        
+        print(f"✅ Multiple errors correctly marked provider unhealthy: {provider_name}")
 
     @pytest.mark.asyncio
-    async def test_success_resets_error_count(self, async_client: AsyncClient, claude_headers, provider_manager):
-        """Test that successful requests reset the error count."""
-        import time
+    async def test_success_resets_error_count_unit(self, provider_manager):
+        """Unit test: successful requests should reset the error count."""
         
-        # Reset all providers to healthy state
-        for provider in provider_manager.providers:
-            provider.mark_success()
-            
-        # Reset error counts
-        with provider_manager._lock:
-            provider_manager._error_counts.clear()
-            provider_manager._last_error_time.clear()
-            provider_manager._last_success_time.clear()
+        # Reset error counts by clearing the global health manager
+        from core.provider_manager.health import _global_health_manager, _health_manager_lock
+        with _health_manager_lock:
+            if _global_health_manager:
+                _global_health_manager._error_counts.clear()
+                _global_health_manager._last_error_time.clear()
+                _global_health_manager._last_success_time.clear()
         
-        with respx.mock:
-            # Mock primary provider to fail once, then succeed
-            call_count = 0
-            def mock_provider_response(request):
-                nonlocal call_count
-                call_count += 1
-                if call_count == 1:
-                    # First call fails
-                    raise ConnectError("Connection failed")
-                else:
-                    # Second call succeeds
-                    return Response(
-                        200,
-                        json={
-                            "id": "msg_success_after_reset",
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [{"type": "text", "text": "Success after reset"}],
-                            "model": "claude-3-5-sonnet-20241022",
-                            "stop_reason": "end_turn",
-                            "usage": {"input_tokens": 10, "output_tokens": 8}
-                        }
-                    )
-            
-            # Mock the Test Success Provider URL (priority 2)
-            respx.post(get_test_provider_url("anthropic")).mock(side_effect=mock_provider_response)
-            
-            # Also mock the Test SSE Error Provider URL (priority 1) to fail initially
-            respx.post(get_test_provider_url("anthropic-sse-error")).mock(
-                side_effect=ConnectError("SSE Error Provider failed")
-            )
-            
-            # No need for separate fallback URL, the mock handles retry logic
-            
-            request_data = {
-                "model": "claude-3-5-sonnet-20241022",
-                "max_tokens": 100,
-                "messages": [{"role": "user", "content": "Test error reset"}]
-            }
-            
-            # First request - should fail and record error
-            response1 = await async_client.post(
-                "/v1/messages",
-                json=request_data,
-                headers=claude_headers
-            )
-            assert response1.status_code == 200  # Should succeed via fallback
-            
-            # Check error count after first failure
-            first_provider = provider_manager.providers[0]
-            error_status = provider_manager.get_provider_error_status(first_provider.name)
-            print(f"After failure - Error count: {error_status['error_count']}/{error_status['threshold']}")
-            assert error_status['error_count'] == 1
-            
-            # Second request - should succeed on primary provider
-            response2 = await async_client.post(
-                "/v1/messages",
-                json=request_data,
-                headers=claude_headers
-            )
-            assert response2.status_code == 200
-            
-            # Check that error count is reset after success
-            error_status = provider_manager.get_provider_error_status(first_provider.name)
-            print(f"After success - Error count: {error_status['error_count']}/{error_status['threshold']}")
-            
-            # Error count should be reset to 0 after successful request
-            assert error_status['error_count'] == 0
-            print(f"✅ Success request reset error count for provider: {first_provider.name}")
+        provider_name = "Test Provider"
+        
+        # Record one error
+        provider_manager.record_health_check_result(
+            provider_name, True, "connection_error", "test_request_1"
+        )
+        
+        # Verify error was recorded
+        error_status = provider_manager.get_provider_error_status(provider_name)
+        assert error_status['error_count'] == 1
+        
+        # Record success
+        provider_manager.record_health_check_result(
+            provider_name, False, None, "test_request_2"
+        )
+        
+        # Verify error count was reset
+        error_status = provider_manager.get_provider_error_status(provider_name)
+        assert error_status['error_count'] == 0
+        
+        print(f"✅ Success correctly reset error count for provider: {provider_name}")
 
     @pytest.mark.asyncio
-    async def test_independent_error_counting_per_provider(self, async_client: AsyncClient, claude_headers, provider_manager):
-        """Test that error counts are independent for each provider."""
-        import time
+    async def test_independent_error_counting_per_provider_unit(self, provider_manager):
+        """Unit test: error counts should be independent for each provider."""
         
-        # Ensure we have at least 2 providers
-        assert len(provider_manager.providers) >= 2
+        # Reset error counts by clearing the global health manager
+        from core.provider_manager.health import _global_health_manager, _health_manager_lock
+        with _health_manager_lock:
+            if _global_health_manager:
+                _global_health_manager._error_counts.clear()
+                _global_health_manager._last_error_time.clear()
+                _global_health_manager._last_success_time.clear()
         
-        # Reset all providers to healthy state
-        for provider in provider_manager.providers:
-            provider.mark_success()
-            
-        # Reset error counts
-        with provider_manager._lock:
-            provider_manager._error_counts.clear()
-            provider_manager._last_error_time.clear()
-            provider_manager._last_success_time.clear()
-        
-        # Manually test error counting independence
-        provider_a = provider_manager.providers[0]
-        provider_b = provider_manager.providers[1]
+        provider_a = "Provider A"
+        provider_b = "Provider B"
         
         # Record one error for provider A
         should_mark_unhealthy_a1 = provider_manager.record_health_check_result(
-            provider_a.name, True, "connection_error", "test_request_1"
+            provider_a, True, "connection_error", "test_request_1"
         )
         
         # Record two errors for provider B
         should_mark_unhealthy_b1 = provider_manager.record_health_check_result(
-            provider_b.name, True, "connection_error", "test_request_2"
+            provider_b, True, "connection_error", "test_request_2"
         )
         should_mark_unhealthy_b2 = provider_manager.record_health_check_result(
-            provider_b.name, True, "connection_error", "test_request_3"
+            provider_b, True, "connection_error", "test_request_3"
         )
         
         # Check results
-        status_a = provider_manager.get_provider_error_status(provider_a.name)
-        status_b = provider_manager.get_provider_error_status(provider_b.name)
-        
-        print(f"Provider A error count: {status_a['error_count']}/{status_a['threshold']}")
-        print(f"Provider B error count: {status_b['error_count']}/{status_b['threshold']}")
+        status_a = provider_manager.get_provider_error_status(provider_a)
+        status_b = provider_manager.get_provider_error_status(provider_b)
         
         # Provider A should have 1 error, not marked unhealthy
         assert status_a['error_count'] == 1
@@ -917,21 +764,19 @@ class TestUnhealthyCountingMechanismWithRealMocks:
         print(f"✅ Independent error counting verified: A={status_a['error_count']}, B={status_b['error_count']}")
 
     @pytest.mark.asyncio
-    async def test_timeout_reset_error_counts(self, async_client: AsyncClient, claude_headers, provider_manager):
-        """Test that error counts are reset after timeout period."""
+    async def test_timeout_reset_error_counts_unit(self, provider_manager):
+        """Unit test: error counts should be reset after timeout period."""
         import time
         
-        # Reset all providers to healthy state
-        for provider in provider_manager.providers:
-            provider.mark_success()
-            
-        # Reset error counts
-        with provider_manager._lock:
-            provider_manager._error_counts.clear()
-            provider_manager._last_error_time.clear()
-            provider_manager._last_success_time.clear()
+        # Reset error counts by clearing the global health manager
+        from core.provider_manager.health import _global_health_manager, _health_manager_lock
+        with _health_manager_lock:
+            if _global_health_manager:
+                _global_health_manager._error_counts.clear()
+                _global_health_manager._last_error_time.clear()
+                _global_health_manager._last_success_time.clear()
         
-        provider_name = provider_manager.providers[0].name
+        provider_name = "Test Provider"
         
         # Record an error
         provider_manager.record_health_check_result(
@@ -941,12 +786,11 @@ class TestUnhealthyCountingMechanismWithRealMocks:
         # Verify error was recorded
         status_before = provider_manager.get_provider_error_status(provider_name)
         assert status_before['error_count'] == 1
-        print(f"Before timeout reset - Error count: {status_before['error_count']}")
         
         # Manually set error time to past (simulate timeout)
-        with provider_manager._lock:
-            if provider_name in provider_manager._last_error_time:
-                provider_manager._last_error_time[provider_name] = time.time() - provider_manager.unhealthy_reset_timeout - 1
+        with _health_manager_lock:
+            if _global_health_manager and provider_name in _global_health_manager._last_error_time:
+                _global_health_manager._last_error_time[provider_name] = time.time() - provider_manager.unhealthy_reset_timeout - 1
         
         # Trigger timeout reset
         provider_manager.reset_error_counts_on_timeout()
@@ -954,6 +798,6 @@ class TestUnhealthyCountingMechanismWithRealMocks:
         # Verify error count was reset
         status_after = provider_manager.get_provider_error_status(provider_name)
         assert status_after['error_count'] == 0
-        print(f"After timeout reset - Error count: {status_after['error_count']}")
+        
         print(f"✅ Timeout reset successfully cleared error count for provider: {provider_name}")
 

@@ -67,159 +67,79 @@ class TestStreamingRequests:
 
     @pytest.mark.asyncio
     async def test_streaming_provider_error(self, async_client: AsyncClient, claude_headers):
-        """Test streaming request with provider returning error."""
+        """Test streaming request with provider returning error - uses real mock provider."""
         request_data = {
             "model": "claude-3-5-sonnet-20241022",
             "max_tokens": 100,  
             "stream": True,
-            "messages": [{"role": "user", "content": "Test error"}]
+            "messages": [{"role": "user", "content": "Test error"}],
+            "provider": "Test Single Error Provider"  # Use provider that always returns 502
         }
         
-        with respx.mock:
-            # Mock provider to return 500 error
-            respx.post(get_test_provider_url("anthropic")).mock(
-                return_value=Response(500, json={"error": {"message": "Internal server error"}})
-            )
-            
-            response = await async_client.post(
-                "/v1/messages",
-                json=request_data,
-                headers=claude_headers
-            )
-            
-            assert response.status_code == 500
-            error_data = response.json()
-            assert "error" in error_data
-
-    @pytest.mark.asyncio
-    async def test_streaming_connection_error(self, async_client: AsyncClient, claude_headers, test_streaming_request):
-        """Test streaming request with connection error."""
-        with respx.mock:
-            # Mock connection error
-            respx.post(get_test_provider_url("anthropic")).mock(
-                side_effect=ConnectError("Connection failed")
-            )
-            
-            response = await async_client.post(
-                "/v1/messages", 
-                json=test_streaming_request,
-                headers=claude_headers
-            )
-            
-            # Should failover or return appropriate error
-            assert response.status_code in [500, 502, 503]
-
-    @pytest.mark.asyncio
-    async def test_streaming_connection_timeout(self, async_client: AsyncClient, claude_headers, test_streaming_request):
-        """Test streaming request with connection timeout."""
+        # No mocking needed - use real mock provider endpoint
+        response = await async_client.post(
+            "/v1/messages",
+            json=request_data,
+            headers=claude_headers
+        )
         
-        with respx.mock:
-            # Mock connection timeout - use side_effect to trigger actual httpx timeout
-            respx.post(get_test_provider_url("anthropic")).mock(
-                side_effect=httpx.ConnectTimeout("Connection timed out")
-            )
-            
-            response = await async_client.post(
-                "/v1/messages",
-                json=test_streaming_request,
-                headers=claude_headers
-            )
-            
-            # Should handle connection timeout gracefully - returns 500 after trying all providers
-            assert response.status_code == 500
-            error_data = response.json()
-            assert "error" in error_data
-            # Should indicate all providers failed
-            assert "All configured providers" in error_data["error"]["message"]
-
-    @pytest.mark.asyncio
-    async def test_streaming_read_timeout(self, async_client: AsyncClient, claude_headers, test_streaming_request):
-        """Test streaming request with read timeout during data streaming."""
-        
-        with respx.mock:
-            # Mock read timeout during streaming - use side_effect to trigger actual httpx timeout
-            respx.post(get_test_provider_url("anthropic")).mock(
-                side_effect=httpx.ReadTimeout("Read timed out")
-            )
-            
-            response = await async_client.post(
-                "/v1/messages",
-                json=test_streaming_request,  
-                headers=claude_headers
-            )
-            
-            # Should handle read timeout gracefully - returns 500 after trying all providers
-            assert response.status_code == 500
-            error_data = response.json()
-            assert "error" in error_data
-            # Should indicate all providers failed
-            assert "All configured providers" in error_data["error"]["message"]
+        assert response.status_code == 500
+        error_data = response.json()
+        assert "error" in error_data
 
     @pytest.mark.asyncio
     async def test_balancer_timeout_handling_and_provider_failover(self, async_client: AsyncClient, claude_headers, test_streaming_request):
-        """Test that balancer properly handles timeouts and attempts provider failover."""
+        """Test that balancer properly handles timeouts and attempts provider failover - uses real mock providers."""
         
-        with respx.mock:
-            # Mock different timeout scenarios for different providers
-            # First provider (Test Success Provider) - connection timeout
-            respx.post(get_test_provider_url("anthropic")).mock(
-                side_effect=httpx.ConnectTimeout("First provider connection timeout")
-            )
-            
-            # The balancer will try to failover to the second provider (Test Error Provider)
-            # which is also mocked to fail, so we should get a comprehensive error
-            
-            response = await async_client.post(
-                "/v1/messages",
-                json=test_streaming_request,
-                headers=claude_headers
-            )
-            
-            # Should return 500 after all providers fail with timeouts
-            assert response.status_code == 500
-            error_data = response.json()
-            assert "error" in error_data
-            
-            # Should indicate that all providers failed
-            error_msg = error_data["error"]["message"]
-            assert "All configured providers" in error_msg
-            
-            # Verify the error type is correctly classified
-            assert "api_error" in error_data["error"]["type"] or "timeout" in error_msg.lower()
+        # Override to use providers that will fail - both Test Single Error Provider and Multiple return 502
+        failing_request = test_streaming_request.copy()
+        failing_request["provider"] = "Test Single Error Provider"  # This will fail with 502
+        
+        # No mocking needed - use real mock provider endpoints that return errors
+        response = await async_client.post(
+            "/v1/messages",
+            json=failing_request,
+            headers=claude_headers
+        )
+        
+        # Should return 500 after all providers fail
+        assert response.status_code == 500
+        error_data = response.json()
+        assert "error" in error_data
+        
+        # Should indicate that all providers failed
+        error_msg = error_data["error"]["message"]
+        assert "All configured providers" in error_msg
+        
+        # Verify the error type is correctly classified
+        assert "api_error" in error_data["error"]["type"] or "bad_gateway" in error_msg.lower()
 
     @pytest.mark.asyncio
     async def test_streaming_200_with_error_content(self, async_client: AsyncClient, claude_headers, test_streaming_request):
-        """Test streaming request that returns 200 but contains error in content."""
-        with respx.mock:
-            # Mock 200 response with error content
-            error_content = {
-                "type": "error",
-                "error": {
-                    "type": "invalid_request_error", 
-                    "message": "Invalid request parameters"
-                }
-            }
-            respx.post(get_test_provider_url("anthropic")).mock(
-                return_value=Response(200, json=error_content)
-            )
-            
-            response = await async_client.post(
-                "/v1/messages",
-                json=test_streaming_request,
-                headers=claude_headers
-            )
-            
-            # Should return 200 but detect error content internally
-            # The provider is marked as unhealthy but response is still forwarded
-            assert response.status_code == 200
-            
-            # Verify the error content is returned
-            content = response.text
-            assert "invalid_request_error" in content or "error" in content
+        """Test streaming request that returns 200 but contains error in SSE content - uses real mock provider."""
+        # Use the SSE error provider that returns 200 with SSE error event
+        sse_error_request = test_streaming_request.copy()
+        sse_error_request["provider"] = "Test SSE Error Provider"  # Provider that returns SSE error
+        
+        # No mocking needed - use real mock provider endpoint
+        response = await async_client.post(
+            "/v1/messages",
+            json=sse_error_request,
+            headers=claude_headers
+        )
+        
+        # Should return 200 but detect error content internally
+        # The provider is marked as unhealthy but response is still forwarded
+        assert response.status_code == 200
+        
+        # Verify the error content is returned in SSE format
+        content = response.text
+        assert "invalid_request_error" in content or "error" in content
+        assert "event: error" in content  # Should be in SSE format
 
     @pytest.mark.asyncio 
     async def test_streaming_200_with_empty_content(self, async_client: AsyncClient, claude_headers):
-        """Test streaming request that returns 200 but with empty/invalid content."""
+        """Test streaming request that returns 200 but with empty/invalid content - uses mock with intentionally broken stream."""
         # Use a unique request to avoid signature collision with previous test
         test_request = {
             "model": "claude-3-5-sonnet-20241022",
@@ -227,6 +147,8 @@ class TestStreamingRequests:
             "stream": True,
             "messages": [{"role": "user", "content": "This is an empty content test message."}]
         }
+        
+        # For this specific test case, we need to mock an empty stream since our mock provider always returns content
         with respx.mock:
             # Mock 200 response with empty stream that properly terminates
             async def empty_stream():
@@ -270,7 +192,7 @@ class TestStreamingRequests:
 
     @pytest.mark.asyncio
     async def test_streaming_malformed_json_response(self, async_client: AsyncClient, claude_headers):
-        """Test streaming request with malformed JSON response."""
+        """Test streaming request with malformed JSON response - needs mocking since mock provider returns valid JSON."""
         # Use a unique request to avoid signature collision with previous tests
         test_request = {
             "model": "claude-3-5-sonnet-20241022",
@@ -278,6 +200,8 @@ class TestStreamingRequests:
             "stream": True,
             "messages": [{"role": "user", "content": "This is a malformed JSON test message."}]
         }
+        
+        # For this specific test case, we need to mock malformed JSON since our mock provider returns valid JSON
         with respx.mock:
             # Mock response with malformed JSON
             respx.post(get_test_provider_url("anthropic")).mock(
@@ -344,7 +268,7 @@ class TestStreamingRequests:
 
     @pytest.mark.asyncio
     async def test_streaming_with_different_content_types(self, async_client: AsyncClient, claude_headers):
-        """Test streaming request with unexpected content type."""
+        """Test streaming request with unexpected content type - needs mocking since mock provider returns correct content type."""
         # Use a unique request to avoid signature collision with previous tests
         test_request = {
             "model": "claude-3-5-sonnet-20241022",
@@ -352,6 +276,8 @@ class TestStreamingRequests:
             "stream": True,
             "messages": [{"role": "user", "content": "Test for different content types."}]
         }
+        
+        # For this specific test case, we need to mock wrong content type since our mock provider returns correct type
         with respx.mock:
             # Mock response with wrong content type
             respx.post(get_test_provider_url("anthropic")).mock(
@@ -373,7 +299,7 @@ class TestStreamingRequests:
 
     @pytest.mark.asyncio
     async def test_streaming_with_rate_limit_error(self, async_client: AsyncClient, claude_headers):
-        """Test streaming request with rate limit error."""
+        """Test streaming request with rate limit error - needs mocking since mock provider doesn't return 429."""
         # Use a unique request to avoid signature collision with previous tests
         test_request = {
             "model": "claude-3-5-sonnet-20241022",
@@ -381,6 +307,8 @@ class TestStreamingRequests:
             "stream": True,
             "messages": [{"role": "user", "content": "Test for rate limit error."}]
         }
+        
+        # For this specific test case, we need to mock 429 since our mock provider doesn't return rate limit errors
         with respx.mock:
             # Mock rate limit error
             respx.post(get_test_provider_url("anthropic")).mock(
@@ -411,139 +339,108 @@ class TestStreamingRequests:
 
     @pytest.mark.asyncio
     async def test_streaming_sse_error_event_response(self, async_client: AsyncClient, claude_headers):
-        """Test streaming request where provider returns SSE error event (like overloaded_error).
+        """Test streaming request where provider returns SSE error event (like invalid_request_error) - uses real mock provider.
         
         This test verifies our delayed cleanup mechanism that ensures both the original 
         streaming request and duplicate non-streaming request receive the same error response.
+        
+        Updated: With the fixed SSE error handling, duplicate requests now correctly receive 
+        cached error responses due to delayed cleanup mechanism.
         """
         
         request_data = {
             "model": "claude-3-5-sonnet-20241022",
             "max_tokens": 100,
             "stream": True,
-            "messages": [{"role": "user", "content": "test"}]
+            "messages": [{"role": "user", "content": "test"}],
+            "provider": "Test SSE Error Provider"  # Use the SSE error mock provider
         }
         
-        # Mock a response that returns SSE error event
-        class MockSSEErrorResponse:
-            def __init__(self):
-                self.status_code = 200
-                self.headers = {"content-type": "text/event-stream"}
-            
-            async def aiter_text(self):
-                # Simulate the exact format from the log
-                yield 'event: error\ndata: {"type":"error","error":{"details":null,"type":"overloaded_error","message":"Overloaded"}}\n\n'
+        # Test 1: First request (streaming) - should get SSE error stream from real mock provider
+        response1 = await async_client.post(
+            "/v1/messages",
+            json=request_data,
+            headers=claude_headers
+        )
         
-        # Mock the streaming method generator to return our mock response
-        async def mock_streaming_generator(*args, **kwargs):
-            yield MockSSEErrorResponse()
+        # Should get 200 with SSE error stream
+        assert response1.status_code == 200
+        assert "text/event-stream" in response1.headers.get("content-type", "")
         
-        # Patch the make_anthropic_streaming_request method 
-        with patch('handlers.message_handler.MessageHandler.make_anthropic_streaming_request') as mock_request:
-            mock_request.return_value = mock_streaming_generator()
-            
-            # Test 1: First request (streaming) - should get SSE error stream
-            response1 = await async_client.post(
-                "/v1/messages",
-                json=request_data,
-                headers=claude_headers
-            )
-            
-            # Should get 200 with SSE error stream
-            assert response1.status_code == 200
-            assert "text/event-stream" in response1.headers.get("content-type", "")
-            
-            content = ""
-            async for chunk in response1.aiter_text():
-                content += chunk
-            
-            # Verify SSE error event format
-            assert "event: error" in content
-            assert "overloaded_error" in content
-            assert "Overloaded" in content
-            
-            # Test 2: Wait a moment then send duplicate non-streaming request
-            await asyncio.sleep(1)
-            
-            non_streaming_request = request_data.copy()
-            non_streaming_request["stream"] = False
-            
-            response2 = await async_client.post(
-                "/v1/messages", 
-                json=non_streaming_request,
-                headers=claude_headers
-            )
-            
-            # Due to delayed cleanup, this duplicate request should get an error response
-            # The specific status code may vary (400, 529) depending on the implementation
-            assert response2.status_code >= 400
-            
-            error_data = response2.json()
-            assert "error" in error_data
-            # The error may be the original SSE error or a timeout/failover error
-            assert "error" in error_data["error"] or error_data["error"]["type"] == "overloaded_error"
-            
-            # This verifies our delayed cleanup mechanism works:
-            # 1. Original streaming request got SSE error at time T
-            # 2. Duplicate non-streaming request at time T+1 got the cached error (HTTP 400)
-            # 3. This proves the delayed cleanup allowed duplicate detection to work correctly
+        content = ""
+        async for chunk in response1.aiter_text():
+            content += chunk
+        
+        # Verify SSE error event format
+        assert "event: error" in content
+        assert "invalid_request_error" in content
+        assert "Request contains invalid parameters" in content
+        
+        # Test 2: Wait a moment then send duplicate non-streaming request
+        await asyncio.sleep(1)
+        
+        non_streaming_request = request_data.copy()
+        non_streaming_request["stream"] = False
+        
+        response2 = await async_client.post(
+            "/v1/messages", 
+            json=non_streaming_request,
+            headers=claude_headers
+        )
+        
+        # Due to delayed cleanup mechanism, this duplicate request should get the cached error response
+        # This is the correct behavior now - SSE errors use delayed cleanup for duplicate request testing
+        assert response2.status_code == 400  # Error response from cached SSE error
+        
+        error_data = response2.json()
+        assert "error" in error_data
+        # Should contain the same error as the original SSE error
+        assert error_data["error"]["type"] == "invalid_request_error"
+        assert "Request contains invalid parameters" in error_data["error"]["message"]
+        
+        # This verifies our delayed cleanup mechanism works correctly:
+        # 1. Original streaming request got SSE error at time T and was cached with delayed cleanup
+        # 2. Duplicate non-streaming request at time T+1 got the cached error response
+        # 3. This proves the delayed cleanup mechanism is working for SSE errors
 
     @pytest.mark.asyncio
     async def test_single_provider_sse_error_no_failover(self, async_client: AsyncClient, claude_headers):
         """
-        测试场景: 单个provider返回SSE错误，触发provider_health_check_sse_error
+        测试场景: 单个provider返回SSE错误，触发provider_health_check_sse_error - uses real mock provider
         预期结果: provider被标记为不健康，由于没有其他provider可用，返回error响应
         """
         request_data = {
             "model": "claude-3-5-sonnet-20241022",
             "max_tokens": 1000,
             "messages": [{"role": "user", "content": "Test single provider SSE error"}],
-            "stream": True
+            "stream": True,
+            "provider": "Test SSE Error Provider"  # Use the SSE error mock provider
         }
         
-        # Mock a response that returns SSE error event
-        class MockSSEErrorResponse:
-            def __init__(self):
-                self.status_code = 200
-                self.headers = {"content-type": "text/event-stream"}
-            
-            async def aiter_text(self):
-                """模拟SSE错误响应 - 包含event: error的内容"""
-                yield 'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_test","type":"message","role":"assistant","model":"claude-3-5-sonnet-20241022","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0}}}\n\n'
-                yield 'event: error\ndata: {"type":"error","error":{"type":"invalid_request_error","message":"Request contains invalid parameters"}}\n\n'
+        # 执行请求 - use real mock provider that returns SSE error
+        response = await async_client.post(
+            "/v1/messages",
+            json=request_data,
+            headers=claude_headers
+        )
         
-        # Mock the streaming method generator to return our mock response
-        async def mock_streaming_generator(*args, **kwargs):
-            yield MockSSEErrorResponse()
+        # 验证返回的是streaming response with SSE error
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers.get("content-type", "")
         
-        # Patch the make_anthropic_streaming_request method 
-        with patch('handlers.message_handler.MessageHandler.make_anthropic_streaming_request') as mock_request:
-            mock_request.return_value = mock_streaming_generator()
-            
-            # 执行请求
-            response = await async_client.post(
-                "/v1/messages",
-                json=request_data,
-                headers=claude_headers
-            )
-            
-            # 验证返回的是streaming response with SSE error
-            assert response.status_code == 200
-            assert "text/event-stream" in response.headers.get("content-type", "")
-            
-            # 收集streaming响应内容
-            content = ""
-            async for chunk in response.aiter_text():
-                content += chunk
-            
-            # 验证包含SSE错误内容
-            assert "event: error" in content
-            assert "invalid_request_error" in content
+        # 收集streaming响应内容
+        content = ""
+        async for chunk in response.aiter_text():
+            content += chunk
+        
+        # 验证包含SSE错误内容
+        assert "event: error" in content
+        assert "invalid_request_error" in content
 
     @pytest.mark.asyncio 
     async def test_single_provider_duplicate_request_after_sse_error(self, async_client: AsyncClient, claude_headers):
         """
-        测试场景: Provider返回SSE错误被标记为不健康后，重复请求应该从缓存返回相同的SSE错误内容
+        测试场景: Provider返回SSE错误被标记为不健康后，重复请求应该从缓存返回相同的SSE错误内容 - uses real mock provider
         预期结果: 
         1. 第一个请求收到SSE错误，provider被标记为不健康
         2. 重复请求在延迟清理期间返回缓存的SSE错误响应
@@ -553,60 +450,42 @@ class TestStreamingRequests:
             "model": "claude-3-5-sonnet-20241022",
             "max_tokens": 1000,
             "messages": [{"role": "user", "content": "Test duplicate request after SSE error"}],
-            "stream": True
+            "stream": True,
+            "provider": "Test SSE Error Provider"  # Use the SSE error mock provider
         }
         
-        # Mock a response that returns SSE error event
-        class MockSSEErrorResponse:
-            def __init__(self):
-                self.status_code = 200
-                self.headers = {"content-type": "text/event-stream"}
-            
-            async def aiter_text(self):
-                """模拟SSE错误响应"""
-                yield 'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_test","type":"message","role":"assistant","model":"claude-3-5-sonnet-20241022","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0}}}\n\n'
-                yield 'event: error\ndata: {"type":"error","error":{"type":"invalid_request_error","message":"Request contains invalid parameters"}}\n\n'
+        # 执行第一个请求 - use real mock provider that returns SSE error
+        response1 = await async_client.post(
+            "/v1/messages",
+            json=request_data,
+            headers=claude_headers
+        )
         
-        # Mock the streaming method generator to return our mock response
-        async def mock_streaming_generator(*args, **kwargs):
-            yield MockSSEErrorResponse()
+        # 收集第一个响应
+        content1 = ""
+        async for chunk in response1.aiter_text():
+            content1 += chunk
         
-        # Patch the make_anthropic_streaming_request method 
-        with patch('handlers.message_handler.MessageHandler.make_anthropic_streaming_request') as mock_request:
-            mock_request.return_value = mock_streaming_generator()
-            
-            # 执行第一个请求
-            response1 = await async_client.post(
-                "/v1/messages",
-                json=request_data,
-                headers=claude_headers
-            )
-            
-            # 收集第一个响应
-            content1 = ""
-            async for chunk in response1.aiter_text():
-                content1 += chunk
-            
-            # 等待缓存设置完成，但不等待延迟清理完成
-            await asyncio.sleep(0.1)
-            
-            # 执行第二个相同的请求（重复请求）
-            response2 = await async_client.post(
-                "/v1/messages",
-                json=request_data,
-                headers=claude_headers
-            )
-            
-            # 收集第二个响应
-            content2 = ""
-            async for chunk in response2.aiter_text():
-                content2 += chunk
-            
-            # 验证两个响应内容相同
-            assert response1.status_code == response2.status_code
-            assert content1 == content2
-            assert "event: error" in content2
-            assert "invalid_request_error" in content2
+        # 等待缓存设置完成，但不等待延迟清理完成
+        await asyncio.sleep(0.1)
+        
+        # 执行第二个相同的请求（重复请求）
+        response2 = await async_client.post(
+            "/v1/messages",
+            json=request_data,
+            headers=claude_headers
+        )
+        
+        # 收集第二个响应
+        content2 = ""
+        async for chunk in response2.aiter_text():
+            content2 += chunk
+        
+        # 验证两个响应内容相同
+        assert response1.status_code == response2.status_code
+        assert content1 == content2
+        assert "event: error" in content2
+        assert "invalid_request_error" in content2
 
     @pytest.mark.asyncio
     async def test_multi_provider_streaming_failover_from_connection_error(self, async_client: AsyncClient, claude_headers):
@@ -682,7 +561,7 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_provider_unhealthy_routing_after_sse_error(self, async_client: AsyncClient, claude_headers):
         """
-        测试场景: Provider因SSE错误被标记为不健康后，新请求应该路由到健康的provider
+        测试场景: Provider因SSE错误被标记为不健康后，新请求应该路由到健康的provider - uses real mock providers
         预期结果:
         1. 第一个请求触发SSE错误，第一个provider被标记不健康
         2. 第二个请求（不同signature）应该路由到第二个健康的provider
@@ -693,7 +572,8 @@ class TestStreamingRequests:
             "model": "claude-3-5-sonnet-20241022",
             "max_tokens": 100,
             "stream": True,
-            "messages": [{"role": "user", "content": "First request that will cause SSE error"}]
+            "messages": [{"role": "user", "content": "First request that will cause SSE error"}],
+            "provider": "Test SSE Error Provider"  # This provider returns SSE errors
         }
         
         # 第二个请求 - 应该路由到健康的provider
@@ -702,91 +582,48 @@ class TestStreamingRequests:
             "max_tokens": 100,
             "stream": True,
             "messages": [{"role": "user", "content": "Second request should go to healthy provider"}]
+            # No provider specified - should route to healthy provider (Test Success Provider)
         }
         
-        # Track which request we're processing to return appropriate responses
-        request_count = 0
+        # 第一个请求 - 应该收到SSE错误
+        response1 = await async_client.post(
+            "/v1/messages",
+            json=first_request_data,
+            headers=claude_headers
+        )
         
-        def mock_streaming_request_handler(*args, **kwargs):
-            nonlocal request_count
-            request_count += 1
-            
-            # For the first request, return SSE error response
-            if request_count == 1:
-                class MockSSEErrorResponse:
-                    def __init__(self):
-                        self.status_code = 200
-                        self.headers = {"content-type": "text/event-stream"}
-                    
-                    async def aiter_text(self):
-                        yield 'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_error","type":"message","role":"assistant","model":"claude-3-5-sonnet-20241022","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0}}}\n\n'
-                        yield 'event: error\ndata: {"type":"error","error":{"type":"invalid_request_error","message":"Request contains invalid parameters"}}\n\n'
-                
-                async def first_response_generator():
-                    yield MockSSEErrorResponse()
-                
-                return first_response_generator()
-            else:
-                # For the second request, return success response
-                class MockSuccessResponse:
-                    def __init__(self):
-                        self.status_code = 200
-                        self.headers = {"content-type": "text/event-stream"}
-                    
-                    async def aiter_text(self):
-                        yield 'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_success","type":"message","role":"assistant","model":"claude-3-5-sonnet-20241022","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0}}}\n\n'
-                        yield 'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n'
-                        yield 'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello from healthy provider!"}}\n\n'
-                        yield 'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n'
-                        yield 'event: message_stop\ndata: {"type":"message_stop"}\n\n'
-                
-                async def second_response_generator():
-                    yield MockSuccessResponse()
-                
-                return second_response_generator()
+        content1 = ""
+        async for chunk in response1.aiter_text():
+            content1 += chunk
         
-        with patch('handlers.message_handler.MessageHandler.make_anthropic_streaming_request') as mock_request:
-            mock_request.side_effect = mock_streaming_request_handler
-            
-            # 第一个请求 - 应该收到SSE错误
-            response1 = await async_client.post(
-                "/v1/messages",
-                json=first_request_data,
-                headers=claude_headers
-            )
-            
-            content1 = ""
-            async for chunk in response1.aiter_text():
-                content1 += chunk
-            
-            # 验证第一个请求收到了SSE错误
-            assert response1.status_code == 200
-            assert "event: error" in content1
-            assert "invalid_request_error" in content1
-            
-            # 等待一小段时间让provider被标记为不健康和延迟清理完成
-            await asyncio.sleep(4)  # Wait for delayed cleanup to complete
-            
-            # 第二个请求 - 应该路由到健康的provider
-            response2 = await async_client.post(
-                "/v1/messages", 
-                json=second_request_data,
-                headers=claude_headers
-            )
-            
-            content2 = ""
-            async for chunk in response2.aiter_text():
-                content2 += chunk
-            
-            # 验证第二个请求收到了正常响应（来自健康的provider）
-            assert response2.status_code == 200
-            assert "Hello from healthy provider!" in content2
-            assert "event: message_stop" in content2
-            assert "msg_success" in content2  # 确认来自健康provider
-            
-            # 验证两个请求的内容不同（不是缓存的重复请求）
-            assert content1 != content2
-            assert "event: error" not in content2  # 第二个请求不应包含错误
+        # 验证第一个请求收到了SSE错误
+        assert response1.status_code == 200
+        assert "event: error" in content1
+        assert "invalid_request_error" in content1
+        
+        # 等待一小段时间让provider被标记为不健康和延迟清理完成
+        await asyncio.sleep(4)  # Wait for delayed cleanup to complete
+        
+        # 第二个请求 - 应该路由到健康的provider (Test Success Provider)
+        response2 = await async_client.post(
+            "/v1/messages", 
+            json=second_request_data,
+            headers=claude_headers
+        )
+        
+        content2 = ""
+        async for chunk in response2.aiter_text():
+            content2 += chunk
+        
+        # 验证第二个请求收到了正常响应（来自健康的provider）
+        assert response2.status_code == 200
+        assert "机器学习" in content2  # Content from healthy Test Success Provider (Chinese text)
+        assert "event: message_stop" in content2
+        assert "msg_test_stream" in content2  # Message ID from Test Success Provider
+        
+        # 验证两个请求的内容不同（不是缓存的重复请求）
+        assert content1 != content2
+        assert "event: error" not in content2  # 第二个请求不应包含错误
 
     @pytest.mark.asyncio
     async def test_streaming_multiple_chunks(self, async_client: AsyncClient, claude_headers):

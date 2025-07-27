@@ -148,6 +148,9 @@ settings:
   selection_strategy: "priority"  # priority | round_robin | random
   failure_cooldown: 180  # seconds
   sticky_provider_duration: 300  # seconds - duration to prefer last successful provider
+  unhealthy_threshold: 2  # number of errors before marking provider unhealthy
+  unhealthy_error_types: ["connection_error", "Insufficient credits"]  # errors that trigger unhealthy marking
+  unhealthy_http_codes: [402, 404, 429, 500, 502, 503, 504]  # HTTP codes that trigger unhealthy marking
   log_level: "INFO"
   host: "127.0.0.1"
   port: 9090
@@ -173,16 +176,22 @@ settings:
 
 The system implements comprehensive error classification:
 
-### Failover Trigger Conditions
-Only specific error types trigger failover to backup providers:
+### Unhealthy Provider Detection
+Only specific error types trigger marking providers as unhealthy:
 - Network errors: `connection_error`, `timeout_error`, `ssl_error`
 - Server errors: `internal_server_error`, `bad_gateway`, `service_unavailable`
 - Rate limiting: `too_many_requests`, `rate_limit_exceeded`
-- Provider-specific: `没有可用token`, `无可用模型`
+- Provider-specific: `没有可用token`, `无可用模型`, `Insufficient credits`
 
-### HTTP Status Codes for Failover
+### HTTP Status Codes for Unhealthy Detection
 - 402, 404, 408, 429, 500, 502, 503, 504
 - Cloudflare errors: 520-524
+
+### Failover Logic
+When a provider is marked as unhealthy:
+1. **For streaming requests**: If response headers already sent, cannot failover (return error)
+2. **For non-streaming requests**: Always attempt failover to next available provider
+3. **When no providers available**: Return "All providers failed" error
 
 ### Error Response Format
 ```json

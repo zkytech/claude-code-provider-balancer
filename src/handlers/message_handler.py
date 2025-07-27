@@ -36,7 +36,7 @@ from utils import (
     LogRecord, LogEvent, info, warning, error, debug,
     create_debug_request_info
 )
-from utils.validation import validate_provider_health
+from core.provider_manager.health import validate_response_health
 
 
 class MessageHandler:
@@ -189,8 +189,18 @@ class MessageHandler:
                     # Create custom exception with status code for failover handling
                     from httpx import HTTPStatusError
                     request_obj = httpx.Request("POST", url)
+                    
+                    # Extract error message from response body if available
+                    error_msg_suffix = ""
+                    if error_response_body and isinstance(error_response_body, dict):
+                        if "error" in error_response_body:
+                            if isinstance(error_response_body["error"], str):
+                                error_msg_suffix = f": {error_response_body['error']}"
+                            elif isinstance(error_response_body["error"], dict) and "message" in error_response_body["error"]:
+                                error_msg_suffix = f": {error_response_body['error']['message']}"
+                    
                     http_error = HTTPStatusError(
-                        f"HTTP {response.status_code} from provider {provider.name}",
+                        f"HTTP {response.status_code} from provider {provider.name}{error_msg_suffix}",
                         request=request_obj,
                         response=response
                     )
@@ -299,10 +309,26 @@ class MessageHandler:
                 # Check for HTTP error status codes first
                 if response.status_code >= 400:
                     error_text = await response.aread()
+                    
+                    # Try to parse error response body to extract specific error message
+                    error_msg_suffix = ""
+                    try:
+                        import json
+                        error_response_body = json.loads(error_text.decode('utf-8'))
+                        if isinstance(error_response_body, dict) and "error" in error_response_body:
+                            if isinstance(error_response_body["error"], str):
+                                error_msg_suffix = f": {error_response_body['error']}"
+                            elif isinstance(error_response_body["error"], dict) and "message" in error_response_body["error"]:
+                                error_msg_suffix = f": {error_response_body['error']['message']}"
+                    except:
+                        # If parsing fails, just use the raw error text if it's short enough
+                        if len(error_text) < 200:
+                            error_msg_suffix = f": {error_text.decode('utf-8', errors='ignore')}"
+                    
                     from httpx import HTTPStatusError
                     request_obj = httpx.Request("POST", url)
                     http_error = HTTPStatusError(
-                        f"HTTP {response.status_code} from provider {provider.name}",
+                        f"HTTP {response.status_code} from provider {provider.name}{error_msg_suffix}",
                         request=request_obj,
                         response=response
                     )

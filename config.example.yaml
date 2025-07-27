@@ -184,65 +184,39 @@ settings:
   # 智能恢复设置
   sticky_provider_duration: 300  # 粘滞provider持续时间（秒），成功后多长时间内优先使用该provider（默认5分钟）
 
-  # 错误处理策略
-  # 只有在以下错误类型时才会尝试failover到其他provider
-  # 其他错误类型会直接返回给客户端
-  failover_error_types:
-    # === 网络连接错误 ===
-    # 连接建立阶段的错误
-    - "connection_error"          # 通用连接失败
-    - "ssl_error"                # SSL/TLS握手失败
-    - "network_unreachable"      # 网络不可达
-
-    # === 网络超时错误 ===
-    # 各种超时相关错误
-    - "connect_timeout"          # 连接建立超时
-    - "read_timeout"            # 数据读取超时
-    - "gateway_timeout"         # 网关超时(504)
-    - "pool_timeout"            # 连接池获取超时
-
-    # === HTTP服务器错误 ===
-    # 5xx系列服务器内部错误
-    - "internal_server_error"    # 500 内部服务器错误
-    - "bad_gateway"             # 502 网关错误
-    - "service_unavailable"     # 503 服务不可用
-
-    # === 流量控制错误 ===
-    # 请求频率和负载相关错误
-    - "too_many_requests"       # 429 请求过多
-    - "rate_limit_exceeded"     # 速率限制超出
-    - "server_overloaded"       # 服务器过载
-    - "temporary_unavailable"   # 临时不可用
-
-    # === Stream传输错误 ===
-    # 流式传输特定错误
-    - "stream_interrupted"      # Stream传输中断
-    - "stream_transmission_error" # Stream传输过程错误
-    - "stream_format_error"     # Stream格式错误
-
+  # 简化的错误处理策略
+  # 只有包含以下错误模式的消息才会标记provider为unhealthy
+  # 注意：HTTP状态码错误优先使用unhealthy_http_codes匹配，避免重复
+  unhealthy_error_patterns:
+    # === 网络相关错误 ===
+    - "connection"              # 连接相关错误 (connection failed, connection timeout等)
+    - "timeout"                 # 超时错误 (read timeout, connect timeout等)
+    - "ssl"                     # SSL/TLS错误
+    - "network"                 # 网络错误
+    
+    # === 限流相关错误（不能用HTTP状态码覆盖的） ===
+    - "rate limit"             # 速率限制（消息内容）
+    - "quota"                  # 配额不足
+    
     # === Provider特定错误 ===
-    # 各Provider的特定临时错误
-    - "没有可用token"           # Provider token不可用
-    - "无可用模型"             # Provider模型不可用
-    - "invalid_api_endpoint"    # API端点不支持
+    - "没有可用token"           # 中文错误消息
+    - "无可用模型"             # 中文错误消息  
+    - "no available token"     # 英文错误消息
+    - "no available model"     # 英文错误消息
+    - "insufficient"           # 余额/配额不足
     
-    # === 请求错误类型 ===
-    # 通用请求错误
-    - "invalid_request_error"   # 无效请求错误
-    - "invalid_request"         # 无效请求
+    # === Stream传输错误 ===
+    - "stream"                 # Stream相关错误 (interrupted, format error等)
     
-    # === 速率限制错误 ===  
-    # 各种速率限制相关错误
-    - "rate_limit"              # 速率限制
-    - "rate_limit_exceeded"     # 速率限制超出（已重复，但保留完整性）
-    
-    # === 令牌相关错误 ===
-    # 令牌不可用的各种表述
-    - "no_available_token"      # 无可用令牌（英文）
-    - "no_available_model"      # 无可用模型（英文）
+    # 注意：以下错误通过HTTP状态码处理，不在此列表中：
+    # - "internal server error" (500) -> unhealthy_http_codes
+    # - "bad gateway" (502) -> unhealthy_http_codes  
+    # - "service unavailable" (503) -> unhealthy_http_codes
+    # - "gateway timeout" (504) -> unhealthy_http_codes
+    # - "too many requests" (429) -> unhealthy_http_codes
 
-  # HTTP状态码映射到failover错误
-  failover_http_codes:
+  # HTTP状态码映射到unhealthy判断
+  unhealthy_http_codes:
     - 402  # Payment Required
     - 404  # Not Found
     - 408  # Request Timeout
