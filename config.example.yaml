@@ -184,29 +184,26 @@ settings:
   # 智能恢复设置
   sticky_provider_duration: 300  # 粘滞provider持续时间（秒），成功后多长时间内优先使用该provider（默认5分钟）
 
-  # 简化的错误处理策略
-  # 只有包含以下错误模式的消息才会标记provider为unhealthy
-  # 注意：HTTP状态码错误优先使用unhealthy_http_codes匹配，避免重复
-  unhealthy_error_patterns:
+  # 分离的错误检测配置
+  # Exception错误模式 - 使用简单字符串匹配（宽松策略）
+  unhealthy_exception_patterns:
     # === 网络相关错误 ===
     - "connection"              # 连接相关错误 (connection failed, connection timeout等)
     - "timeout"                 # 超时错误 (read timeout, connect timeout等)
     - "ssl"                     # SSL/TLS错误
     - "network"                 # 网络错误
+
+  # 响应体错误模式 - 使用正则表达式匹配（严格策略）
+  unhealthy_response_body_patterns:
+    # === JSON错误字段模式 ===
+    - '"error"\\s*:\\s*".*insufficient.*credits"'  # JSON中的余额不足错误
+    - '"error_type"\\s*:\\s*"quota_exceeded"'       # 配额超限错误
+    - '"message"\\s*:\\s*".*rate.?limit.*"'         # 速率限制错误
+    - '"detail"\\s*:\\s*".*没有可用.*"'              # 中文服务商错误
     
-    # === 限流相关错误（不能用HTTP状态码覆盖的） ===
-    - "rate limit"             # 速率限制（消息内容）
-    - "quota"                  # 配额不足
-    
-    # === Provider特定错误 ===
-    - "没有可用token"           # 中文错误消息
-    - "无可用模型"             # 中文错误消息  
-    - "no available token"     # 英文错误消息
-    - "no available model"     # 英文错误消息
-    - "insufficient"           # 余额/配额不足
-    
-    # === Stream传输错误 ===
-    - "stream"                 # Stream相关错误 (interrupted, format error等)
+    # === 流式响应错误模式 ===
+    - 'data:\\s*\\{"error"'                         # SSE流中的错误消息
+    - 'event:\\s*error'                             # SSE错误事件
     
     # 注意：以下错误通过HTTP状态码处理，不在此列表中：
     # - "internal server error" (500) -> unhealthy_http_codes

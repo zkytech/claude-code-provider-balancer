@@ -172,7 +172,7 @@ def _complete_and_cleanup_request(signature: str, result: Any):
 
 ### Error Classification (`provider_manager.py`)
 ```python
-error_type, should_failover = provider_manager.get_error_classification(
+error_type, should_failover = provider_manager.get_error_handling_decision(
     exception, http_status_code
 )
 ```

@@ -18,29 +18,33 @@ def should_mark_unhealthy(
     http_status_code: Optional[int] = None,
     error_message: str = "",
     exception_type: str = "",
+    source_type: str = "exception",  # "exception" | "response_body"
     unhealthy_http_codes: List[int] = None,
-    unhealthy_error_patterns: List[str] = None
+    unhealthy_exception_patterns: List[str] = None,
+    unhealthy_response_body_patterns: List[str] = None
 ) -> Tuple[bool, str]:
     """直接判断是否应该标记为unhealthy
     
     判断优先级：
     1. HTTP状态码 (最高优先级，精确匹配)
     2. 网络异常类型 (确定的网络问题)
-    3. 错误消息模式匹配 (配置的错误模式)
-    4. 空响应检查 (如果配置了)
+    3. 错误消息模式匹配 (根据source_type选择不同匹配策略)
     
     Args:
         http_status_code: HTTP状态码
         error_message: 错误消息（异常信息、响应内容等）
         exception_type: 异常类型名称
+        source_type: 错误来源类型 ("exception" | "response_body")
         unhealthy_http_codes: 配置的unhealthy HTTP状态码列表
-        unhealthy_error_patterns: 配置的unhealthy错误模式列表
+        unhealthy_exception_patterns: 配置的异常错误模式列表（简单字符串匹配）
+        unhealthy_response_body_patterns: 配置的响应体错误模式列表（正则匹配）
         
     Returns:
         Tuple[bool, str]: (是否标记为unhealthy, 触发原因描述)
     """
     unhealthy_http_codes = unhealthy_http_codes or []
-    unhealthy_error_patterns = unhealthy_error_patterns or []
+    unhealthy_exception_patterns = unhealthy_exception_patterns or []
+    unhealthy_response_body_patterns = unhealthy_response_body_patterns or []
     
     # 1. HTTP状态码判断 (最高优先级)
     if http_status_code and http_status_code in unhealthy_http_codes:
@@ -58,22 +62,31 @@ def should_mark_unhealthy(
         if exc_type in exception_type:
             return True, f"network_exception_{exc_type.lower()}"
     
-    # 3. 错误消息模式匹配 (不包含已被HTTP状态码覆盖的错误)
-    error_text = error_message.lower()
-    for pattern in unhealthy_error_patterns:
-        if pattern.lower() in error_text:
-            return True, f"error_pattern_{pattern}"
-    
-    # 4. 空响应检查（如果配置了的话）
-    if not error_message.strip() and "empty_response" in unhealthy_error_patterns:
-        return True, "empty_response"
+    # 3. 根据source_type选择对应的匹配策略
+    if source_type == "exception":
+        # Exception使用简单字符串包含匹配（宽松策略）
+        error_text = error_message.lower()
+        for pattern in unhealthy_exception_patterns:
+            if pattern.lower() in error_text:
+                return True, f"exception_pattern_{pattern}"
+                
+    elif source_type == "response_body":
+        # Response body使用正则匹配（严格策略）
+        import re
+        for pattern in unhealthy_response_body_patterns:
+            try:
+                if re.search(pattern, error_message, re.IGNORECASE):
+                    return True, f"response_body_pattern_{pattern}"
+            except re.error:
+                # 如果正则表达式无效，降级为简单字符串匹配
+                if pattern.lower() in error_message.lower():
+                    return True, f"response_body_pattern_{pattern}_fallback"
         
     return False, "healthy"
 
 
 def can_failover(
     is_streaming: bool = False, 
-    response_headers_sent: bool = False,
     error_reason: str = "",
     exception_type: str = ""
 ) -> bool:
@@ -94,11 +107,7 @@ def can_failover(
     if not is_streaming:
         return True
     
-    # 2. 流式请求：如果确实已经开始向客户端发送数据，则无法failover
-    if response_headers_sent:
-        return False
-    
-    # 3. 流式请求但还没开始传输：根据错误类型进一步判断
+    # 2. 流式请求但还没开始传输：根据错误类型进一步判断
     
     # 连接阶段的错误可以failover（还没建立连接）
     connection_errors = [
@@ -127,7 +136,7 @@ def validate_response_health(
     response_content: Union[List[str], str, Dict[str, Any]], 
     http_status_code: Optional[int] = None,
     unhealthy_http_codes: List[int] = None,
-    unhealthy_error_patterns: List[str] = None
+    unhealthy_response_body_patterns: List[str] = None
 ) -> Tuple[bool, str]:
     """检查响应内容是否健康
     
@@ -135,13 +144,13 @@ def validate_response_health(
         response_content: 响应内容（SSE chunks、字符串或字典）
         http_status_code: HTTP状态码
         unhealthy_http_codes: 配置的unhealthy HTTP状态码
-        unhealthy_error_patterns: 配置的unhealthy错误模式
+        unhealthy_response_body_patterns: 配置的响应体错误模式（正则匹配）
         
     Returns:
         Tuple[bool, str]: (是否不健康, 错误描述)
     """
     unhealthy_http_codes = unhealthy_http_codes or []
-    unhealthy_error_patterns = unhealthy_error_patterns or []
+    unhealthy_response_body_patterns = unhealthy_response_body_patterns or []
     
     # 统一处理不同类型的响应内容为字符串
     if isinstance(response_content, list):
@@ -154,13 +163,14 @@ def validate_response_health(
     else:
         content_text = str(response_content)
     
-    # 使用统一的判断逻辑
+    # 使用统一的判断逻辑 - 响应体检查
     is_unhealthy, reason = should_mark_unhealthy(
         http_status_code=http_status_code,
         error_message=content_text,
         exception_type="",
+        source_type="response_body",
         unhealthy_http_codes=unhealthy_http_codes,
-        unhealthy_error_patterns=unhealthy_error_patterns
+        unhealthy_response_body_patterns=unhealthy_response_body_patterns
     )
     
     return is_unhealthy, reason
@@ -170,7 +180,7 @@ def validate_exception_health(
     error: Exception,
     http_status_code: Optional[int] = None,
     unhealthy_http_codes: List[int] = None,
-    unhealthy_error_patterns: List[str] = None
+    unhealthy_exception_patterns: List[str] = None
 ) -> Tuple[bool, str]:
     """检查异常是否应该标记为unhealthy
     
@@ -178,7 +188,7 @@ def validate_exception_health(
         error: 异常对象
         http_status_code: HTTP状态码（如果有）
         unhealthy_http_codes: 配置的unhealthy HTTP状态码
-        unhealthy_error_patterns: 配置的unhealthy错误模式
+        unhealthy_exception_patterns: 配置的异常错误模式（简单字符串匹配）
         
     Returns:
         Tuple[bool, str]: (是否标记为unhealthy, 错误描述)
@@ -189,13 +199,14 @@ def validate_exception_health(
             getattr(error, 'response', None) and getattr(error.response, 'status_code', None)
         )
     
-    # 使用统一的判断逻辑
+    # 使用统一的判断逻辑 - 异常检查
     is_unhealthy, reason = should_mark_unhealthy(
         http_status_code=http_status_code,
         error_message=str(error),
         exception_type=type(error).__name__,
+        source_type="exception",
         unhealthy_http_codes=unhealthy_http_codes,
-        unhealthy_error_patterns=unhealthy_error_patterns
+        unhealthy_exception_patterns=unhealthy_exception_patterns
     )
     
     # 如果判断为健康但是是网络相关异常，应该返回更具体的描述
@@ -210,34 +221,29 @@ def get_error_handling_decision(
     error: Exception,
     http_status_code: Optional[int] = None,
     is_streaming: bool = False,
-    response_headers_sent: bool = False,
     unhealthy_http_codes: List[int] = None,
-    unhealthy_error_patterns: List[str] = None
+    unhealthy_exception_patterns: List[str] = None
 ) -> Tuple[bool, bool, str]:
     """获取完整的错误处理决策
-    
-    这是主要的入口函数，替代原来复杂的错误分类系统
     
     Args:
         error: 异常对象
         http_status_code: HTTP状态码
         is_streaming: 是否是流式请求
-        response_headers_sent: 是否已发送响应头
         unhealthy_http_codes: 配置的unhealthy HTTP状态码
-        unhealthy_error_patterns: 配置的unhealthy错误模式
+        unhealthy_exception_patterns: 配置的异常错误模式
         
     Returns:
         Tuple[bool, bool, str]: (应该标记为unhealthy, 可以failover, 错误描述)
     """
     # 判断是否应该标记为unhealthy
     should_mark_unhealthy_result, error_reason = validate_exception_health(
-        error, http_status_code, unhealthy_http_codes, unhealthy_error_patterns
+        error, http_status_code, unhealthy_http_codes, unhealthy_exception_patterns
     )
     
     # 判断是否可以failover（使用新的增强逻辑）
     can_failover_result = can_failover(
         is_streaming=is_streaming, 
-        response_headers_sent=response_headers_sent,
         error_reason=error_reason,
         exception_type=type(error).__name__
     )

@@ -197,7 +197,7 @@ class TestErrorClassificationLogic:
         import httpx
         
         # Test 502 Bad Gateway
-        error_type, should_mark_unhealthy, can_failover = provider_manager.get_error_classification(
+        error_type, should_mark_unhealthy, can_failover = provider_manager.get_error_handling_decision(
             httpx.HTTPStatusError("502 Bad Gateway", request=None, response=None), 
             http_status_code=502
         )
@@ -214,7 +214,7 @@ class TestErrorClassificationLogic:
         import httpx
         
         error = httpx.ConnectError("Connection failed")
-        error_type, should_mark_unhealthy, can_failover = provider_manager.get_error_classification(error)
+        error_type, should_mark_unhealthy, can_failover = provider_manager.get_error_handling_decision(error)
         
         assert error_type == "connection_error"
         assert should_mark_unhealthy == True  # connection_error is in unhealthy_error_types
@@ -228,7 +228,7 @@ class TestErrorClassificationLogic:
         import httpx
         
         error = httpx.ConnectError("Connection failed")
-        error_type, should_mark_unhealthy, can_failover = provider_manager.get_error_classification(
+        error_type, should_mark_unhealthy, can_failover = provider_manager.get_error_handling_decision(
             error, 
             is_streaming=True, 
             response_headers_sent=True

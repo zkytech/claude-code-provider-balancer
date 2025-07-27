@@ -18,7 +18,6 @@ from .openai_to_anthropic import (
 
 from .error_handling import (
     get_anthropic_error_details_from_exc,
-    format_anthropic_error_sse_event,
     build_anthropic_error_response
 )
 
@@ -42,7 +41,6 @@ __all__ = [
     
     # Error handling
     "get_anthropic_error_details_from_exc",
-    "format_anthropic_error_sse_event",
     "build_anthropic_error_response",
     
     # Helpers

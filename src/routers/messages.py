@@ -272,7 +272,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                             collected_chunks, 
                                             None,  # No HTTP status for successful stream
                                             provider_manager.settings.get('unhealthy_http_codes', []),
-                                            provider_manager.settings.get('unhealthy_error_patterns', [])
+                                            provider_manager.settings.get('unhealthy_response_body_patterns', [])
                                         )
                                         
                                         # 使用ProviderManager的错误计数机制
@@ -609,7 +609,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                             response_content,
                             response_status_code,
                             provider_manager.settings.get('unhealthy_http_codes', []),
-                            provider_manager.settings.get('unhealthy_error_patterns', [])
+                            provider_manager.settings.get('unhealthy_response_body_patterns', [])
                         )
                         
                         # 使用ProviderManager的错误计数机制
@@ -712,8 +712,8 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                     
                     # Use provider_manager to determine unhealthy status and failover capability
                     if provider_manager:
-                        error_reason, should_mark_unhealthy, can_failover = provider_manager.get_error_classification(
-                            e, http_status_code, messages_request.stream, False
+                        error_reason, should_mark_unhealthy, can_failover = provider_manager.get_error_handling_decision(
+                            e, http_status_code, messages_request.stream
                         )
                     else:
                         # Default behavior if provider_manager is not available

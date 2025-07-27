@@ -174,27 +174,6 @@ def get_anthropic_error_details_from_exc(
     return AnthropicErrorType.API_ERROR, str(exc), 500, provider_details
 
 
-def format_anthropic_error_sse_event(
-    error_type: AnthropicErrorType,
-    message: str,
-    provider_details: Optional[ProviderErrorMetadata] = None,
-) -> str:
-    """Formats an error into the Anthropic SSE 'error' event structure."""
-    error_detail = AnthropicErrorDetail(
-        type=error_type,
-        message=message,
-        provider=provider_details.provider_name if provider_details else None,
-        provider_message=provider_details.raw_error.get("message") if provider_details and provider_details.raw_error else None,
-        provider_code=provider_details.raw_error.get("code") if provider_details and provider_details.raw_error else None,
-    )
-    
-    error_response = AnthropicErrorResponse(
-        type="error",
-        error=error_detail
-    )
-    
-    return f"event: error\ndata: {json.dumps(error_response.model_dump())}\n\n"
-
 
 def build_anthropic_error_response(
     error_type: AnthropicErrorType,

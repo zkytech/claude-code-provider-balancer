@@ -583,9 +583,9 @@ class ProviderManager:
         
         return ""
     
-    def get_error_classification(self, error: Exception, http_status_code: Optional[int] = None, is_streaming: bool = False, response_headers_sent: bool = False) -> tuple[str, bool, bool]:
+    def get_error_handling_decision(self, error: Exception, http_status_code: Optional[int] = None, is_streaming: bool = False) -> tuple[str, bool, bool]:
         """
-        获取错误分类信息 - 使用简化的错误判断逻辑
+        获取错误处理决策 - 判断是否标记不健康和是否可以故障转移
         
         Args:
             error: 捕获的异常
@@ -594,13 +594,14 @@ class ProviderManager:
             response_headers_sent: 是否已经发送响应头给客户端
             
         Returns:
-            tuple: (error_type, should_mark_unhealthy, can_failover)
+            tuple: (error_reason, should_mark_unhealthy, can_failover)
         """
-        return get_error_handling_decision(
-            error, http_status_code, is_streaming, response_headers_sent,
-            self.settings.get('unhealthy_error_patterns', []),  # 改为模式匹配
-            self.settings.get('unhealthy_http_codes', [])
+        should_mark_unhealthy, can_failover, error_reason = get_error_handling_decision(
+            error, http_status_code, is_streaming,
+            self.settings.get('unhealthy_http_codes', []),
+            self.settings.get('unhealthy_exception_patterns', [])
         )
+        return error_reason, should_mark_unhealthy, can_failover
 
     def update_provider_auth(self, provider_name: str, new_auth_value: str):
         """更新provider的认证值（用于token刷新）"""
