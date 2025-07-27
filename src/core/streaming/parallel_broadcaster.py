@@ -4,7 +4,7 @@ Handles client disconnections gracefully through exception-based detection.
 """
 
 import asyncio
-from typing import List, AsyncGenerator, Tuple, Optional
+from typing import List, AsyncGenerator, Tuple, Optional, Dict, Any
 from fastapi import Request
 from utils.logging import debug, info, error, LogRecord, LogEvent
 
@@ -87,6 +87,7 @@ class ParallelBroadcaster:
         self.total_chunks_processed = 0
         self.collected_chunks: List[str] = []  # Store all chunks for late-joining duplicates
         self.streaming_active = False  # Track if streaming is in progress
+        self.last_exception_info: Optional[Dict[str, Any]] = None  # Store exception info for health check
         
         # Add the original client
         self.add_client(original_request, request_id, "original")
@@ -387,6 +388,13 @@ class ParallelBroadcaster:
                     )
                     
         except Exception as e:
+            # Store exception info for health check
+            self.last_exception_info = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "chunks_processed": self.total_chunks_processed
+            }
+            
             error(
                 LogRecord(
                     LogEvent.PROVIDER_STREAM_ERROR.value,

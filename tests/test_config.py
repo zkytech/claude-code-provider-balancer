@@ -13,6 +13,12 @@ TEST_PROVIDERS = {
     "anthropic": f"{TEST_BASE_URL}/test-providers/anthropic/v1/messages",
     "anthropic_sse_error": f"{TEST_BASE_URL}/test-providers/anthropic-sse-error/v1/messages", 
     "openai": f"{TEST_BASE_URL}/test-providers/openai/v1/chat/completions",
+    # Unhealthy counting test providers
+    "anthropic_unhealthy_single": f"{TEST_BASE_URL}/test-providers/anthropic-unhealthy-test-single/v1/messages",
+    "anthropic_unhealthy_multiple": f"{TEST_BASE_URL}/test-providers/anthropic-unhealthy-test-multiple/v1/messages",
+    "anthropic_unhealthy_reset": f"{TEST_BASE_URL}/test-providers/anthropic-unhealthy-test-reset/v1/messages",
+    "anthropic_unhealthy_always_fail": f"{TEST_BASE_URL}/test-providers/anthropic-unhealthy-test-always-fail/v1/messages",
+    "reset_counters": f"{TEST_BASE_URL}/test-providers/reset-test-counters",
 }
 
 def get_test_provider_url(provider_type: str, endpoint: str = "v1/messages") -> str:

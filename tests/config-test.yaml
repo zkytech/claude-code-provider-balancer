@@ -34,6 +34,35 @@ providers:
     auth_value: "test-key"
     enabled: true
 
+  # Unhealthy计数测试专用providers
+  - name: "Test Single Error Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/anthropic-unhealthy-test-single"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  - name: "Test Multiple Error Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/anthropic-unhealthy-test-multiple"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  - name: "Test Error Reset Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/anthropic-unhealthy-test-reset"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  - name: "Test Always Fail Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/anthropic-unhealthy-test-always-fail"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
 # 测试用的模型路由配置
 model_routes:
   # Claude 模型路由 - 用于测试 sonnet/haiku/opus
@@ -87,6 +116,39 @@ model_routes:
       model: "success"
       priority: 1
 
+  # Unhealthy计数测试专用路由
+  "*unhealthy-single*":
+    - provider: "Test Single Error Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Test Success Provider"
+      model: "passthrough"
+      priority: 2
+
+  "*unhealthy-multiple*":
+    - provider: "Test Multiple Error Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Test Success Provider"
+      model: "passthrough"
+      priority: 2
+
+  "*unhealthy-reset*":
+    - provider: "Test Error Reset Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Test Success Provider"
+      model: "passthrough"
+      priority: 2
+
+  "*unhealthy-always-fail*":
+    - provider: "Test Always Fail Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Test Success Provider"
+      model: "passthrough"
+      priority: 2
+
 # 测试用的全局设置
 settings:
   # 模型选择策略
@@ -106,8 +168,13 @@ settings:
       deduplication_timeout: 60
 
   # 故障恢复设置 - 测试用较短时间
-  idle_recovery_interval: 30
+  sticky_provider_duration: 30
   failure_cooldown: 30
+
+  # Provider健康状态配置 - 测试用
+  unhealthy_threshold: 2  # 2次错误才标记unhealthy
+  unhealthy_reset_on_success: true
+  unhealthy_reset_timeout: 60  # 1分钟超时重置
 
   # 错误处理策略
   failover_error_types:

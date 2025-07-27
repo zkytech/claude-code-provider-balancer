@@ -142,7 +142,15 @@ settings:
   selection_strategy: "priority"  # priority | round_robin | random
 
   # 故障服务商的冷却时间（秒）
-  failure_cooldown: 180
+  failure_cooldown: 300
+
+  # Provider健康状态配置
+  # 错误次数达到阈值后才标记为unhealthy
+  unhealthy_threshold: 2  # 默认2次错误才标记unhealthy
+  # 成功请求后是否重置错误计数
+  unhealthy_reset_on_success: true
+  # 错误计数自动重置时间（秒）- 超过此时间未出错则重置计数
+  unhealthy_reset_timeout: 300  # 5分钟
 
   # 开发模式自动重载 (监听 .py 和 .yaml 文件变化自动重启)
   reload: true
@@ -174,37 +182,64 @@ settings:
       deduplication_timeout: 180
 
   # 智能恢复设置
-  idle_recovery_interval: 300  # 空闲多长时间（秒）后才恢复失败的provider（默认5分钟）
+  sticky_provider_duration: 300  # 粘滞provider持续时间（秒），成功后多长时间内优先使用该provider（默认5分钟）
 
   # 错误处理策略
   # 只有在以下错误类型时才会尝试failover到其他provider
   # 其他错误类型会直接返回给客户端
   failover_error_types:
-    # 网络连接和超时错误
-    - "connection_error"
-    - "timeout_error"
-    - "read_timeout"
-    - "connect_timeout"
-    - "pool_timeout"
-    - "ssl_error"
+    # === 网络连接错误 ===
+    # 连接建立阶段的错误
+    - "connection_error"          # 通用连接失败
+    - "ssl_error"                # SSL/TLS握手失败
+    - "network_unreachable"      # 网络不可达
 
-    # 服务器临时错误
-    - "internal_server_error"
-    - "bad_gateway"
-    - "service_unavailable"
-    - "gateway_timeout"
-    - "too_many_requests"
-    - "rate_limit_exceeded"
-    - "server_overloaded"
-    - "overloaded_error"
-    - "temporary_unavailable"
+    # === 网络超时错误 ===
+    # 各种超时相关错误
+    - "connect_timeout"          # 连接建立超时
+    - "read_timeout"            # 数据读取超时
+    - "gateway_timeout"         # 网关超时(504)
+    - "pool_timeout"            # 连接池获取超时
 
-    # API错误类型
-    - "invalid_request_error"  # 无效请求错误，通常表示API端点不支持
+    # === HTTP服务器错误 ===
+    # 5xx系列服务器内部错误
+    - "internal_server_error"    # 500 内部服务器错误
+    - "bad_gateway"             # 502 网关错误
+    - "service_unavailable"     # 503 服务不可用
 
-    # 提供商特定的临时错误
-    - "没有可用token"
-    - "无可用模型"
+    # === 流量控制错误 ===
+    # 请求频率和负载相关错误
+    - "too_many_requests"       # 429 请求过多
+    - "rate_limit_exceeded"     # 速率限制超出
+    - "server_overloaded"       # 服务器过载
+    - "temporary_unavailable"   # 临时不可用
+
+    # === Stream传输错误 ===
+    # 流式传输特定错误
+    - "stream_interrupted"      # Stream传输中断
+    - "stream_transmission_error" # Stream传输过程错误
+    - "stream_format_error"     # Stream格式错误
+
+    # === Provider特定错误 ===
+    # 各Provider的特定临时错误
+    - "没有可用token"           # Provider token不可用
+    - "无可用模型"             # Provider模型不可用
+    - "invalid_api_endpoint"    # API端点不支持
+    
+    # === 请求错误类型 ===
+    # 通用请求错误
+    - "invalid_request_error"   # 无效请求错误
+    - "invalid_request"         # 无效请求
+    
+    # === 速率限制错误 ===  
+    # 各种速率限制相关错误
+    - "rate_limit"              # 速率限制
+    - "rate_limit_exceeded"     # 速率限制超出（已重复，但保留完整性）
+    
+    # === 令牌相关错误 ===
+    # 令牌不可用的各种表述
+    - "no_available_token"      # 无可用令牌（英文）
+    - "no_available_model"      # 无可用模型（英文）
 
   # HTTP状态码映射到failover错误
   failover_http_codes:

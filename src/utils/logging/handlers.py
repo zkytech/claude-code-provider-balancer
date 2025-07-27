@@ -113,6 +113,11 @@ class LogEvent(enum.Enum):
     # Provider health check events
     PROVIDER_HEALTH_CHECK_SSE_ERROR = "provider_health_check_sse_error"
     PROVIDER_UNHEALTHY_STREAM_ANTHROPIC = "provider_unhealthy_stream_anthropic"
+    PROVIDER_HEALTH_ERROR_RECORDED = "provider_health_error_recorded"
+    PROVIDER_MARKED_UNHEALTHY = "provider_marked_unhealthy"
+    PROVIDER_HEALTH_ERROR_BELOW_THRESHOLD = "provider_health_error_below_threshold"
+    PROVIDER_HEALTH_ERROR_COUNT_RESET = "provider_health_error_count_reset"
+    PROVIDER_HEALTH_ERROR_COUNT_TIMEOUT_RESET = "provider_health_error_count_timeout_reset"
 
     # OAuth events
     OAUTH_KEYRING_UNAVAILABLE = "oauth_keyring_unavailable"

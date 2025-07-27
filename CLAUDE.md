@@ -147,7 +147,7 @@ model_routes:
 settings:
   selection_strategy: "priority"  # priority | round_robin | random
   failure_cooldown: 180  # seconds
-  idle_recovery_interval: 300  # seconds
+  sticky_provider_duration: 300  # seconds - duration to prefer last successful provider
   log_level: "INFO"
   host: "127.0.0.1"
   port: 9090

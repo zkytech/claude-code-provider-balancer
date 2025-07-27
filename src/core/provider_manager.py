@@ -115,10 +115,21 @@ class ProviderManager:
         # 请求活跃状态跟踪
         self._last_request_time: float = 0
         self._last_successful_provider: Optional[str] = None  # 记录最后成功的provider名称
-        self._idle_recovery_interval: float = 300  # 默认空闲5分钟后才考虑恢复失败的provider
+        self._sticky_provider_duration: float = 300  # 默认粘滞provider持续时间为5分钟
         
         # OAuth配置
         self.oauth_auto_refresh_enabled: bool = True
+        
+        # 健康检查配置
+        self.unhealthy_threshold: int = 2
+        self.unhealthy_reset_on_success: bool = True 
+        self.unhealthy_reset_timeout: float = 300  # 5分钟
+        
+        # Provider错误计数状态
+        self._error_counts: Dict[str, int] = {}            # {provider_name: error_count}
+        self._last_error_time: Dict[str, float] = {}       # {provider_name: timestamp}
+        self._last_success_time: Dict[str, float] = {}     # {provider_name: timestamp}
+        self._lock = threading.Lock()  # 保护并发访问
         
         self.load_config()
     
@@ -138,7 +149,12 @@ class ProviderManager:
             self.oauth_auto_refresh_enabled = oauth_config.get('enable_auto_refresh', True)
             
             # 加载智能恢复配置
-            self._idle_recovery_interval = self.settings.get('idle_recovery_interval', 300)
+            self._sticky_provider_duration = self.settings.get('sticky_provider_duration', 300)
+            
+            # 加载健康检查配置
+            self.unhealthy_threshold = self.settings.get('unhealthy_threshold', 2)
+            self.unhealthy_reset_on_success = self.settings.get('unhealthy_reset_on_success', True)
+            self.unhealthy_reset_timeout = self.settings.get('unhealthy_reset_timeout', 300)
             
             # 加载服务商配置（简化版）
             providers_config = config.get('providers', [])
@@ -264,12 +280,12 @@ class ProviderManager:
         if not options:
             return []
         
-        # 检查是否处于空闲期间，如果是则跳过粘滞逻辑，使用正常的优先级选择
+        # 检查粘滞provider是否过期，如果是则使用正常的优先级选择
         current_time = time.time()
-        is_idle_period = (current_time - self._last_request_time) > self._idle_recovery_interval
+        is_sticky_expired = (current_time - self._last_request_time) > self._sticky_provider_duration
         
-        if not is_idle_period and self._last_successful_provider:
-            # 活跃期间：优先使用粘滞provider
+        if not is_sticky_expired and self._last_successful_provider:
+            # 粘滞期间：优先使用上次成功的provider
             sticky_option = None
             other_options = []
             
@@ -673,6 +689,135 @@ class ProviderManager:
             provider.auth_value = new_auth_value
             return True
         return False
+
+    def record_health_check_result(self, provider_name: str, is_error_detected: bool, error_type: Optional[str] = None, request_id: str = "") -> bool:
+        """记录健康检查结果，返回是否应该标记为unhealthy
+        
+        Args:
+            provider_name: Provider名称
+            is_error_detected: 是否检测到错误
+            error_type: 错误类型
+            request_id: 请求ID（用于日志）
+            
+        Returns:
+            bool: 是否应该标记为unhealthy并触发failover
+        """
+        current_time = time.time()
+        
+        with self._lock:
+            if is_error_detected:
+                # 记录错误
+                self._error_counts[provider_name] = self._error_counts.get(provider_name, 0) + 1
+                self._last_error_time[provider_name] = current_time
+                
+                error_count = self._error_counts[provider_name]
+                
+                debug(LogRecord(
+                    LogEvent.PROVIDER_HEALTH_ERROR_RECORDED.value,
+                    f"Recorded error for provider {provider_name}: count={error_count}/{self.unhealthy_threshold}, error_type={error_type}",
+                    request_id,
+                    {
+                        "provider": provider_name,
+                        "error_count": error_count,
+                        "threshold": self.unhealthy_threshold,
+                        "error_type": error_type
+                    }
+                ))
+                
+                # 检查是否达到阈值
+                if error_count >= self.unhealthy_threshold:
+                    # 达到阈值，标记为unhealthy
+                    provider = self.get_provider_by_name(provider_name)
+                    if provider:
+                        provider.mark_failure()
+                        
+                    warning(LogRecord(
+                        LogEvent.PROVIDER_MARKED_UNHEALTHY.value,
+                        f"Provider {provider_name} marked unhealthy after {error_count} errors (threshold: {self.unhealthy_threshold})",
+                        request_id,
+                        {
+                            "provider": provider_name,
+                            "error_count": error_count,
+                            "threshold": self.unhealthy_threshold,
+                            "error_type": error_type
+                        }
+                    ))
+                    return True  # 应该标记为unhealthy并failover
+                else:
+                    debug(LogRecord(
+                        LogEvent.PROVIDER_HEALTH_ERROR_BELOW_THRESHOLD.value, 
+                        f"Provider {provider_name} error count {error_count} below threshold {self.unhealthy_threshold}",
+                        request_id,
+                        {
+                            "provider": provider_name,
+                            "error_count": error_count,
+                            "threshold": self.unhealthy_threshold
+                        }
+                    ))
+                    return False  # 错误数不够，不标记unhealthy
+            else:
+                # 成功请求
+                self._last_success_time[provider_name] = current_time
+                
+                if self.unhealthy_reset_on_success:
+                    # 成功后重置错误计数
+                    old_count = self._error_counts.get(provider_name, 0)
+                    if old_count > 0:
+                        self._error_counts[provider_name] = 0
+                        self._last_error_time.pop(provider_name, None)
+                        
+                        debug(LogRecord(
+                            LogEvent.PROVIDER_HEALTH_ERROR_COUNT_RESET.value,
+                            f"Provider {provider_name} error count reset from {old_count} to 0 after success",
+                            request_id,
+                            {
+                                "provider": provider_name,
+                                "old_error_count": old_count,
+                                "reset_reason": "success"
+                            }
+                        ))
+                return False  # 成功请求不需要failover
+    
+    def reset_error_counts_on_timeout(self):
+        """按照超时配置重置错误计数"""
+        current_time = time.time()
+        
+        with self._lock:
+            providers_to_reset = []
+            
+            for provider_name, last_error_time in self._last_error_time.items():
+                if current_time - last_error_time > self.unhealthy_reset_timeout:
+                    providers_to_reset.append(provider_name)
+            
+            for provider_name in providers_to_reset:
+                old_count = self._error_counts.get(provider_name, 0)
+                if old_count > 0:
+                    self._error_counts[provider_name] = 0
+                    self._last_error_time.pop(provider_name, None)
+                    
+                    debug(LogRecord(
+                        LogEvent.PROVIDER_HEALTH_ERROR_COUNT_TIMEOUT_RESET.value,
+                        f"Provider {provider_name} error count reset from {old_count} to 0 after timeout ({self.unhealthy_reset_timeout}s)",
+                        "",  # request_id not available in timeout reset
+                        {
+                            "provider": provider_name,
+                            "old_error_count": old_count,
+                            "reset_reason": "timeout",
+                            "timeout_seconds": self.unhealthy_reset_timeout
+                        }
+                    ))
+    
+    def get_provider_error_status(self, provider_name: str) -> Dict[str, Any]:
+        """获取Provider的错误状态信息"""
+        with self._lock:
+            return {
+                "error_count": self._error_counts.get(provider_name, 0),
+                "threshold": self.unhealthy_threshold,
+                "last_error_time": self._last_error_time.get(provider_name),
+                "last_success_time": self._last_success_time.get(provider_name),
+                "reset_on_success": self.unhealthy_reset_on_success,
+                "reset_timeout": self.unhealthy_reset_timeout
+            }
 
     def shutdown(self):
         """Shutdown the provider manager"""

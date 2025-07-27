@@ -6,8 +6,12 @@ Creates endpoints that simulate actual Claude provider responses with real delay
 import json
 import asyncio
 from typing import Dict, Any
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
+
+# Global counters for testing error scenarios
+_call_counters = {}
+_failure_patterns = {}
 
 
 def create_mock_provider_router() -> APIRouter:
@@ -238,7 +242,7 @@ def create_mock_provider_router() -> APIRouter:
             }
             return JSONResponse(content=error_response, status_code=500)
 
-    @router.post("/test-providers/anthropic-sse-error/v1/messages")
+    @router.post("/anthropic-sse-error/v1/messages")
     async def mock_anthropic_sse_error_messages(request: Request):
         """Mock Anthropic provider that returns SSE error for testing duplicate request handling"""
         try:
@@ -308,5 +312,174 @@ def create_mock_provider_router() -> APIRouter:
                     }
                 }
             )
+
+    @router.post("/anthropic-unhealthy-test-single/v1/messages")
+    async def mock_anthropic_single_error_test(request: Request):
+        """Mock provider that fails once then succeeds - for testing single error scenarios."""
+        provider_name = "single-error-test"
+        
+        # Initialize counter if not exists
+        if provider_name not in _call_counters:
+            _call_counters[provider_name] = 0
+        
+        _call_counters[provider_name] += 1
+        call_count = _call_counters[provider_name]
+        
+        # First call fails with connection error (simulated by HTTP 502)
+        if call_count == 1:
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "bad_gateway",
+                        "message": "Connection failed - simulated single error"
+                    }
+                }
+            )
+        
+        # Subsequent calls succeed
+        request_body = await request.json()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "id": f"msg_single_error_success_{call_count}",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Success after single error (call #{call_count})"
+                    }
+                ],
+                "model": "claude-3-5-sonnet-20241022",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 8}
+            }
+        )
+
+    @router.post("/anthropic-unhealthy-test-multiple/v1/messages")
+    async def mock_anthropic_multiple_error_test(request: Request):
+        """Mock provider that fails multiple times then succeeds - for testing threshold."""
+        provider_name = "multiple-error-test"
+        
+        # Initialize counter if not exists
+        if provider_name not in _call_counters:
+            _call_counters[provider_name] = 0
+        
+        _call_counters[provider_name] += 1
+        call_count = _call_counters[provider_name]
+        
+        # First two calls fail with connection errors
+        if call_count <= 2:
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "bad_gateway",
+                        "message": f"Connection failed - error #{call_count} of 2"
+                    }
+                }
+            )
+        
+        # Subsequent calls succeed
+        request_body = await request.json()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "id": f"msg_multiple_error_success_{call_count}",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Success after multiple errors (call #{call_count})"
+                    }
+                ],
+                "model": "claude-3-5-sonnet-20241022",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 8}
+            }
+        )
+
+    @router.post("/anthropic-unhealthy-test-reset/v1/messages")
+    async def mock_anthropic_error_reset_test(request: Request):
+        """Mock provider for testing success resets error count: fail, succeed, fail, succeed."""
+        provider_name = "error-reset-test"
+        
+        # Initialize counter if not exists
+        if provider_name not in _call_counters:
+            _call_counters[provider_name] = 0
+        
+        _call_counters[provider_name] += 1
+        call_count = _call_counters[provider_name]
+        
+        # Pattern: fail on odd calls, succeed on even calls
+        if call_count % 2 == 1:  # Odd calls fail
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "bad_gateway",
+                        "message": f"Intermittent failure on call #{call_count}"
+                    }
+                }
+            )
+        
+        # Even calls succeed
+        request_body = await request.json()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "id": f"msg_reset_success_{call_count}",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Success that should reset error count (call #{call_count})"
+                    }
+                ],
+                "model": "claude-3-5-sonnet-20241022",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 8}
+            }
+        )
+
+    @router.post("/anthropic-unhealthy-test-always-fail/v1/messages")
+    async def mock_anthropic_always_fail_test(request: Request):
+        """Mock provider that always fails - for testing continuous errors."""
+        provider_name = "always-fail-test"
+        
+        # Initialize counter if not exists
+        if provider_name not in _call_counters:
+            _call_counters[provider_name] = 0
+        
+        _call_counters[provider_name] += 1
+        call_count = _call_counters[provider_name]
+        
+        # Always return connection error
+        return JSONResponse(
+            status_code=502,
+            content={
+                "type": "error",
+                "error": {
+                    "type": "bad_gateway",
+                    "message": f"Always fails - call #{call_count}"
+                }
+            }
+        )
+
+    @router.post("/reset-test-counters")
+    async def reset_test_counters(request: Request):
+        """Reset all test counters - useful for test setup."""
+        global _call_counters, _failure_patterns
+        _call_counters.clear()
+        _failure_patterns.clear()
+        return JSONResponse(
+            content={"message": "Test counters reset successfully"}
+        )
 
     return router

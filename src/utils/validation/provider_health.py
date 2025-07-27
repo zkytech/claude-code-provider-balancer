@@ -4,12 +4,87 @@ from typing import List, Optional, Tuple, Union, Dict, Any
 import json
 
 
+def map_exception_to_failover_type(exception_type: str, exception_message: str = "") -> Optional[str]:
+    """将异常类型映射到failover错误类型
+    
+    Args:
+        exception_type: 异常类型名称 (如 'ConnectError', 'TimeoutError')
+        exception_message: 异常消息内容
+        
+    Returns:
+        对应的failover错误类型，如果不匹配则返回None
+    """
+    # 网络连接错误映射
+    connection_error_types = {
+        'ConnectError': 'connection_error',
+        'ConnectionError': 'connection_error', 
+        'OSError': 'connection_error',
+        'socket.error': 'connection_error',
+        'SSLError': 'ssl_error',
+        'SSLException': 'ssl_error',
+        'CertificateError': 'ssl_error',
+        'NetworkError': 'network_unreachable',
+    }
+    
+    # 网络超时错误映射
+    timeout_error_types = {
+        'TimeoutError': 'connect_timeout',
+        'ConnectTimeout': 'connect_timeout',
+        'ReadTimeout': 'read_timeout',
+        'Timeout': 'read_timeout',
+        'asyncio.TimeoutError': 'read_timeout',
+        'PoolTimeout': 'pool_timeout',
+    }
+    
+    # HTTP错误映射 
+    http_error_types = {
+        'HTTPError': 'internal_server_error',
+        'ServerError': 'internal_server_error',
+        'BadGateway': 'bad_gateway',
+        'ServiceUnavailable': 'service_unavailable',
+    }
+    
+    # Stream特定错误映射
+    stream_error_types = {
+        'StreamError': 'stream_transmission_error',
+        'ChunkedEncodingError': 'stream_transmission_error',
+        'StreamInterrupted': 'stream_interrupted',
+        'IncompleteRead': 'stream_transmission_error',
+    }
+    
+    # 合并所有映射
+    all_mappings = {
+        **connection_error_types,
+        **timeout_error_types, 
+        **http_error_types,
+        **stream_error_types
+    }
+    
+    # 直接匹配异常类型
+    if exception_type in all_mappings:
+        return all_mappings[exception_type]
+    
+    # 基于异常消息的模糊匹配
+    exception_message_lower = exception_message.lower()
+    if 'timeout' in exception_message_lower:
+        return 'read_timeout'
+    elif 'connection' in exception_message_lower:
+        return 'connection_error'
+    elif 'ssl' in exception_message_lower:
+        return 'ssl_error'
+    elif 'stream' in exception_message_lower:
+        return 'stream_transmission_error'
+    
+    return None
+
+
 def validate_provider_health(response_content: Union[List[str], str, Dict[str, Any]], 
                            provider_name: str, 
                            request_id: str, 
                            http_status_code: Optional[int] = None, 
                            failover_error_types: Optional[List[str]] = None,
-                           failover_http_codes: Optional[List[int]] = None) -> Tuple[bool, Optional[str]]:
+                           failover_http_codes: Optional[List[int]] = None,
+                           exception_info: Optional[Dict[str, Any]] = None) -> Tuple[bool, Optional[str]]:
     """检查provider响应是否健康，判断是否命中failover规则
     
     Args:
@@ -19,6 +94,7 @@ def validate_provider_health(response_content: Union[List[str], str, Dict[str, A
         http_status_code: HTTP状态码
         failover_error_types: 配置的failover错误类型
         failover_http_codes: 配置的failover HTTP状态码
+        exception_info: 异常信息字典，包含error_type和error_message
         
     Returns:
         Tuple[bool, Optional[str]]: (provider是否不健康, 错误类型)
@@ -37,6 +113,45 @@ def validate_provider_health(response_content: Union[List[str], str, Dict[str, A
     
     failover_error_types = failover_error_types or []
     failover_http_codes = failover_http_codes or []
+    
+    # 0. 优先检查异常信息（如果提供）
+    if exception_info:
+        exception_type = exception_info.get('error_type', '')
+        exception_message = exception_info.get('error_message', '')
+        
+        # 映射异常类型到failover错误类型
+        mapped_error_type = map_exception_to_failover_type(exception_type, exception_message)
+        
+        if mapped_error_type and mapped_error_type in failover_error_types:
+            warning(
+                LogRecord(
+                    "provider_health_check_exception",
+                    f"Exception '{exception_type}' indicates unhealthy provider: {provider_name}",
+                    request_id,
+                    {
+                        "provider": provider_name,
+                        "exception_type": exception_type,
+                        "exception_message": exception_message,
+                        "mapped_error_type": mapped_error_type,
+                        "unhealthy_reason": "exception_based"
+                    }
+                )
+            )
+            return True, mapped_error_type
+        else:
+            debug(
+                LogRecord(
+                    "provider_health_check_exception_ignored", 
+                    f"Exception '{exception_type}' not mapped to failover error type or not in failover list: {provider_name}",
+                    request_id,
+                    {
+                        "provider": provider_name,
+                        "exception_type": exception_type,
+                        "mapped_error_type": mapped_error_type,
+                        "failover_error_types": failover_error_types
+                    }
+                )
+            )
     
     # 统一处理不同类型的响应内容
     if isinstance(response_content, list):
@@ -154,20 +269,14 @@ def validate_provider_health(response_content: Union[List[str], str, Dict[str, A
                     error_type = str(error_obj)
                     error_message = json_content.get("message", "")
                 
-                # 检查特定错误类型是否在failover规则中
-                failover_matches = [
-                    ("invalid_request_error", ["invalid_request", "invalid_request_error"]),
-                    ("rate_limit_exceeded", ["rate_limit", "rate_limit_exceeded", "too_many_requests"]),
-                    ("没有可用token", ["没有可用token", "no_available_token"]),
-                    ("无可用模型", ["无可用模型", "no_available_model"])
-                ]
-                
-                for failover_type, patterns in failover_matches:
-                    if failover_type in failover_error_types and any(pattern in error_type.lower() or pattern in error_message.lower() for pattern in patterns):
+                # 检查配置文件中定义的错误类型
+                for failover_type in failover_error_types:
+                    # 检查错误类型或错误消息中是否包含配置的错误类型
+                    if failover_type.lower() in error_type.lower() or failover_type.lower() in error_message.lower():
                         warning(
                             LogRecord(
                                 "provider_health_check_json_error",
-                                f"JSON error '{error_type}' indicates unhealthy provider: {provider_name}",
+                                f"Error type '{failover_type}' found in response indicates unhealthy provider: {provider_name}",
                                 request_id,
                                 {
                                     "provider": provider_name, 

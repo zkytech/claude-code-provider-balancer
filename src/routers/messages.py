@@ -275,23 +275,34 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                                 'failover_http_codes': provider_manager.settings.get('failover_http_codes', [])
                                             }
                                         
-                                        is_unhealthy, error_type = validate_provider_health(
+                                        is_error_detected, error_type = validate_provider_health(
                                             collected_chunks, 
                                             current_provider.name, 
                                             request_id,
                                             None,  # No HTTP status for successful stream
                                             failover_config.get('failover_error_types', []),
-                                            failover_config.get('failover_http_codes', [])
+                                            failover_config.get('failover_http_codes', []),
+                                            broadcaster.last_exception_info if broadcaster else None
                                         )
                                         
-                                        if is_unhealthy:
-                                            # Provider is unhealthy, mark as failed but cannot failover for stream
-                                            current_provider.mark_failure()
+                                        # 使用ProviderManager的错误计数机制
+                                        should_mark_unhealthy = False
+                                        if provider_manager:
+                                            should_mark_unhealthy = provider_manager.record_health_check_result(
+                                                current_provider.name, is_error_detected, error_type, request_id
+                                            )
+                                        else:
+                                            # Fallback: 如果没有provider_manager，使用原有逻辑
+                                            should_mark_unhealthy = is_error_detected
+                                            if should_mark_unhealthy:
+                                                current_provider.mark_failure()
+                                        
+                                        if should_mark_unhealthy:
                                             
                                             warning(
                                                 LogRecord(
                                                     LogEvent.PROVIDER_UNHEALTHY_STREAM_ANTHROPIC.value,
-                                                    f"Anthropic provider {current_provider.name} marked unhealthy due to stream content, cannot failover",
+                                                    f"Anthropic provider {current_provider.name} marked unhealthy after reaching error threshold, cannot failover for stream",
                                                     request_id,
                                                     {
                                                         "provider": current_provider.name,
@@ -345,6 +356,10 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                             current_provider.mark_success()
                                             if provider_manager:
                                                 provider_manager.mark_provider_success(current_provider.name)
+                                                # 记录成功的健康检查结果
+                                                provider_manager.record_health_check_result(
+                                                    current_provider.name, False, None, request_id
+                                                )
                                             
                                             # Log request completion for consistency with non-streaming requests
                                             info(
@@ -383,6 +398,10 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                 current_provider.mark_success()
                                 if provider_manager:
                                     provider_manager.mark_provider_success(current_provider.name)
+                                    # 记录成功的健康检查结果
+                                    provider_manager.record_health_check_result(
+                                        current_provider.name, False, None, request_id
+                                    )
                                 
                                 # Log request completion
                                 info(
@@ -493,6 +512,10 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                         current_provider.mark_success()
                                         if provider_manager:
                                             provider_manager.mark_provider_success(current_provider.name)
+                                            # 记录成功的健康检查结果
+                                            provider_manager.record_health_check_result(
+                                                current_provider.name, False, None, request_id
+                                            )
                                         
                                         # Log request completion
                                         info(
@@ -560,7 +583,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                         if hasattr(response, 'status_code'):
                             response_status_code = response.status_code
                         
-                        is_unhealthy, error_type = validate_provider_health(
+                        is_error_detected, error_type = validate_provider_health(
                             response_content, 
                             current_provider.name, 
                             request_id,
@@ -569,14 +592,24 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                             failover_config['failover_http_codes']
                         )
                         
-                        if is_unhealthy:
-                            # Provider is unhealthy, mark as failed and attempt failover
-                            current_provider.mark_failure()
+                        # 使用ProviderManager的错误计数机制
+                        should_mark_unhealthy = False
+                        if provider_manager:
+                            should_mark_unhealthy = provider_manager.record_health_check_result(
+                                current_provider.name, is_error_detected, error_type, request_id
+                            )
+                        else:
+                            # Fallback: 如果没有provider_manager，使用原有逻辑
+                            should_mark_unhealthy = is_error_detected
+                            if should_mark_unhealthy:
+                                current_provider.mark_failure()
+                        
+                        if should_mark_unhealthy:
                             
                             warning(
                                 LogRecord(
                                     "provider_unhealthy_non_stream",
-                                    f"Provider {current_provider.name} marked unhealthy due to response content, attempting failover",
+                                    f"Provider {current_provider.name} marked unhealthy after reaching error threshold, attempting failover",
                                     request_id,
                                     {
                                         "provider": current_provider.name,
@@ -623,6 +656,10 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                     current_provider.mark_success()
                     if provider_manager:
                         provider_manager.mark_provider_success(current_provider.name)
+                        # 记录成功的健康检查结果
+                        provider_manager.record_health_check_result(
+                            current_provider.name, False, None, request_id
+                        )
                     
                     info(
                         LogRecord(
@@ -689,7 +726,19 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                         return await message_handler._log_and_return_error_response(request, e, request_id, 500, signature)
                     
                     # Mark current provider as failed since we are failing over
-                    current_provider.mark_failure()
+                    # But first use error counting mechanism if available
+                    if provider_manager:
+                        # Use error counting mechanism before marking as failed
+                        should_mark_unhealthy = provider_manager.record_health_check_result(
+                            current_provider.name, True, error_type, request_id
+                        )
+                        # Only mark as failed if threshold is reached
+                        if should_mark_unhealthy:
+                            current_provider.mark_failure()
+                        # If threshold not reached, don't mark as failed - just record the error
+                    else:
+                        # Fallback: use original logic if no provider manager
+                        current_provider.mark_failure()
                     
                     # If we have more providers to try, continue to next iteration
                     if attempt < max_attempts - 1:

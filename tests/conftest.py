@@ -25,10 +25,6 @@ from core.provider_manager import ProviderManager
 from test_utils import get_claude_code_headers
 
 
-
-
-
-
 @pytest.fixture
 def mock_provider_manager() -> ProviderManager:
     """Create a mock provider manager for testing."""
