@@ -204,6 +204,12 @@ providers:
     auth_type: "api_key"
     auth_value: "test-key"
     enabled: true
+  - name: "Streaming Empty Content Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/streaming-empty-content-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
 
   # ========== NON-STREAMING REQUESTS TESTING PROVIDERS ==========
   - name: "Non-Streaming Success Test Provider"
@@ -600,6 +606,10 @@ model_routes:
       priority: 1
   "streaming-interruption-test":
     - provider: "Streaming Interruption Test Provider"
+      model: "passthrough"
+      priority: 1
+  "streaming-empty-content-test":
+    - provider: "Streaming Empty Content Test Provider"
       model: "passthrough"
       priority: 1
 

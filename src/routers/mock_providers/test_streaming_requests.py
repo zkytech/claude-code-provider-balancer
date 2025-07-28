@@ -99,4 +99,29 @@ def create_test_streaming_requests_routes():
                 "usage": {"input_tokens": 10, "output_tokens": 5}
             })
 
+    # ========== test_streaming_200_with_empty_content ==========
+    @router.post("/streaming-empty-content-test/v1/messages")
+    async def mock_streaming_empty_content_test_provider(request: Request):
+        """专用于test_streaming_200_with_empty_content测试 - 返回真正的空内容"""
+        request_body = await request.json()
+        stream = request_body.get('stream', False)
+        
+        if stream:
+            async def generate_empty_stream():
+                # 返回最基本的stream格式但没有实际内容
+                yield f"data: {json.dumps({'type': 'message_start', 'message': {'id': 'msg_empty', 'type': 'message', 'role': 'assistant', 'content': [], 'model': 'claude-3-5-sonnet-20241022', 'stop_reason': None, 'usage': {'input_tokens': 10, 'output_tokens': 0}}}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}}, ensure_ascii=False)}\n\n"
+                # 没有content_block_delta - 这就是"空内容"
+                yield f"data: {json.dumps({'type': 'content_block_stop', 'index': 0}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'message_stop'}, ensure_ascii=False)}\n\n"
+            
+            return StreamingResponse(generate_empty_stream(), media_type="text/event-stream")
+        else:
+            return JSONResponse(status_code=200, content={
+                "id": "msg_empty", "type": "message", "role": "assistant",
+                "content": [{"type": "text", "text": ""}],  # 空内容
+                "model": "claude-3-5-sonnet-20241022", "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 0}
+            })
+
     return router

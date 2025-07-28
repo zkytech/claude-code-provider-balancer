@@ -139,35 +139,39 @@ class TestStreamingRequests:
 
     @pytest.mark.asyncio 
     async def test_streaming_200_with_empty_content(self, async_client: AsyncClient, claude_headers):
-        """Test streaming request that returns 200 but with error/interruption - uses dedicated test provider."""
-        # Use streaming interruption test model that simulates incomplete response
+        """Test streaming request that returns 200 but with empty content - uses dedicated test provider."""
+        # Use streaming empty content test model that returns no actual text content
         test_request = {
-            "model": "streaming-interruption-test",
+            "model": "streaming-empty-content-test",
             "max_tokens": 100,
             "stream": True,
             "messages": [{"role": "user", "content": "This is an empty content test message."}]
         }
         
-        # Use dedicated streaming interruption provider - no respx.mock needed
+        # Use dedicated streaming empty content provider - no respx.mock needed
         response = await async_client.post(
             "/v1/messages",
             json=test_request,
             headers=claude_headers
         )
         
-        # Should return 200 with interrupted content
+        # Should return 200 with empty content stream
         assert response.status_code == 200
         assert "text/event-stream" in response.headers.get("content-type", "")
         
-        # Verify the response can be consumed (interrupted stream)
+        # Verify the response can be consumed (empty content stream)
         content = ""
         async for chunk in response.aiter_text():
             content += chunk
         
-        # Should have partial content before interruption
-        assert len(content) > 0
-        # Check for the delta chunks (they may be split)
-        assert "Stream" in content and " will" in content and " be" in content
+        # Should have stream structure but no actual text content
+        assert len(content) > 0  # Has stream events
+        assert "message_start" in content
+        assert "content_block_start" in content
+        assert "content_block_stop" in content
+        assert "message_stop" in content
+        # But should not have any content_block_delta with actual text
+        assert "content_block_delta" not in content
 
     @pytest.mark.asyncio
     async def test_streaming_malformed_json_response(self, async_client: AsyncClient, claude_headers):
