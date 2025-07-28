@@ -15,7 +15,9 @@ sys.path.insert(0, str(src_dir))
 
 import uvicorn
 import fastapi
+from pathlib import Path
 from routers.mock_providers import create_all_mock_provider_routes
+from framework.unified_mock import create_unified_mock_router
 
 def create_test_mock_app():
     """Create test mock provider application."""
@@ -25,8 +27,11 @@ def create_test_mock_app():
         description="Mock provider endpoints for testing streaming behavior",
     )
     
-    # Register only the mock provider router
+    # Register the traditional mock provider routes (for backward compatibility)
     app.include_router(create_all_mock_provider_routes())
+    
+    # Register the new unified mock router (for simplified tests)
+    app.include_router(create_unified_mock_router())
     
     @app.get("/health")
     async def health_check():
@@ -79,14 +84,39 @@ def print_available_endpoints(app: fastapi.FastAPI, host: str = "127.0.0.1", por
         print(f"  - {method:4} http://{host}:{port}{path}")
 
 if __name__ == "__main__":
+    import sys
+    
+    # Check for reload flag
+    enable_reload = "--reload" in sys.argv or "--auto-reload" in sys.argv
+    
     app = create_test_mock_app()
     
-    print("Starting test mock provider server on localhost:8998")
+    print("🚀 Starting test mock provider server on localhost:8998")
+    if enable_reload:
+        print("🔄 Auto-reload enabled - server will restart on file changes")
+    print("📊 Health check: http://127.0.0.1:8998/health")
+    print("🧪 Test context: http://127.0.0.1:8998/mock-test-context")
+    print("⚙️  Set context: POST http://127.0.0.1:8998/mock-set-context")
+    print("-" * 60)
     print_available_endpoints(app)
     
+    # Configure reload directories if reload is enabled
+    reload_dirs = None
+    if enable_reload:
+        current_dir = Path(__file__).parent
+        reload_dirs = [
+            str(current_dir / "framework"),
+            str(current_dir.parent / "src" / "routers" / "mock_providers"),
+            str(current_dir)  # Include the tests directory itself
+        ]
+        print(f"👀 Monitoring directories: {reload_dirs}")
+    
     uvicorn.run(
-        app,
+        "run_mock_server:create_test_mock_app" if enable_reload else app,
         host="127.0.0.1",
         port=8998,
-        log_level="info"
+        log_level="info",
+        reload=enable_reload,
+        reload_dirs=reload_dirs,
+        factory=True if enable_reload else False
     )
