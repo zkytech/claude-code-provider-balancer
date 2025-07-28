@@ -29,7 +29,7 @@ providers:
   # 测试用的 OpenAI 提供者
   - name: "Test OpenAI Provider"
     type: "openai"
-    base_url: "http://localhost:8998/test-providers/openai"
+    base_url: "http://localhost:8998/test-providers/openai/v1"
     auth_type: "api_key"
     auth_value: "test-key"
     enabled: true
@@ -59,6 +59,338 @@ providers:
   - name: "Test Always Fail Provider"
     type: "anthropic"
     base_url: "http://localhost:8998/test-providers/anthropic-unhealthy-test-always-fail"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  # ========== DUPLICATE REQUEST TESTING PROVIDERS ==========
+  - name: "Duplicate Success Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/duplicate-success"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  - name: "Duplicate Concurrent Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/duplicate-concurrent"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  - name: "Parameter Sensitive Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/parameter-sensitive"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  - name: "System Message Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/system-message-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  - name: "Tools Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/tools-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  - name: "Failover Fail Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/failover-fail"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  - name: "Failover Success Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/failover-success"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  # ========== MIXED PROVIDER TESTING PROVIDERS ==========
+  - name: "Mixed OpenAI Success Provider"
+    type: "openai"
+    base_url: "http://localhost:8998/test-providers/mixed-openai-success/v1"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  - name: "Mixed Anthropic Success Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/mixed-anthropic-success"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  - name: "Mixed OpenAI Error Provider"
+    type: "openai"
+    base_url: "http://localhost:8998/test-providers/mixed-openai-error/v1"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  - name: "Mixed Anthropic Error Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/mixed-anthropic-error"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  - name: "Mixed OpenAI Tools Provider"
+    type: "openai"
+    base_url: "http://localhost:8998/test-providers/mixed-openai-tools/v1"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Mixed Failover Error Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/mixed-failover-error"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Error Conversion OpenAI Test Provider"
+    type: "openai"
+    base_url: "http://localhost:8998/test-providers/error-conversion-openai-test/v1"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Error Conversion Anthropic Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/error-conversion-anthropic-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Tool Conversion Test Provider"
+    type: "openai"
+    base_url: "http://localhost:8998/test-providers/tool-conversion-test/v1"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "System Message Test Provider"
+    type: "openai"
+    base_url: "http://localhost:8998/test-providers/system-message-test/v1"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  # ========== STREAMING REQUESTS TESTING PROVIDERS ==========
+  - name: "Streaming Processing Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/streaming-processing-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Streaming Error Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/streaming-error-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Streaming Timeout Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/streaming-timeout-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Streaming Interruption Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/streaming-interruption-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  # ========== NON-STREAMING REQUESTS TESTING PROVIDERS ==========
+  - name: "Non-Streaming Success Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-success-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming System Message Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-system-message-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming Temperature Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-temperature-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming Error 500 Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-error-500-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming Error 401 Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-error-401-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming Error 429 Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-error-429-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming Connection Error Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-connection-error-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming Timeout Error Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-timeout-error-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming Invalid JSON Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-invalid-json-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming Empty Response Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-empty-response-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming 200 Error Content Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-200-error-content-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming OpenAI Format Test Provider"
+    type: "openai"
+    base_url: "http://localhost:8998/test-providers/non-streaming-openai-format-test/v1"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming Tools Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-tools-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming Invalid Model Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-invalid-model-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming Missing Fields Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-missing-fields-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming Failover Error Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-failover-error-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Non-Streaming Failover Success Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/non-streaming-failover-success-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+
+  # ========== MULTI-PROVIDER MANAGEMENT TESTING PROVIDERS ==========
+  - name: "Multi Primary Success Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-primary-success-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Multi Failover Primary Error Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-failover-primary-error-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Multi Failover Secondary Success Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-failover-secondary-success-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Multi All Providers Error Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-all-providers-error-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Multi Cooldown Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-cooldown-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Multi Recovery Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-recovery-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Multi Streaming Failover Error Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-streaming-failover-error-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Multi Streaming Failover Success Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-streaming-failover-success-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Multi Health Check Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-health-check-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Multi Priority High Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-priority-high-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Multi Priority Low Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-priority-low-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Multi Concurrent Error Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-concurrent-error-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Multi Concurrent Success Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-concurrent-success-test"
+    auth_type: "api_key"
+    auth_value: "test-key"
+    enabled: true
+  - name: "Multi Sticky Routing Test Provider"
+    type: "anthropic"
+    base_url: "http://localhost:8998/test-providers/multi-sticky-routing-test"
     auth_type: "api_key"
     auth_value: "test-key"
     enabled: true
@@ -149,6 +481,251 @@ model_routes:
       model: "passthrough"
       priority: 2
 
+  # ========== DUPLICATE REQUEST TESTING ROUTES ==========
+  "duplicate-non-streaming-test":
+    - provider: "Duplicate Success Provider"
+      model: "passthrough"
+      priority: 1
+
+  "duplicate-streaming-test":
+    - provider: "Duplicate Success Provider"
+      model: "passthrough"
+      priority: 1
+
+  "duplicate-concurrent-test":
+    - provider: "Duplicate Concurrent Provider"
+      model: "passthrough"
+      priority: 1
+
+  "parameter-test-model":
+    - provider: "Parameter Sensitive Provider"
+      model: "passthrough"
+      priority: 1
+
+  "system-test-model":
+    - provider: "System Message Test Provider"
+      model: "passthrough"
+      priority: 1
+
+  "tools-test-model":
+    - provider: "Tools Test Provider"
+      model: "passthrough"
+      priority: 1
+
+  "cache-test-model":
+    - provider: "Duplicate Success Provider"
+      model: "passthrough"
+      priority: 1
+
+  "failover-test-model":
+    - provider: "Failover Fail Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Failover Success Provider"
+      model: "passthrough"
+      priority: 2
+
+  # ========== MIXED PROVIDER TESTING ROUTES ==========
+  "mixed-anthropic-to-openai-test":
+    - provider: "Mixed OpenAI Success Provider"
+      model: "passthrough"
+      priority: 1
+
+  "mixed-openai-to-anthropic-test":
+    - provider: "Mixed Anthropic Success Provider"
+      model: "passthrough"
+      priority: 1
+
+  "mixed-openai-streaming-test":
+    - provider: "Mixed OpenAI Success Provider"
+      model: "passthrough"
+      priority: 1
+
+  "mixed-openai-error-test":
+    - provider: "Mixed OpenAI Error Provider"
+      model: "passthrough"
+      priority: 1
+
+  "mixed-anthropic-error-test":
+    - provider: "Mixed Anthropic Error Provider"
+      model: "passthrough"
+      priority: 1
+
+  "mixed-openai-tools-test":
+    - provider: "Mixed OpenAI Tools Provider"
+      model: "passthrough"
+      priority: 1
+
+  "mixed-system-message-test":
+    - provider: "Mixed OpenAI Success Provider"
+      model: "passthrough"
+      priority: 1
+
+  "mixed-failover-test":
+    - provider: "Mixed Failover Error Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Mixed Anthropic Success Provider"
+      model: "passthrough"
+      priority: 2
+  "error-conversion-openai-test":
+    - provider: "Error Conversion OpenAI Test Provider"
+      model: "passthrough"
+      priority: 1
+  "error-conversion-anthropic-test":
+    - provider: "Error Conversion Anthropic Test Provider"
+      model: "passthrough"
+      priority: 1
+  "tool-conversion-test":
+    - provider: "Tool Conversion Test Provider"
+      model: "passthrough"
+      priority: 1
+  "system-message-test":
+    - provider: "System Message Test Provider"
+      model: "passthrough"
+      priority: 1
+
+  # ========== STREAMING REQUESTS TESTING ROUTES ==========
+  "streaming-processing-test":
+    - provider: "Streaming Processing Test Provider"
+      model: "passthrough"
+      priority: 1
+  "streaming-error-test":
+    - provider: "Streaming Error Test Provider"
+      model: "passthrough"
+      priority: 1
+  "streaming-timeout-test":
+    - provider: "Streaming Timeout Test Provider"
+      model: "passthrough"
+      priority: 1
+  "streaming-interruption-test":
+    - provider: "Streaming Interruption Test Provider"
+      model: "passthrough"
+      priority: 1
+
+  # ========== NON-STREAMING REQUESTS TESTING ROUTES ==========
+  "non-streaming-success-test":
+    - provider: "Non-Streaming Success Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-system-message-test":
+    - provider: "Non-Streaming System Message Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-temperature-test":
+    - provider: "Non-Streaming Temperature Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-error-500-test":
+    - provider: "Non-Streaming Error 500 Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-error-401-test":
+    - provider: "Non-Streaming Error 401 Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-error-429-test":
+    - provider: "Non-Streaming Error 429 Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-connection-error-test":
+    - provider: "Non-Streaming Connection Error Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-timeout-error-test":
+    - provider: "Non-Streaming Timeout Error Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-invalid-json-test":
+    - provider: "Non-Streaming Invalid JSON Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-empty-response-test":
+    - provider: "Non-Streaming Empty Response Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-200-error-content-test":
+    - provider: "Non-Streaming 200 Error Content Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-openai-format-test":
+    - provider: "Non-Streaming OpenAI Format Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-tools-test":
+    - provider: "Non-Streaming Tools Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-invalid-model-test":
+    - provider: "Non-Streaming Invalid Model Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-missing-fields-test":
+    - provider: "Non-Streaming Missing Fields Test Provider"
+      model: "passthrough"
+      priority: 1
+  "non-streaming-failover-test":
+    - provider: "Non-Streaming Failover Error Test Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Non-Streaming Failover Success Test Provider"
+      model: "passthrough"
+      priority: 2
+
+  # ========== MULTI-PROVIDER MANAGEMENT TESTING ROUTES ==========
+  "multi-primary-success-test":
+    - provider: "Multi Primary Success Test Provider"
+      model: "passthrough"
+      priority: 1
+  "multi-failover-test":
+    - provider: "Multi Failover Primary Error Test Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Multi Failover Secondary Success Test Provider"
+      model: "passthrough"
+      priority: 2
+  "multi-all-providers-error-test":
+    - provider: "Multi All Providers Error Test Provider"
+      model: "passthrough"
+      priority: 1
+  "multi-cooldown-test":
+    - provider: "Multi Cooldown Test Provider"
+      model: "passthrough"
+      priority: 1
+  "multi-recovery-test":
+    - provider: "Multi Recovery Test Provider"
+      model: "passthrough"
+      priority: 1
+  "multi-streaming-failover-test":
+    - provider: "Multi Streaming Failover Error Test Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Multi Streaming Failover Success Test Provider"
+      model: "passthrough"
+      priority: 2
+  "multi-health-check-test":
+    - provider: "Multi Health Check Test Provider"
+      model: "passthrough"
+      priority: 1
+  "multi-priority-test":
+    - provider: "Multi Priority High Test Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Multi Priority Low Test Provider"
+      model: "passthrough"
+      priority: 2
+  "multi-concurrent-failover-test":
+    - provider: "Multi Concurrent Error Test Provider"
+      model: "passthrough"
+      priority: 1
+    - provider: "Multi Concurrent Success Test Provider"
+      model: "passthrough"
+      priority: 2
+  "multi-sticky-routing-test":
+    - provider: "Multi Sticky Routing Test Provider"
+      model: "passthrough"
+      priority: 1
+
 # 测试用的全局设置
 settings:
   # 模型选择策略
@@ -192,6 +769,9 @@ settings:
     - '"error_type"\s*:\s*"quota_exceeded"'         # 配额超限错误
     - '"message"\s*:\s*".*rate.?limit.*"'           # 速率限制错误
     - '"detail"\s*:\s*".*没有可用.*"'                # 中文服务商错误
+    
+    # === 通用错误类型检测 ===
+    - '"type"\s*:\s*"error"'                        # 通用错误类型检测
     
     # === 流式响应错误模式 ===
     - 'data:\s*\{"error"'                           # SSE流中的错误消息

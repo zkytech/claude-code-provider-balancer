@@ -10,7 +10,6 @@ from .formatters import LogError, LogRecord
 
 class LogEvent(enum.Enum):
     # Core request flow events
-    MODEL_SELECTION = "model_selection"
     REQUEST_START = "request_start"
     REQUEST_COMPLETED = "request_completed"
     REQUEST_FAILURE = "request_failure"
@@ -18,7 +17,6 @@ class LogEvent(enum.Enum):
     CLIENT_REQUEST_DEBUG = "client_request_debug"
     
     # Provider communication events
-    UPSTREAM_REQUEST = "upstream_request"
     PROVIDER_REQUEST = "provider_request"
     PROVIDER_REQUEST_ERROR = "provider_request_error"
     PROVIDER_HTTP_ERROR_DETAILS = "provider_http_error_details"
@@ -26,16 +24,11 @@ class LogEvent(enum.Enum):
     PROVIDER_LOADED = "provider_loaded"
     PROVIDER_FALLBACK = "provider_fallback"
     ALL_PROVIDERS_FAILED = "all_providers_failed"
-    ERROR_NOT_RETRYABLE = "error_not_retryable"
+    PROVIDER_ERROR_BELOW_THRESHOLD = "provider_error_below_threshold"  # Provider错误数未达阈值
+    PROVIDER_UNHEALTHY_NO_FAILOVER = "provider_unhealthy_no_failover"  # Provider不健康但无法failover
     GET_PROVIDER_HEADERS_START = "get_provider_headers_start"
     
-    # Response processing events
-    OPENAI_RESPONSE = "openai_response"
-    ANTHROPIC_RESPONSE = "anthropic_response"
-    
     # Streaming events
-    STREAMING_REQUEST = "streaming_request"
-    STREAM_INTERRUPTED = "stream_interrupted"
     SSE_EXTRACTION_COMPLETE = "sse_extraction_complete"
     FRIENDLY_ERROR_SENT_TO_CLIENT = "friendly_error_sent_to_client"
     FAILED_TO_SEND_FRIENDLY_ERROR = "failed_to_send_friendly_error"
@@ -72,24 +65,16 @@ class LogEvent(enum.Enum):
     
     # Message processing events
     SYSTEM_PROMPT_ADJUSTED = "system_prompt_adjusted"
-    MESSAGE_FORMAT_NORMALIZED = "message_format_normalized"
     
     # Tool processing events
     TOOL_INPUT_SERIALIZATION_FAILURE = "tool_input_serialization_failure"
     TOOL_RESULT_SERIALIZATION_FAILURE = "tool_result_serialization_failure"
     TOOL_RESULT_PROCESSING = "tool_result_processing"
     TOOL_CHOICE_UNSUPPORTED = "tool_choice_unsupported"
-    TOOL_ARGS_TYPE_MISMATCH = "tool_args_type_mismatch"
     TOOL_ARGS_PARSE_FAILURE = "tool_args_parse_failure"
-    TOOL_ARGS_UNEXPECTED = "tool_args_unexpected"
-    TOOL_ID_PLACEHOLDER = "tool_id_placeholder"
-    TOOL_ID_UPDATED = "tool_id_updated"
     
     # System events
-    IMAGE_FORMAT_UNSUPPORTED = "image_format_unsupported"
     PARAMETER_UNSUPPORTED = "parameter_unsupported"
-    HEALTH_CHECK = "health_check"
-    PROVIDER_ERROR_DETAILS = "provider_error_details"
     FASTAPI_STARTUP_COMPLETE = "fastapi_startup_complete"
     FASTAPI_SHUTDOWN = "fastapi_shutdown"
     HTTP_REQUEST = "http_request"
@@ -108,10 +93,8 @@ class LogEvent(enum.Enum):
     REQUEST_CLEANUP = "request_cleanup"
     REQUEST_CLEANUP_SKIP = "request_cleanup_skip"
     STUCK_REQUEST_CLEANUP = "stuck_request_cleanup"
-    ERROR_CLEANUP = "error_cleanup"
     
     # Provider health check events
-    PROVIDER_HEALTH_CHECK_SSE_ERROR = "provider_health_check_sse_error"
     PROVIDER_UNHEALTHY_STREAM_ANTHROPIC = "provider_unhealthy_stream_anthropic"
     PROVIDER_HEALTH_ERROR_RECORDED = "provider_health_error_recorded"
     PROVIDER_MARKED_UNHEALTHY = "provider_marked_unhealthy"

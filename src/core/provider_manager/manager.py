@@ -591,7 +591,6 @@ class ProviderManager:
             error: 捕获的异常
             http_status_code: HTTP状态码（如果有）
             is_streaming: 是否为streaming请求
-            response_headers_sent: 是否已经发送响应头给客户端
             
         Returns:
             tuple: (error_reason, should_mark_unhealthy, can_failover)

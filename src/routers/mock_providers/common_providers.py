@@ -1,19 +1,17 @@
 """
-Mock provider endpoints for testing real streaming behavior.
-Creates endpoints that simulate actual Claude provider responses with real delays.
+Common mock providers that are used across multiple test files.
+These are the basic anthropic and openai providers that many tests depend on.
 """
 
 import json
 import asyncio
-from typing import Dict, Any
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 
 
-
-def create_mock_provider_router() -> APIRouter:
-    """Create mock provider router for testing streaming."""
-    router = APIRouter(prefix="/test-providers", tags=["Mock Providers"])
+def create_common_provider_routes():
+    """Create common provider routes used across multiple test files."""
+    router = APIRouter()
 
     @router.post("/anthropic/v1/messages")
     async def mock_anthropic_streaming(request: Request):
@@ -285,14 +283,25 @@ def create_mock_provider_router() -> APIRouter:
                     headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
                 )
             else:
-                # Non-streaming request - return JSON error
+                # Non-streaming request - return successful response for duplicate testing
                 return JSONResponse(
-                    status_code=400,
+                    status_code=200,
                     content={
-                        "type": "error",
-                        "error": {
-                            "type": "invalid_request_error",
-                            "message": "Request contains invalid parameters"
+                        "id": "msg_sse_error_provider_success",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "SSE Error Provider: Non-streaming response for duplicate testing"
+                            }
+                        ],
+                        "model": "claude-3-5-sonnet-20241022",
+                        "stop_reason": "end_turn",
+                        "stop_sequence": None,
+                        "usage": {
+                            "input_tokens": 20,
+                            "output_tokens": 15
                         }
                     }
                 )
@@ -309,69 +318,5 @@ def create_mock_provider_router() -> APIRouter:
                     }
                 }
             )
-
-
-
-
-    @router.post("/anthropic-unhealthy-test-single/v1/messages")
-    async def mock_anthropic_single_error_test(request: Request):
-        """Mock provider that returns connection error - for testing single error scenarios."""
-        # Always return connection error for testing
-        return JSONResponse(
-            status_code=502,
-            content={
-                "type": "error",
-                "error": {
-                    "type": "bad_gateway",
-                    "message": "Connection failed - simulated single error"
-                }
-            }
-        )
-
-    @router.post("/anthropic-unhealthy-test-multiple/v1/messages")
-    async def mock_anthropic_multiple_error_test(request: Request):
-        """Mock provider that returns connection error - for testing multiple error scenarios."""
-        # Always return connection error for testing
-        return JSONResponse(
-            status_code=502,
-            content={
-                "type": "error",
-                "error": {
-                    "type": "bad_gateway",
-                    "message": "Connection failed - simulated multiple error"
-                }
-            }
-        )
-
-    @router.post("/anthropic-unhealthy-test-reset/v1/messages")
-    async def mock_anthropic_error_reset_test(request: Request):
-        """Mock provider that returns connection error - for testing error reset scenarios."""
-        # Always return connection error for testing
-        return JSONResponse(
-            status_code=502,
-            content={
-                "type": "error",
-                "error": {
-                    "type": "bad_gateway",
-                    "message": "Intermittent failure - simulated error"
-                }
-            }
-        )
-
-    @router.post("/anthropic-unhealthy-test-always-fail/v1/messages")
-    async def mock_anthropic_always_fail_test(request: Request):
-        """Mock provider that always fails - for testing continuous errors."""
-        # Always return connection error
-        return JSONResponse(
-            status_code=502,
-            content={
-                "type": "error",
-                "error": {
-                    "type": "bad_gateway",
-                    "message": "Always fails - simulated continuous error"
-                }
-            }
-        )
-
 
     return router

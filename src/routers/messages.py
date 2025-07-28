@@ -710,7 +710,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                 # The user needs to complete the OAuth flow
                                 return await message_handler._log_and_return_error_response(request, e, request_id, http_status_code, signature)
                     
-                    # Use provider_manager to determine unhealthy status and failover capability
+                    # Use provider_manager to determine error handling strategy
                     if provider_manager:
                         error_reason, should_mark_unhealthy, can_failover = provider_manager.get_error_handling_decision(
                             e, http_status_code, messages_request.stream
@@ -721,58 +721,71 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                         can_failover = True
                         error_reason = "unknown_error"
                     
-                    # If we shouldn't mark provider unhealthy, return the error immediately
-                    if not should_mark_unhealthy:
-                        # Mark provider as used for sticky logic
-                        if provider_manager:
-                            provider_manager.mark_provider_used(current_provider.name)
-                        
-                        info(
-                            LogRecord(
-                                event=LogEvent.ERROR_NOT_RETRYABLE.value,
-                                message=f"Error reason '{error_reason}' not configured to mark provider unhealthy, returning to client",
-                                request_id=request_id,
-                                data={
-                                    "provider": current_provider.name,
-                                    "error_reason": error_reason,
-                                    "http_status_code": http_status_code
-                                }
-                            )
-                        )
-                        return await message_handler._log_and_return_error_response(request, e, request_id, 500, signature)
-                    
-                    # Mark current provider as failed since we are failing over
-                    # But first use error counting mechanism if available
+                    # Mark current provider as failed if unhealthy threshold is reached
+                    provider_marked_unhealthy = False
                     if provider_manager:
                         # Use error counting mechanism before marking as failed
-                        should_mark_unhealthy = provider_manager.record_health_check_result(
+                        provider_marked_unhealthy = provider_manager.record_health_check_result(
                             current_provider.name, True, error_reason, request_id
                         )
                         # Only mark as failed if threshold is reached
-                        if should_mark_unhealthy:
+                        if provider_marked_unhealthy:
                             current_provider.mark_failure()
                         # If threshold not reached, don't mark as failed - just record the error
                     else:
                         # Fallback: use original logic if no provider manager
                         current_provider.mark_failure()
+                        provider_marked_unhealthy = True
                     
-                    # Check if we can failover to next provider
-                    if not can_failover:
-                        # Cannot failover (e.g., streaming response headers already sent)
+                    # Only attempt failover if provider was marked as unhealthy
+                    if not provider_marked_unhealthy:
+                        # Provider not marked unhealthy, return error immediately (no failover needed)
+                        if provider_manager:
+                            provider_manager.mark_provider_used(current_provider.name)
+                        
                         info(
                             LogRecord(
-                                event=LogEvent.ERROR_NOT_RETRYABLE.value,
-                                message=f"Cannot failover for this request type, returning error to client",
+                                event=LogEvent.PROVIDER_ERROR_BELOW_THRESHOLD.value,
+                                message=f"Provider not marked unhealthy (error count below threshold), returning error to client",
+                                request_id=request_id,
+                                data={
+                                    "provider": current_provider.name,
+                                    "error_reason": error_reason,
+                                    "http_status_code": http_status_code,
+                                    "provider_marked_unhealthy": provider_marked_unhealthy
+                                }
+                            )
+                        )
+                        # 从异常中提取HTTP状态码，保持原始错误状态码
+                        http_status_code_from_exc = getattr(e, 'status_code', None) or (
+                            getattr(e, 'response', None) and getattr(e.response, 'status_code', None)
+                        )
+                        status_code = http_status_code_from_exc if http_status_code_from_exc else 500
+                        return await message_handler._log_and_return_error_response(request, e, request_id, status_code, signature)
+                    
+                    # Provider was marked unhealthy, now check if we can failover
+                    if not can_failover:
+                        # Provider is unhealthy but we cannot failover (e.g., streaming response headers already sent)
+                        info(
+                            LogRecord(
+                                event=LogEvent.PROVIDER_UNHEALTHY_NO_FAILOVER.value,
+                                message=f"Provider marked unhealthy but cannot failover for this request type, returning error to client",
                                 request_id=request_id,
                                 data={
                                     "provider": current_provider.name,
                                     "error_reason": error_reason,
                                     "can_failover": can_failover,
-                                    "is_streaming": messages_request.stream
+                                    "is_streaming": messages_request.stream,
+                                    "provider_marked_unhealthy": provider_marked_unhealthy
                                 }
                             )
                         )
-                        return await message_handler._log_and_return_error_response(request, e, request_id, 500, signature)
+                        # 从异常中提取HTTP状态码，保持原始错误状态码
+                        http_status_code_from_exc = getattr(e, 'status_code', None) or (
+                            getattr(e, 'response', None) and getattr(e.response, 'status_code', None)
+                        )
+                        status_code = http_status_code_from_exc if http_status_code_from_exc else 500
+                        return await message_handler._log_and_return_error_response(request, e, request_id, status_code, signature)
                     
                     # If we have more providers to try, continue to next iteration
                     if attempt < max_attempts - 1:
@@ -813,7 +826,8 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
             client_error_message = message_handler._create_no_providers_error_message(messages_request.model)
             client_error = Exception(client_error_message)
             
-            return await message_handler._log_and_return_error_response(request, client_error, request_id, 500, signature)
+            # 当所有providers都不可用时，这是balancer自己的错误，应该返回503 Service Unavailable
+            return await message_handler._log_and_return_error_response(request, client_error, request_id, 503, signature)
                 
         except ValidationError as e:
             # ValidationError发生在生成signature之前，无需cleanup
@@ -823,7 +837,12 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
             return await message_handler._log_and_return_error_response(request, e, request_id, 400)
         except Exception as e:
             # 通用异常可能在任何阶段发生，尝试cleanup（如果signature不存在会被安全忽略）
-            return await message_handler._log_and_return_error_response(request, e, request_id, 500, locals().get('signature'))
+            # 尝试从异常中提取HTTP状态码，如果没有则默认为500
+            http_status_code = getattr(e, 'status_code', None) or (
+                getattr(e, 'response', None) and getattr(e.response, 'status_code', None)
+            )
+            status_code = http_status_code if http_status_code else 500
+            return await message_handler._log_and_return_error_response(request, e, request_id, status_code, locals().get('signature'))
 
     @router.post("/messages/count_tokens", response_model=TokenCountResponse)
     async def count_tokens_endpoint(request: Request) -> TokenCountResponse:

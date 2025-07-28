@@ -43,7 +43,7 @@ from routers.messages import create_messages_router
 from routers.oauth import create_oauth_router
 from routers.health import create_health_router
 from routers.management import create_management_router
-from routers.mock_provider import create_mock_provider_router
+from routers.mock_providers import create_all_mock_provider_routes
 
 load_dotenv()
 
@@ -293,7 +293,7 @@ app.include_router(create_messages_router(provider_manager, settings))
 app.include_router(create_oauth_router(provider_manager))
 app.include_router(create_health_router(provider_manager, settings.app_name, settings.app_version))
 app.include_router(create_management_router(provider_manager))
-app.include_router(create_mock_provider_router())
+app.include_router(create_all_mock_provider_routes())
 
 # Exception handlers
 @app.exception_handler(ValidationError)

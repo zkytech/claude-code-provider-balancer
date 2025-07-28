@@ -96,7 +96,6 @@ def can_failover(
     
     Args:
         is_streaming: 是否是流式请求
-        response_headers_sent: 是否已经发送响应头给客户端
         error_reason: 错误原因描述
         exception_type: 异常类型名称
         

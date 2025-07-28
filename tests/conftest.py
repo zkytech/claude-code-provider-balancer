@@ -85,13 +85,13 @@ async def async_client() -> AsyncGenerator[AsyncClient, None]:
     from routers.oauth import create_oauth_router
     from routers.health import create_health_router
     from routers.management import create_management_router
-    from routers.mock_provider import create_mock_provider_router
+    from routers.mock_providers import create_all_mock_provider_routes
     
     test_app.include_router(create_messages_router(test_provider_manager, test_settings))
     test_app.include_router(create_oauth_router(test_provider_manager))
     test_app.include_router(create_health_router(test_provider_manager, test_settings.app_name, test_settings.app_version))
     test_app.include_router(create_management_router())
-    test_app.include_router(create_mock_provider_router())  # Add mock provider for testing
+    test_app.include_router(create_all_mock_provider_routes())  # Add mock provider for testing
     
     # Set up test deduplication
     from caching.deduplication import set_provider_manager

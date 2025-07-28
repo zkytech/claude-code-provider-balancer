@@ -200,6 +200,9 @@ settings:
     - '"error_type"\s*:\s*"quota_exceeded"'         # 配额超限错误
     - '"message"\s*:\s*".*rate.?limit.*"'           # 速率限制错误
     - '"detail"\s*:\s*".*没有可用.*"'                # 中文服务商错误
+
+    # === 通用错误类型检测 ===
+    - '"type"\s*:\s*"error"'                        # 通用错误类型检测
     
     # === 流式响应错误模式 ===
     - 'data:\s*\{"error"'                           # SSE流中的错误消息

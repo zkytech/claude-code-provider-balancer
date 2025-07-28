@@ -15,7 +15,7 @@ sys.path.insert(0, str(src_dir))
 
 import uvicorn
 import fastapi
-from routers.mock_provider import create_mock_provider_router
+from routers.mock_providers import create_all_mock_provider_routes
 
 def create_test_mock_app():
     """Create test mock provider application."""
@@ -26,7 +26,7 @@ def create_test_mock_app():
     )
     
     # Register only the mock provider router
-    app.include_router(create_mock_provider_router())
+    app.include_router(create_all_mock_provider_routes())
     
     @app.get("/health")
     async def health_check():
