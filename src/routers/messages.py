@@ -5,7 +5,6 @@ Handles the main /v1/messages endpoint and token counting.
 
 import json
 import uuid
-import httpx
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -226,19 +225,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                         if current_provider.type == ProviderType.ANTHROPIC:
                             # For Anthropic providers, response is an httpx.Response object
                             if hasattr(response, 'aiter_text'):
-                                # Check for HTTP error status codes before starting stream
-                                if response.status_code >= 400:
-                                    # Create HTTP error with status code for failover handling
-                                    from httpx import HTTPStatusError
-                                    provider_url = provider_manager.get_request_url(current_provider, "v1/messages")
-                                    request_obj = httpx.Request("POST", provider_url)
-                                    http_error = HTTPStatusError(
-                                        f"HTTP {response.status_code} from provider {current_provider.name}",
-                                        request=request_obj,
-                                        response=response
-                                    )
-                                    http_error.status_code = response.status_code
-                                    raise http_error
+                                # HTTP errors are already handled by message_handler
                                 # Collect chunks for caching while streaming
                                 collected_chunks = []
                                 

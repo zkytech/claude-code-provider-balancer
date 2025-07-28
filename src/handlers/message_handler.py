@@ -5,8 +5,6 @@ Contains the core logic for processing chat completion requests.
 
 import json
 import uuid
-import time
-import os
 from typing import Any, Dict, List, Optional, Union, Tuple
 
 import httpx
@@ -26,8 +24,7 @@ from conversion import (
     get_anthropic_error_details_from_exc, build_anthropic_error_response
 )
 from utils import (
-    LogRecord, LogEvent, info, warning, error, debug,
-    create_debug_request_info
+    LogRecord, LogEvent, info, error, create_debug_request_info
 )
 
 class MessageHandler:
@@ -145,17 +142,12 @@ class MessageHandler:
             try:
                 response = await client.post(url, json=data, headers=headers)
                 
-                if stream:
-                    # For streaming requests, return the response object directly
-                    # The caller will handle streaming with aiter_bytes
-                    return response
-                
-                # Check for HTTP error status codes first
+                # Check for HTTP error status codes first (for both streaming and non-streaming)
                 if response.status_code >= 400:
                     # Get response body for detailed error info
                     try:
                         error_response_body = response.json()
-                    except:
+                    except Exception:
                         # If response is not JSON, get text content
                         error_response_body = response.text
                     
@@ -198,6 +190,11 @@ class MessageHandler:
                     # Add status code as attribute for error handling
                     http_error.status_code = response.status_code
                     raise http_error
+                
+                if stream:
+                    # For streaming requests, return the response object directly
+                    # HTTP errors have already been checked above
+                    return response
                 
                 # Parse response content
                 response_data = response.json()
@@ -311,7 +308,7 @@ class MessageHandler:
                                 error_msg_suffix = f": {error_response_body['error']}"
                             elif isinstance(error_response_body["error"], dict) and "message" in error_response_body["error"]:
                                 error_msg_suffix = f": {error_response_body['error']['message']}"
-                    except:
+                    except Exception:
                         # If parsing fails, just use the raw error text if it's short enough
                         if len(error_text) < 200:
                             error_msg_suffix = f": {error_text.decode('utf-8', errors='ignore')}"
