@@ -251,6 +251,7 @@ class OpenAIStreamingHandler(ResponseHandler):
                                 # Convert OpenAI chunk to Anthropic SSE format
                                 if hasattr(chunk, 'choices') and chunk.choices:
                                     choice = chunk.choices[0]
+                                    
                                     if hasattr(choice, 'delta') and choice.delta:
                                         delta = choice.delta
                                         if hasattr(delta, 'content') and delta.content:
@@ -306,6 +307,13 @@ class OpenAIStreamingHandler(ResponseHandler):
                     )
                     raise
                 finally:
+                    # Close OpenAI client if it's attached to the response
+                    if hasattr(response, '_client') and response._client:
+                        try:
+                            await response._client.close()
+                        except Exception:
+                            pass  # Ignore errors when closing client
+                    
                     # Unregister broadcaster when streaming completes
                     if broadcaster:
                         unregister_broadcaster(context.signature)

@@ -337,16 +337,10 @@ class MessageHandler:
         # Simulate testing delay if configured
         await simulate_testing_delay(openai_params, request_id)
         
-        # Prepare default headers
-        default_headers = {
-            "HTTP-Referer": self.settings.referrer_url,
-            "X-Title": self.settings.app_name,
-        }
-        
         # 根据请求类型获取相应的超时配置
         openai_timeouts = self.provider_manager.get_timeouts_for_request(stream)
         
-        log_event = LogEvent.PROVIDER_STREAM_REQUEST if stream else LogEvent.PROVIDER_REQUEST
+        log_event = LogEvent.PROVIDER_REQUEST
         info(
             LogRecord(
                 event=log_event.value,
@@ -373,29 +367,63 @@ class MessageHandler:
             pool=openai_timeouts['pool_timeout']
         )
         
-        # Merge headers, but filter out problematic headers
-        if original_headers:
-            # Filter out headers that should be handled by the HTTP client automatically
-            filtered_headers = {
-                k: v for k, v in original_headers.items() 
-                if k.lower() not in ['content-length', 'content-type', 'content-encoding', 'transfer-encoding']
-            }
-            default_headers.update(filtered_headers)
-        http_client_config["headers"] = default_headers
+        # Use provider manager to get filtered headers, then extract only non-HTTP headers for OpenAI client
+        provider_headers = self.provider_manager.get_provider_headers(provider, original_headers)
+        
+        # Prepare default headers for OpenAI client
+        # Extract only application-level headers, excluding HTTP transport headers and content-type
+        default_headers = {
+            "HTTP-Referer": self.settings.referrer_url,
+            "X-Title": self.settings.app_name,
+        }
+        # Add filtered headers from provider_headers, excluding HTTP transport headers
+        # for key, value in provider_headers.items():
+        #     if key.lower() not in ['content-type', 'content-length', 'content-encoding', 'transfer-encoding', 'host', 'authorization', 'x-api-key']:
+        #         default_headers[key] = value
         
         # Create OpenAI client
         client = openai.AsyncOpenAI(
             api_key=provider.auth_value,
             base_url=provider.base_url,
+            default_headers=default_headers,
             http_client=httpx.AsyncClient(**http_client_config)
         )
         
         try:
             # Make the request
             response = await client.chat.completions.create(**openai_params)
+            
+            # For streaming responses, attach the client to the response for later cleanup
+            # The ResponseHandler will be responsible for closing the client
+            if stream and hasattr(response, '__aiter__'):
+                response._client = client
+            else:
+                # For non-streaming responses, close client immediately
+                await client.close()
+            
             return response
-        finally:
-            await client.close()
+        except Exception as e:
+            # Log the specific OpenAI client error before it propagates up
+            error_type = type(e).__name__
+            error(
+                LogRecord(
+                    event=LogEvent.PROVIDER_REQUEST_ERROR.value,
+                    message=f"Provider {provider.name} OpenAI client request failed: {error_type}: {str(e)}",
+                    request_id=request_id,
+                    data={
+                        "provider": provider.name,
+                        "error_type": error_type,
+                        "error_message": str(e),
+                        "base_url": provider.base_url
+                    }
+                )
+            )
+            # Close client on error
+            try:
+                await client.close()
+            except Exception:
+                pass
+            raise
 
 
     async def make_anthropic_streaming_request(self, provider: Provider, messages_data: Dict[str, Any], request_id: str, original_headers: Optional[Dict[str, str]] = None):
