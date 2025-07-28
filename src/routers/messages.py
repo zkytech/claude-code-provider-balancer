@@ -6,14 +6,14 @@ Handles the main /v1/messages endpoint and token counting.
 import json
 import uuid
 import httpx
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from handlers.message_handler import MessageHandler
-from models import MessagesRequest, TokenCountRequest, TokenCountResponse
+from models import MessagesRequest, TokenCountResponse
 from core.provider_manager import ProviderManager, ProviderType
 from core.streaming import (
     has_active_broadcaster, handle_duplicate_stream_request,
@@ -21,7 +21,7 @@ from core.streaming import (
 )
 from caching import (
     generate_request_signature, handle_duplicate_request,
-    complete_and_cleanup_request, extract_content_from_sse_chunks
+    complete_and_cleanup_request
 )
 from conversion import (
     convert_anthropic_to_openai_messages, convert_anthropic_tools_to_openai,
@@ -29,6 +29,27 @@ from conversion import (
 )
 from utils import LogRecord, LogEvent, info, warning, error, debug
 from core.provider_manager.health import validate_response_health
+
+
+def create_error_preview(response_content, max_preview_length: int = 200):
+    """创建响应体的预览和完整内容"""
+    if isinstance(response_content, list):
+        # Stream response (List[str])
+        full_content = "".join(response_content)
+    elif isinstance(response_content, str):
+        full_content = response_content
+    elif isinstance(response_content, dict):
+        full_content = json.dumps(response_content, ensure_ascii=False)
+    else:
+        full_content = str(response_content)
+    
+    # 创建预览版本（用于控制台）
+    if len(full_content) > max_preview_length:
+        preview = full_content[:max_preview_length] + "..."
+    else:
+        preview = full_content
+    
+    return preview, full_content
 
 
 def create_messages_router(provider_manager: ProviderManager, settings: Any) -> APIRouter:
@@ -241,7 +262,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                                     async for chunk in response_obj.aiter_text():
                                                         collected_chunks.append(chunk)
                                                         yield chunk
-                                            except Exception as e:
+                                            except Exception:
                                                 # Error will be logged by ParallelBroadcaster.stream_from_provider()
                                                 raise
                                         
@@ -274,6 +295,24 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                                             provider_manager.settings.get('unhealthy_http_codes', []),
                                             provider_manager.settings.get('unhealthy_response_body_patterns', [])
                                         )
+                                        
+                                        # 如果检测到错误，记录 PROVIDER_REQUEST_ERROR 日志
+                                        if is_error_detected:
+                                            preview, full_content = create_error_preview(collected_chunks)
+                                            error(
+                                                LogRecord(
+                                                    LogEvent.PROVIDER_REQUEST_ERROR.value,
+                                                    f"Provider {current_provider.name} streaming request failed: {error_reason} - Response preview: {preview}",
+                                                    request_id,
+                                                    {
+                                                        "provider": current_provider.name,
+                                                        "error_reason": error_reason,
+                                                        "response_preview": preview,
+                                                        "full_response_body": full_content,
+                                                        "request_type": "streaming"
+                                                    }
+                                                )
+                                            )
                                         
                                         # 使用ProviderManager的错误计数机制
                                         should_mark_unhealthy = False
@@ -612,6 +651,25 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                             provider_manager.settings.get('unhealthy_response_body_patterns', [])
                         )
                         
+                        # 如果检测到错误，记录 PROVIDER_REQUEST_ERROR 日志
+                        if is_error_detected:
+                            preview, full_content = create_error_preview(response_content)
+                            error(
+                                LogRecord(
+                                    LogEvent.PROVIDER_REQUEST_ERROR.value,
+                                    f"Provider {current_provider.name} non-streaming request failed: {error_reason} - Response preview: {preview}",
+                                    request_id,
+                                    {
+                                        "provider": current_provider.name,
+                                        "error_reason": error_reason,
+                                        "response_preview": preview,
+                                        "full_response_body": full_content,
+                                        "request_type": "non-streaming",
+                                        "http_status_code": response_status_code
+                                    }
+                                )
+                            )
+                        
                         # 使用ProviderManager的错误计数机制
                         should_mark_unhealthy = provider_manager.record_health_check_result(
                             current_provider.name, is_error_detected, error_reason, request_id
@@ -746,7 +804,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                         info(
                             LogRecord(
                                 event=LogEvent.PROVIDER_ERROR_BELOW_THRESHOLD.value,
-                                message=f"Provider not marked unhealthy (error count below threshold), returning error to client",
+                                message="Provider not marked unhealthy (error count below threshold), returning error to client",
                                 request_id=request_id,
                                 data={
                                     "provider": current_provider.name,
@@ -769,7 +827,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                         info(
                             LogRecord(
                                 event=LogEvent.PROVIDER_UNHEALTHY_NO_FAILOVER.value,
-                                message=f"Provider marked unhealthy but cannot failover for this request type, returning error to client",
+                                message="Provider marked unhealthy but cannot failover for this request type, returning error to client",
                                 request_id=request_id,
                                 data={
                                     "provider": current_provider.name,
