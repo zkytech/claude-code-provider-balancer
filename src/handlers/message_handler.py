@@ -102,7 +102,7 @@ class MessageHandler:
         # Default behavior: return all available options for failover
         return self.provider_manager.select_model_and_provider_options(client_model_name)
 
-    async def make_provider_request(self, provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
+    async def _make_http_request(self, provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
         """Make a request to a specific provider"""
         url = self.provider_manager.get_request_url(provider, endpoint)
         headers = self.provider_manager.get_provider_headers(provider, original_headers)
@@ -197,7 +197,13 @@ class MessageHandler:
                     return response
                 
                 # Parse response content
-                response_data = response.json()
+                try:
+                    response_data = response.json()
+                except json.JSONDecodeError as e:
+                    # Handle empty or invalid JSON response
+                    error_text = response.text if hasattr(response, 'text') else str(response.content)
+                    error_msg = f"Provider returned invalid JSON response. Status: {response.status_code}, Content: '{error_text[:200]}...'"
+                    raise Exception(error_msg) from e
                 
                 # Check if response contains error even with 200 status code
                 if isinstance(response_data, dict) and "error" in response_data:
@@ -255,7 +261,7 @@ class MessageHandler:
                 )
                 raise  # Re-raise the exception to maintain existing error handling flow
 
-    async def make_streaming_request(self, provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, original_headers: Optional[Dict[str, str]] = None):
+    async def _make_streaming_http_request(self, provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, original_headers: Optional[Dict[str, str]] = None):
         """Make a streaming request to a specific provider using proper streaming context"""
         url = self.provider_manager.get_request_url(provider, endpoint)
         headers = self.provider_manager.get_provider_headers(provider, original_headers)
@@ -326,115 +332,90 @@ class MessageHandler:
                 # Return the streaming response context for real-time processing
                 yield response
 
+    async def _make_openai_client_request(self, provider: Provider, openai_params: Dict[str, Any], request_id: str, stream: bool, original_headers: Optional[Dict[str, str]] = None) -> Any:
+        """Internal method to make OpenAI client requests"""
+        # Simulate testing delay if configured
+        await simulate_testing_delay(openai_params, request_id)
+        
+        # Prepare default headers
+        default_headers = {
+            "HTTP-Referer": self.settings.referrer_url,
+            "X-Title": self.settings.app_name,
+        }
+        
+        # 根据请求类型获取相应的超时配置
+        openai_timeouts = self.provider_manager.get_timeouts_for_request(stream)
+        
+        log_event = LogEvent.PROVIDER_STREAM_REQUEST if stream else LogEvent.PROVIDER_REQUEST
+        info(
+            LogRecord(
+                event=log_event.value,
+                message=f"Making {'stream ' if stream else ''}request to provider: {provider.name}",
+                request_id=request_id,
+                data={
+                    "provider": provider.name, 
+                    "type": provider.type.value,
+                    "timeouts": openai_timeouts
+                }
+            )
+        )
+        
+        # Configure proxy and timeouts for http_client
+        http_client_config = {}
+        if provider.proxy:
+            http_client_config["proxies"] = provider.proxy
+        
+        # Add timeout configuration
+        http_client_config["timeout"] = httpx.Timeout(
+            connect=openai_timeouts['connect_timeout'],
+            read=openai_timeouts['read_timeout'],
+            write=openai_timeouts['read_timeout'],
+            pool=openai_timeouts['pool_timeout']
+        )
+        
+        # Merge headers
+        if original_headers:
+            default_headers.update(original_headers)
+        http_client_config["default_headers"] = default_headers
+        
+        # Create OpenAI client
+        client = openai.AsyncOpenAI(
+            api_key=provider.auth_value,
+            base_url=provider.base_url,
+            http_client=httpx.AsyncClient(**http_client_config)
+        )
+        
+        try:
+            # Make the request
+            response = await client.chat.completions.create(**openai_params)
+            return response
+        finally:
+            await client.close()
+
+
     async def make_anthropic_streaming_request(self, provider: Provider, messages_data: Dict[str, Any], request_id: str, original_headers: Optional[Dict[str, str]] = None):
         """Make a streaming request to an Anthropic-compatible provider"""
         # Always use new streaming method for real-time streaming
         # This ensures tests can detect fake streaming issues
         
         # Use new streaming method for real-time streaming
-        async for response in self.make_streaming_request(provider, "v1/messages", messages_data, request_id, original_headers):
+        async for response in self._make_streaming_http_request(provider, "v1/messages", messages_data, request_id, original_headers):
             yield response
 
-    async def make_anthropic_request(self, provider: Provider, messages_data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
-        """Make a request to an Anthropic-compatible provider"""
-        response = await self.make_provider_request(provider, "v1/messages", messages_data, request_id, stream, original_headers)
-        
-        
+    async def make_anthropic_nonstreaming_request(self, provider: Provider, messages_data: Dict[str, Any], request_id: str, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
+        """Make a non-streaming request to an Anthropic-compatible provider"""
+        response = await self._make_http_request(provider, "v1/messages", messages_data, request_id, False, original_headers)
         return response
 
-    async def make_openai_request(self, provider: Provider, openai_params: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Any:
-        """Make a request to an OpenAI-compatible provider using openai client"""
-        try:
-            # Simulate testing delay if configured
-            await simulate_testing_delay(openai_params, request_id)
-            # Prepare default headers
-            default_headers = {
-                "HTTP-Referer": self.settings.referrer_url,
-                "X-Title": self.settings.app_name,
-            }
+    async def make_openai_streaming_request(self, provider: Provider, openai_params: Dict[str, Any], request_id: str, original_headers: Optional[Dict[str, str]] = None) -> Any:
+        """Make a streaming request to an OpenAI-compatible provider"""
+        return await self._make_openai_client_request(provider, openai_params, request_id, True, original_headers)
 
-            # 根据请求类型获取相应的超时配置
-            openai_timeouts = self.provider_manager.get_timeouts_for_request(stream)
+    async def make_openai_nonstreaming_request(self, provider: Provider, openai_params: Dict[str, Any], request_id: str, original_headers: Optional[Dict[str, str]] = None) -> Any:
+        """Make a non-streaming request to an OpenAI-compatible provider"""
+        return await self._make_openai_client_request(provider, openai_params, request_id, False, original_headers)
 
-            info(
-                LogRecord(
-                    event=LogEvent.PROVIDER_REQUEST.value,
-                    message=f"Making request to provider: {provider.name}",
-                    request_id=request_id,
-                    data={
-                        "provider": provider.name, 
-                        "type": provider.type.value,
-                        "timeouts": openai_timeouts
-                    }
-                )
-            )
-            
-            # Configure proxy and timeouts for http_client
-            http_client = None
-            if provider.proxy:
-                timeout_config = httpx.Timeout(
-                    connect=openai_timeouts['connect_timeout'],
-                    read=openai_timeouts['read_timeout'],
-                    write=openai_timeouts['read_timeout'],  # 使用相同的read_timeout作为write_timeout
-                    pool=openai_timeouts['pool_timeout']
-                )
-                http_client = httpx.AsyncClient(proxy=provider.proxy, timeout=timeout_config)
-            else:
-                # Create http_client with timeout even without proxy
-                timeout_config = httpx.Timeout(
-                    connect=openai_timeouts['connect_timeout'],
-                    read=openai_timeouts['read_timeout'],
-                    write=openai_timeouts['read_timeout'],  # 使用相同的read_timeout作为write_timeout
-                    pool=openai_timeouts['pool_timeout']
-                )
-                http_client = httpx.AsyncClient(timeout=timeout_config)
-
-            # Handle auth_value passthrough mode
-            api_key_value = provider.auth_value
-            if provider.auth_value == "passthrough" and original_headers:
-                # Extract auth token from original request headers
-                for key, value in original_headers.items():
-                    if key.lower() == "authorization":
-                        if value.lower().startswith("bearer "):
-                            api_key_value = value[7:]  # Remove "Bearer " prefix
-                        else:
-                            api_key_value = value
-                        break
-                    elif key.lower() == "x-api-key":
-                        api_key_value = value
-                        break
-
-                # If no valid auth header found, use placeholder
-                if api_key_value == "passthrough":
-                    api_key_value = "placeholder-key"
-
-            client = openai.AsyncClient(
-                api_key=api_key_value,
-                base_url=provider.base_url,
-                default_headers=default_headers,
-                http_client=http_client,
-            )
-
-            return await client.chat.completions.create(**openai_params)
-        except Exception as e:
-            # Log the specific OpenAI client error before it propagates up
-            error_type = type(e).__name__
-            error(
-                LogRecord(
-                    event=LogEvent.PROVIDER_REQUEST_ERROR.value,
-                    message=f"Provider {provider.name} OpenAI client request failed: {error_type}: {str(e)}",
-                    request_id=request_id,
-                    data={
-                        "provider": provider.name,
-                        "error_type": error_type,
-                        "error_message": str(e),
-                        "base_url": provider.base_url
-                    }
-                )
-            )
-            raise e
-
-    async def _log_and_return_error_response(
+    async def log_and_return_error_response(
         self,
         request: Request,
         exc: Exception,
@@ -497,8 +478,8 @@ class MessageHandler:
             return TokenCountResponse(input_tokens=token_count)
             
         except ValidationError as e:
-            return await self._log_and_return_error_response(request, e, request_id, 400)
+            return await self.log_and_return_error_response(request, e, request_id, 400)
         except json.JSONDecodeError as e:
-            return await self._log_and_return_error_response(request, e, request_id, 400)
+            return await self.log_and_return_error_response(request, e, request_id, 400)
         except Exception as e:
-            return await self._log_and_return_error_response(request, e, request_id)
+            return await self.log_and_return_error_response(request, e, request_id)
