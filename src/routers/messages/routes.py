@@ -70,6 +70,34 @@ class AnthropicStreamingHandler(ResponseHandler):
         stream_headers = {"x-provider-used": provider.name}
         collected_chunks = []
         
+        # Test provider connection first before creating broadcaster
+        # This allows failover if the provider fails before streaming starts
+        try:
+            # Get the provider stream generator
+            provider_stream_generator = message_handler.make_anthropic_streaming_request(
+                provider, context.clean_request_body, request_id, context.original_headers
+            )
+            
+            # Try to get the first response object to verify connection
+            first_response_obj = await provider_stream_generator.__anext__()
+            
+        except Exception as e:
+            # Provider connection failed - let the exception propagate to trigger failover
+            error(
+                LogRecord(
+                    LogEvent.PROVIDER_REQUEST_ERROR.value,
+                    f"Provider {provider.name} streaming connection failed: {type(e).__name__}: {e}",
+                    request_id,
+                    {
+                        "provider": provider.name,
+                        "error": str(e),
+                        "can_failover": True
+                    }
+                )
+            )
+            raise e
+        
+        # Provider connection successful, now create broadcaster and streaming response
         async def stream_anthropic_response():
             """Simplified Anthropic streaming using parallel broadcaster"""
             broadcaster = None
@@ -83,10 +111,13 @@ class AnthropicStreamingHandler(ResponseHandler):
                 # Create provider stream from response using real-time streaming
                 async def provider_stream():
                     try:
-                        # Use the new streaming method that maintains httpx context
-                        async for response_obj in message_handler.make_anthropic_streaming_request(
-                            provider, context.clean_request_body, request_id, context.original_headers
-                        ):
+                        # First yield from the already obtained response object
+                        async for chunk in first_response_obj.aiter_text():
+                            collected_chunks.append(chunk)
+                            yield chunk
+                        
+                        # Then continue with the rest of the stream
+                        async for response_obj in provider_stream_generator:
                             async for chunk in response_obj.aiter_text():
                                 collected_chunks.append(chunk)
                                 yield chunk
@@ -115,6 +146,30 @@ class AnthropicStreamingHandler(ResponseHandler):
                 # Unregister broadcaster when streaming completes
                 if broadcaster:
                     unregister_broadcaster(context.signature)
+                
+                # Mark provider success and record health check
+                provider.mark_success()
+                provider_manager.mark_provider_success(provider.name)
+                provider_manager.record_health_check_result(
+                    provider.name, False, None, request_id
+                )
+                
+                # Log successful completion
+                info(
+                    LogRecord(
+                        event=LogEvent.REQUEST_COMPLETED.value,
+                        message=f"Anthropic streaming request completed: {provider.name}",
+                        request_id=request_id,
+                        data={
+                            "provider": provider.name,
+                            "model": target_model,
+                            "stream": True,
+                            "provider_type": provider.type.value,
+                            "chunks_count": len(collected_chunks),
+                            "attempt": attempt + 1,
+                        }
+                    )
+                )
         
         return StreamingResponse(
             stream_anthropic_response(),

@@ -106,7 +106,7 @@ _test_provider_manager = None
 
 
 @pytest.fixture
-def provider_manager():
+def provider_manager(async_client):
     """Get access to the test provider manager."""
     return _test_provider_manager
 
