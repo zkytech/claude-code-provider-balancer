@@ -373,10 +373,15 @@ class MessageHandler:
             pool=openai_timeouts['pool_timeout']
         )
         
-        # Merge headers
+        # Merge headers, but filter out problematic headers
         if original_headers:
-            default_headers.update(original_headers)
-        http_client_config["default_headers"] = default_headers
+            # Filter out headers that should be handled by the HTTP client automatically
+            filtered_headers = {
+                k: v for k, v in original_headers.items() 
+                if k.lower() not in ['content-length', 'content-type', 'content-encoding', 'transfer-encoding']
+            }
+            default_headers.update(filtered_headers)
+        http_client_config["headers"] = default_headers
         
         # Create OpenAI client
         client = openai.AsyncOpenAI(
