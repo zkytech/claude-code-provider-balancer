@@ -5,12 +5,6 @@ import pytest
 from httpx import AsyncClient
 from unittest.mock import patch
 
-from conftest import (
-    async_client, claude_headers, test_messages_request, 
-    test_streaming_request, mock_provider_manager
-)
-
-
 class TestDuplicateRequestHandling:
     """Test duplicate request handling with mixed streaming scenarios."""
 
