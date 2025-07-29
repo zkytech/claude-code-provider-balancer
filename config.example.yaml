@@ -243,7 +243,7 @@ settings:
 
   # 应用信息
   app_name: "ClaudeCode Providers Balancer"
-  app_version: "0.1.0"
+  app_version: "0.1.5"  # 更新版本号
 
   # OAuth Token持久化存储设置
   oauth:

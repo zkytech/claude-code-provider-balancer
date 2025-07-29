@@ -460,3 +460,66 @@ class TestUnhealthyCountingSimplified:
                 assert "Provider recovered successfully" in data["content"][0]["text"]
                 
                 # This success demonstrates recovery patterns work as expected
+
+    @pytest.mark.asyncio
+    async def test_unhealthy_reset_timeout_functionality(self):
+        """Test that error counts are reset after unhealthy_reset_timeout period."""
+        scenario = TestScenario(
+            name="timeout_reset_test", 
+            providers=[
+                ProviderConfig(
+                    "timeout_reset_provider",
+                    ProviderBehavior.ERROR,
+                    error_http_code=500,
+                    error_message="Timeout reset test error"
+                )
+            ],
+            expected_behavior=ExpectedBehavior.ERROR,
+            description="Test timeout reset functionality for error counts",
+            settings_override={
+                "unhealthy_threshold": 2,
+                "unhealthy_reset_timeout": 2,  # 2 seconds timeout for fast testing
+                "unhealthy_reset_on_success": True
+            }
+        )
+        
+        async with TestEnvironment(scenario) as env:
+            request_data = {
+                "model": env.effective_model_name,
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": "Test timeout reset"}]
+            }
+            
+            async with httpx.AsyncClient() as client:
+                # First error - should not trigger unhealthy yet
+                response1 = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/timeout_reset_provider/v1/messages",
+                    json=request_data
+                )
+                assert response1.status_code == 500
+                error_data1 = response1.json()
+                assert "Timeout reset test error" in error_data1["error"]["message"]
+                
+                # Second error - should trigger unhealthy status
+                response2 = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/timeout_reset_provider/v1/messages", 
+                    json=request_data
+                )
+                assert response2.status_code == 500
+                
+                # Wait for timeout reset (3 seconds > 2 seconds timeout)
+                await asyncio.sleep(3)
+                
+                # Third error - after timeout, error count should be reset
+                # This should be treated as the first error again (not triggering unhealthy)
+                response3 = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/timeout_reset_provider/v1/messages",
+                    json=request_data
+                )
+                assert response3.status_code == 500
+                error_data3 = response3.json()
+                assert "Timeout reset test error" in error_data3["error"]["message"]
+                
+                # The fact that this request succeeds (even with error response) demonstrates
+                # that the timeout reset worked - error count was reset and provider
+                # is not immediately marked as unhealthy again

@@ -298,7 +298,8 @@ def record_health_check_result(provider_name: str, is_error_detected: bool,
                               error_reason: str = "", request_id: str = "",
                               unhealthy_threshold: int = 2,
                               unhealthy_reset_on_success: bool = True,
-                              provider_instance = None) -> bool:
+                              provider_instance = None,
+                              unhealthy_reset_timeout: float = 300) -> bool:
     """记录健康检查结果，返回是否应该标记为unhealthy
     
     Args:
@@ -309,12 +310,16 @@ def record_health_check_result(provider_name: str, is_error_detected: bool,
         unhealthy_threshold: 不健康阈值
         unhealthy_reset_on_success: 成功时是否重置错误计数
         provider_instance: Provider实例（可选，用于调用mark_failure）
+        unhealthy_reset_timeout: 错误计数自动重置时间（秒）
         
     Returns:
         bool: 是否应该标记为unhealthy并触发failover
     """
-    health_manager = get_health_manager(unhealthy_threshold, unhealthy_reset_on_success)
+    health_manager = get_health_manager(unhealthy_threshold, unhealthy_reset_on_success, unhealthy_reset_timeout)
     current_time = time.time()
+    
+    # 在处理当前请求之前，先检查是否需要进行timeout reset
+    _check_and_reset_timeout_errors(health_manager, current_time, request_id)
     
     # 简化日志导入逻辑
     try:
@@ -392,11 +397,11 @@ def record_health_check_result(provider_name: str, is_error_detected: bool,
             return False  # 成功请求不需要failover
 
 
-def reset_error_counts_on_timeout(unhealthy_reset_timeout: float = 300):
-    """按照超时配置重置错误计数"""
-    health_manager = get_health_manager()
-    current_time = time.time()
-    
+def _check_and_reset_timeout_errors(health_manager, current_time: float, request_id: str = ""):
+    """检查并重置超时的错误计数（内部辅助函数）"""
+    if health_manager.unhealthy_reset_timeout <= 0:
+        return  # 如果timeout配置为0或负数，跳过timeout reset
+        
     try:
         from utils import debug, LogRecord, LogEvent
     except ImportError:
@@ -406,30 +411,31 @@ def reset_error_counts_on_timeout(unhealthy_reset_timeout: float = 300):
             PROVIDER_HEALTH_ERROR_COUNT_TIMEOUT_RESET = type('MockValue', (), {'value': 'provider_health_error_count_timeout_reset'})()
         LogEvent = MockLogEvent()
     
-    with health_manager._lock:
-        providers_to_reset = []
-        
-        for provider_name, last_error_time in health_manager._last_error_time.items():
-            if current_time - last_error_time > unhealthy_reset_timeout:
-                providers_to_reset.append(provider_name)
-        
-        for provider_name in providers_to_reset:
-            old_count = health_manager._error_counts.get(provider_name, 0)
-            if old_count > 0:
-                health_manager._error_counts[provider_name] = 0
-                health_manager._last_error_time.pop(provider_name, None)
-                
-                debug(LogRecord(
-                    LogEvent.PROVIDER_HEALTH_ERROR_COUNT_TIMEOUT_RESET.value,
-                    f"Provider {provider_name} error count reset from {old_count} to 0 after timeout ({unhealthy_reset_timeout}s)",
-                    "",  # request_id not available in timeout reset
-                    {
-                        "provider": provider_name,
-                        "old_error_count": old_count,
-                        "reset_reason": "timeout",
-                        "timeout_seconds": unhealthy_reset_timeout
-                    }
-                ))
+    # 查找需要重置的providers（不需要额外加锁，因为调用者已经持有锁）
+    providers_to_reset = []
+    for provider_name, last_error_time in health_manager._last_error_time.items():
+        if current_time - last_error_time > health_manager.unhealthy_reset_timeout:
+            providers_to_reset.append(provider_name)
+    
+    # 执行重置
+    for provider_name in providers_to_reset:
+        old_count = health_manager._error_counts.get(provider_name, 0)
+        if old_count > 0:
+            health_manager._error_counts[provider_name] = 0
+            health_manager._last_error_time.pop(provider_name, None)
+            
+            debug(LogRecord(
+                LogEvent.PROVIDER_HEALTH_ERROR_COUNT_TIMEOUT_RESET.value,
+                f"Provider {provider_name} error count reset from {old_count} to 0 after timeout ({health_manager.unhealthy_reset_timeout}s)",
+                request_id,
+                {
+                    "provider": provider_name,
+                    "old_error_count": old_count,
+                    "reset_reason": "timeout",
+                    "timeout_seconds": health_manager.unhealthy_reset_timeout
+                }
+            ))
+
 
 
 def get_provider_error_status(provider_name: str, unhealthy_threshold: int = 2,

@@ -19,8 +19,7 @@ import httpx
 from utils import info, warning, error, debug, LogRecord, LogEvent
 from .health import (
     get_error_handling_decision, record_health_check_result, 
-    reset_error_counts_on_timeout, get_provider_error_status,
-    is_provider_healthy
+    get_provider_error_status, is_provider_healthy
 )
 
 
@@ -616,12 +615,9 @@ class ProviderManager:
         return record_health_check_result(
             provider_name, is_error_detected, error_type, request_id,
             self.unhealthy_threshold, self.unhealthy_reset_on_success,
-            provider_instance
+            provider_instance, self.unhealthy_reset_timeout
         )
     
-    def reset_error_counts_on_timeout(self):
-        """按照超时配置重置错误计数"""
-        reset_error_counts_on_timeout(self.unhealthy_reset_timeout)
     
     def reset_all_provider_states(self):
         """重置所有provider的状态（用于测试）"""
