@@ -10,11 +10,14 @@ This is a **Claude Code Provider Balancer** - a sophisticated FastAPI-based prox
 
 ### Environment Setup
 ```bash
-# Install dependencies using uv (recommended)
+# Install dependencies using uv (recommended for faster package management)
 uv sync
 
-# Or using pip
+# Or using pip with requirements file
 pip install -r requirements.txt
+
+# Install development dependencies (includes pytest, ruff, mypy, etc.)
+uv sync --group dev
 ```
 
 ### Running the Application
@@ -31,16 +34,21 @@ nohup uvicorn src.main:app --host 0.0.0.0 --port 9090 > logs/server.log 2>&1 &
 
 ### Testing
 ```bash
-# Run all tests
+# Run all tests (recommended - includes proper async handling)
 python tests/run_tests.py
 
 # Run specific test file
 python -m pytest tests/test_multi_provider_management.py -v
 
-# Run with coverage
+# Run with coverage reporting
 python -m pytest tests/ --cov=src --cov-report=html
 
-# Run mock server for testing
+# Run individual test categories
+python -m pytest tests/test_streaming_requests.py -v
+python -m pytest tests/test_non_streaming_requests.py -v
+python -m pytest tests/test_duplicate_request_handling.py -v
+
+# Run mock server for end-to-end testing
 python tests/run_mock_server.py
 ```
 
@@ -302,5 +310,15 @@ All Claude Code requests will be intelligently routed through the balancer with 
 
 ### Testing Approach
 - **Unit tests** - Each core module has corresponding test files
-- **Integration tests** - Test provider switching and failover scenarios
+- **Integration tests** - Test provider switching and failover scenarios  
 - **Mock testing** - Use mock servers for end-to-end testing
+- **Framework validation** - Use `tests/test_framework_validation.py` to validate test infrastructure
+
+### Project Dependencies
+- **Python 3.10+** required (specified in pyproject.toml)
+- **FastAPI with standard extras** for web framework and automatic docs
+- **HTTPX** for async HTTP client operations
+- **Pydantic v2** for data validation and settings management
+- **PyYAML** for configuration file parsing
+- **Tiktoken** for accurate token counting
+- **Watchdog** for configuration file monitoring and hot reload
