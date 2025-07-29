@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from .handler import MessageHandler
 from models import MessagesRequest, TokenCountResponse
 from core.provider_manager import ProviderManager, ProviderType
+from core.provider_manager.health import validate_response_health
 from core.streaming import (
     has_active_broadcaster, handle_duplicate_stream_request,
     create_broadcaster, register_broadcaster, unregister_broadcaster
@@ -147,19 +148,20 @@ class AnthropicStreamingHandler(ResponseHandler):
                 if broadcaster:
                     unregister_broadcaster(context.signature)
                 
-                # Check if collected chunks contain SSE error for delayed cleanup
+                # Check if collected chunks contain SSE error for delayed cleanup using health module
                 has_sse_error = False
                 if collected_chunks:
-                    for chunk in collected_chunks:
-                        if isinstance(chunk, str) and "event: error" in chunk:
-                            has_sse_error = True
-                            break
+                    is_unhealthy, error_reason = validate_response_health(
+                        response_content=collected_chunks,
+                        unhealthy_response_body_patterns=provider_manager.config.get('unhealthy_response_body_patterns', [])
+                    )
+                    has_sse_error = is_unhealthy
                 
                 if has_sse_error:
                     # For SSE errors, we need to record this as an error for provider health
                     # but still use delayed cleanup for duplicate request handling
                     provider_manager.record_health_check_result(
-                        provider.name, True, "SSE error detected in streaming response", request_id
+                        provider.name, True, f"SSE error detected: {error_reason}", request_id
                     )
                     
                     # Use delayed cleanup for SSE errors to allow duplicate requests to get cached error response
