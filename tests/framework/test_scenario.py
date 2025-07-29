@@ -10,6 +10,7 @@ from enum import Enum
 class ProviderBehavior(Enum):
     """Provider behavior types for testing."""
     SUCCESS = "success"
+    STREAMING_SUCCESS = "streaming_success"
     ERROR = "error"
     TIMEOUT = "timeout"
     RATE_LIMIT = "rate_limit"
@@ -42,6 +43,7 @@ class ProviderConfig:
     error_count: int = 0  # For testing unhealthy provider counting
     error_http_code: int = 500  # HTTP status code for error responses
     error_message: str = "Mock provider error"
+    provider_type: str = "anthropic"  # Provider type: anthropic or openai
     
     def __post_init__(self):
         """Convert string behavior to enum if needed."""

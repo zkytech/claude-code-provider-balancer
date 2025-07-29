@@ -16,61 +16,31 @@ sys.path.insert(0, str(src_dir))
 
 import uvicorn
 import fastapi
-import yaml
 from pathlib import Path
-from routers.mock_providers import create_all_mock_provider_routes
 from framework.unified_mock import create_unified_mock_router
 from utils import init_logger
 
-def load_test_config(config_path: str = "config-test.yaml") -> dict:
-    """Load test configuration from YAML file"""
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
-    except FileNotFoundError:
-        print(f"❌ Test config file not found: {config_path}")
-        return {}
-    except yaml.YAMLError as e:
-        print(f"❌ Failed to parse config file: {e}")
-        return {}
-
-def setup_test_logging(config: dict):
-    """Setup logging based on test configuration"""
-    settings = config.get("settings", {})
-    app_name = settings.get("app_name", "test-mock-provider")
-    log_level = settings.get("log_level", "INFO")
-    
-    # Initialize logger with app name only (as per utils signature)
-    init_logger(app_name)
+def setup_test_logging():
+    """Setup basic logging for mock server"""
+    # Initialize logger
+    init_logger("test-mock-provider")
     
     # Setup basic logging level
     import logging
-    logging.getLogger().setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    logging.getLogger().setLevel(logging.INFO)
 
 def create_test_mock_app():
     """Create test mock provider application."""
-    # Load test configuration
-    config_path = current_dir / "config-test.yaml"
-    config = load_test_config(str(config_path))
+    # Setup logging
+    setup_test_logging()
     
-    if not config:
-        print("❌ Failed to load test configuration, using defaults")
-        config = {"settings": {}}
-    
-    # Setup logging based on config
-    setup_test_logging(config)
-    
-    settings = config.get("settings", {})
     app = fastapi.FastAPI(
-        title=settings.get("app_name", "Test Mock Provider Server"),
-        version=settings.get("app_version", "0.1.0"),
-        description="Mock provider endpoints for testing streaming behavior",
+        title="Test Mock Provider Server",
+        version="0.1.0",
+        description="Mock provider endpoints for simplified testing framework",
     )
     
-    # Register the traditional mock provider routes (for backward compatibility)
-    app.include_router(create_all_mock_provider_routes())
-    
-    # Register the new unified mock router (for simplified tests)
+    # Register the unified mock router (for simplified tests)
     app.include_router(create_unified_mock_router())
     
     @app.get("/health")
@@ -126,19 +96,10 @@ def print_available_endpoints(app: fastapi.FastAPI, host: str = "127.0.0.1", por
 if __name__ == "__main__":
     import sys
     
-    # Load configuration first for proper setup
-    config_path = current_dir / "config-test.yaml"
-    config = load_test_config(str(config_path))
-    
-    if not config:
-        print("❌ Failed to load test configuration, using defaults")
-        config = {"settings": {}}
-    
-    # Get server settings from config
-    settings = config.get("settings", {})
-    host = settings.get("host", "127.0.0.1")
-    port = settings.get("port", 8998)  # Default to 8998 if not in config
-    log_level = settings.get("log_level", "INFO").lower()
+    # Default server settings
+    host = "127.0.0.1"
+    port = 8998
+    log_level = "info"
     
     # Check for reload flag
     enable_reload = "--reload" in sys.argv or "--auto-reload" in sys.argv
@@ -152,8 +113,6 @@ if __name__ == "__main__":
     print(f"🧪 Test context: http://{host}:{port}/mock-test-context")
     print(f"⚙️  Set context: POST http://{host}:{port}/mock-set-context")
     print(f"📋 Log level: {log_level.upper()}")
-    if settings.get("log_file_path"):
-        print(f"📝 Log file: {settings.get('log_file_path')}")
     print("-" * 60)
     print_available_endpoints(app, host, port)
     
@@ -163,7 +122,6 @@ if __name__ == "__main__":
         current_dir = Path(__file__).parent
         reload_dirs = [
             str(current_dir / "framework"),
-            str(current_dir.parent / "src" / "routers" / "mock_providers"),
             str(current_dir)  # Include the tests directory itself
         ]
         print(f"👀 Monitoring directories: {reload_dirs}")

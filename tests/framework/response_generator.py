@@ -32,6 +32,9 @@ class MockResponseGenerator:
             case ProviderBehavior.SUCCESS:
                 return MockResponseGenerator._create_success_response(request_data, provider_config)
             
+            case ProviderBehavior.STREAMING_SUCCESS:
+                return MockResponseGenerator._create_streaming_success_response(request_data, provider_config)
+            
             case ProviderBehavior.DUPLICATE_CACHE:
                 return MockResponseGenerator._create_deterministic_response(request_data, provider_config)
             

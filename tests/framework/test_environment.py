@@ -102,7 +102,8 @@ class TestEnvironment:
                         "priority": p.priority,
                         "error_count": p.error_count,
                         "error_http_code": p.error_http_code,
-                        "error_message": p.error_message
+                        "error_message": p.error_message,
+                        "provider_type": p.provider_type
                     }
                     for p in self.scenario.providers
                 ]
