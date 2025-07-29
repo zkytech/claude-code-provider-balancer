@@ -30,8 +30,8 @@ class LogEvent(enum.Enum):
     
     # Streaming events
     SSE_EXTRACTION_COMPLETE = "sse_extraction_complete"
-    FRIENDLY_ERROR_SENT_TO_CLIENT = "friendly_error_sent_to_client"
-    FAILED_TO_SEND_FRIENDLY_ERROR = "failed_to_send_friendly_error"
+    ERROR_SENT_TO_CLIENT = "error_sent_to_client"
+    FAILED_TO_SEND_ERROR_TO_CLIENT = "failed_to_send_error_to_client"
     PROVIDER_STREAM_ERROR = "provider_stream_error"
     CHUNK_AVAILABLE_FOR_DUPLICATES = "chunk_available_for_duplicates"
     

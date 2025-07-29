@@ -300,30 +300,30 @@ app.include_router(create_all_mock_provider_routes())
 async def pydantic_validation_error_handler(request: Request, exc: ValidationError):
     """Handle Pydantic validation errors."""
     import uuid
-    from handlers.message_handler import MessageHandler
+    from routers.messages.handler import MessageHandler
     handler = MessageHandler(provider_manager, settings)
     request_id = str(uuid.uuid4())
-    return await handler._log_and_return_error_response(request, exc, request_id, 400)
+    return await handler.log_and_return_error_response(request, exc, request_id, 400)
 
 
 @app.exception_handler(json.JSONDecodeError)
 async def json_decode_error_handler(request: Request, exc: json.JSONDecodeError):
     """Handle JSON decode errors."""
     import uuid
-    from handlers.message_handler import MessageHandler
+    from routers.messages.handler import MessageHandler
     handler = MessageHandler(provider_manager, settings)
     request_id = str(uuid.uuid4())
-    return await handler._log_and_return_error_response(request, exc, request_id, 400)
+    return await handler.log_and_return_error_response(request, exc, request_id, 400)
 
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
     """Handle generic exceptions."""
     import uuid
-    from handlers.message_handler import MessageHandler
+    from routers.messages.handler import MessageHandler
     handler = MessageHandler(provider_manager, settings)
     request_id = str(uuid.uuid4())
-    return await handler._log_and_return_error_response(request, exc, request_id, 500)
+    return await handler.log_and_return_error_response(request, exc, request_id, 500)
 
 
 # Logging middleware
@@ -349,18 +349,6 @@ async def logging_middleware(request: Request, call_next):
     )
     
     return response
-
-
-# Set function reference for deduplication module after all functions are defined
-def _init_deduplication_references():
-    """Initialize function references for deduplication module"""
-    from caching.deduplication import set_make_anthropic_request
-    from handlers.message_handler import MessageHandler
-    handler = MessageHandler(provider_manager, settings)
-    set_make_anthropic_request(handler.make_anthropic_request)
-
-# Call initialization
-_init_deduplication_references()
 
 
 def _display_startup_banner():

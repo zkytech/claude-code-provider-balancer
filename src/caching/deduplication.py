@@ -15,7 +15,7 @@ from utils.logging.handlers import info, LogEvent
 
 # Global references - set by main application
 _provider_manager = None
-_make_anthropic_request = None
+# _make_anthropic_request = None  # No longer needed after handler refactoring
 
 def set_provider_manager(manager):
     """Set the global provider manager reference"""
@@ -25,19 +25,6 @@ def set_provider_manager(manager):
 def get_provider_manager():
     """Get the global provider manager reference"""
     return _provider_manager
-
-def set_make_anthropic_request(func):
-    """Set the global make_anthropic_request function reference"""
-    global _make_anthropic_request
-    _make_anthropic_request = func
-
-def get_make_anthropic_request():
-    """Get the global make_anthropic_request function reference"""
-    return _make_anthropic_request
-
-
-# CachedResponse 类已删除，不再需要响应缓存
-
 
 # Global state for caching and deduplication
 _pending_requests: Dict[str, Tuple[asyncio.Future, str]] = {}

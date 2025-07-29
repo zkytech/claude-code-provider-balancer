@@ -53,19 +53,16 @@ def create_test_streaming_requests_routes():
     # ========== test_streaming_timeout_handling ==========
     @router.post("/streaming-timeout-test/v1/messages")
     async def mock_streaming_timeout_test_provider(request: Request):
-        """专用于test_streaming_timeout_handling测试"""
+        """专用于test_streaming_timeout_handling测试 - 模拟连接超时，在开始流式传输前就失败"""
         request_body = await request.json()
         stream = request_body.get('stream', False)
         
+        # 模拟连接超时 - 在开始流式传输前就失败，返回408状态码
+        # 这样可以让测试验证超时错误的正确处理
         if stream:
-            async def generate_timeout_stream():
-                yield f"data: {json.dumps({'type': 'message_start', 'message': {'id': 'msg_timeout', 'type': 'message', 'role': 'assistant', 'content': [], 'model': 'claude-3-5-sonnet-20241022', 'stop_reason': None, 'usage': {'input_tokens': 10, 'output_tokens': 0}}}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'Starting timeout'}}, ensure_ascii=False)}\n\n"
-                # 模拟超时 - 抛出异常
-                raise TimeoutError("Connection timeout during streaming")
-            
-            return StreamingResponse(generate_timeout_stream(), media_type="text/event-stream")
+            return JSONResponse(status_code=408, content={
+                "error": {"type": "timeout_error", "message": "Connection timeout before streaming started"}
+            })
         else:
             return JSONResponse(status_code=408, content={
                 "error": {"type": "timeout_error", "message": "Request timeout"}

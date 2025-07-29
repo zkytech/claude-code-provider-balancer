@@ -409,9 +409,10 @@ class ParallelBroadcaster:
                 )
             )
             
-            # Send friendly error message to client before ending stream
+            # Send original error message to client before ending stream
             try:
-                error_message = self._generate_friendly_error_message(e)
+                # Use original error message directly
+                original_error_message = f"\n\n❌ **Error**: {str(e)}"
                 
                 # Send error message as content delta
                 error_chunk = {
@@ -419,7 +420,7 @@ class ParallelBroadcaster:
                     "index": 0,
                     "delta": {
                         "type": "text_delta", 
-                        "text": error_message
+                        "text": original_error_message
                     }
                 }
                 
@@ -449,24 +450,25 @@ class ParallelBroadcaster:
                 
                 debug(
                     LogRecord(
-                        LogEvent.FRIENDLY_ERROR_SENT_TO_CLIENT.value,
-                        f"Sent friendly error message to client after provider error",
+                        LogEvent.ERROR_SENT_TO_CLIENT.value,
+                        f"Sent original error message to client after provider error",
                         self.request_id,
                         {
                             "provider": self.provider_name,
                             "error_type": type(e).__name__,
                             "chunks_processed": self.total_chunks_processed,
-                            "error_message": error_message
+                            "original_error": str(e),
+                            "error_message_sent": original_error_message
                         }
                     )
                 )
                 
             except Exception as yield_error:
-                # If we can't send the friendly error, log it and raise the original error
+                # If we can't send the error message, log it and raise the original error
                 error(
                     LogRecord(
-                        LogEvent.FAILED_TO_SEND_FRIENDLY_ERROR.value,
-                        f"Failed to send friendly error message: {type(yield_error).__name__}: {yield_error}",
+                        LogEvent.FAILED_TO_SEND_ERROR_TO_CLIENT.value,
+                        f"Failed to send error message to client: {type(yield_error).__name__}: {yield_error}",
                         self.request_id,
                         {
                             "provider": self.provider_name,
@@ -480,50 +482,6 @@ class ParallelBroadcaster:
             self.streaming_active = False  # Signal that streaming has ended
             self._log_broadcast_summary()
     
-    def _generate_friendly_error_message(self, error: Exception) -> str:
-        """Generate a user-friendly error message based on the exception type"""
-        error_type = type(error).__name__
-        error_str = str(error).lower()
-        
-        # Determine error category and generate appropriate message
-        if "remoteprotocolerror" in error_type.lower():
-            if "peer closed connection" in error_str:
-                return ("\n\n⚠️ **Connection Interrupted**\n\n"
-                       "The response was unexpectedly interrupted due to a network connection issue. This is usually a temporary problem.\n\n"
-                       "**Recommended actions:**\n"
-                       "• Please resend your request to get the complete response\n"
-                       "• If the problem persists, please try again later")
-        
-        elif any(keyword in error_str for keyword in ["timeout", "timed out"]):
-            return ("\n\n⏱️ **Request Timeout**\n\n"
-                   "The request took too long to process and timed out.\n\n"
-                   "**Recommended actions:**\n"
-                   "• Please resend your request\n"
-                   "• For complex tasks, try breaking them into simpler requests")
-        
-        elif any(keyword in error_str for keyword in ["connection", "network"]):
-            return ("\n\n🌐 **Network Connection Issue**\n\n"
-                   "There was a problem with the network connection to the server.\n\n"
-                   "**Recommended actions:**\n"
-                   "• Check your network connection\n"
-                   "• Resend your request\n"
-                   "• If the issue persists, please try again later")
-        
-        elif "rate limit" in error_str or "too many requests" in error_str:
-            return ("\n\n🚦 **Rate Limit Exceeded**\n\n"
-                   "Requests are too frequent and have triggered rate limiting.\n\n"
-                   "**Recommended actions:**\n"
-                   "• Please wait a few minutes before retrying\n"
-                   "• Reduce request frequency")
-        
-        else:
-            # Generic error message for unknown errors
-            return ("\n\n❌ **Service Temporarily Unavailable**\n\n"
-                   f"The service encountered a technical issue ({error_type}).\n\n"
-                   "**Recommended actions:**\n"
-                   "• Please resend your request\n"
-                   "• If the problem persists, please try again later\n"
-                   "• You may try using other available service providers")
 
     def _log_broadcast_summary(self):
         """Log summary of broadcast session"""
