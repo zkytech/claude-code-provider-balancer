@@ -490,10 +490,25 @@ class TestStreamingRequests:
                         yield 'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n'
                         yield 'event: message_stop\ndata: {"type":"message_stop"}\n\n'
                 
-                return MockHealthyStreamingResponse()
+                # Return an async generator directly (not a coroutine)
+                class MockAsyncGenerator:
+                    def __init__(self):
+                        self.response = MockHealthyStreamingResponse()
+                    
+                    def __aiter__(self):
+                        return self
+                    
+                    async def __anext__(self):
+                        if not hasattr(self, '_yielded'):
+                            self._yielded = True
+                            return self.response
+                        else:
+                            raise StopAsyncIteration
+                
+                return MockAsyncGenerator()
         
-        # Patch the make_anthropic_request method
-        with patch('routers.messages.handler.MessageHandler.make_anthropic_request') as mock_request:
+        # Patch the make_anthropic_streaming_request method
+        with patch('routers.messages.handler.MessageHandler.make_anthropic_streaming_request') as mock_request:
             mock_request.side_effect = mock_anthropic_request_with_failover
             
             # 第一次请求 - 错误计数1/2，返回错误给客户端

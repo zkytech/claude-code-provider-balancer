@@ -22,7 +22,7 @@ from core.streaming import (
 )
 from caching import (
     generate_request_signature, handle_duplicate_request,
-    complete_and_cleanup_request
+    complete_and_cleanup_request, complete_and_cleanup_request_delayed
 )
 from conversion import (
     convert_anthropic_to_openai_messages, convert_anthropic_tools_to_openai,
@@ -147,29 +147,73 @@ class AnthropicStreamingHandler(ResponseHandler):
                 if broadcaster:
                     unregister_broadcaster(context.signature)
                 
-                # Mark provider success and record health check
-                provider.mark_success()
-                provider_manager.mark_provider_success(provider.name)
-                provider_manager.record_health_check_result(
-                    provider.name, False, None, request_id
-                )
+                # Check if collected chunks contain SSE error for delayed cleanup
+                has_sse_error = False
+                if collected_chunks:
+                    for chunk in collected_chunks:
+                        if isinstance(chunk, str) and "event: error" in chunk:
+                            has_sse_error = True
+                            break
                 
-                # Log successful completion
-                info(
-                    LogRecord(
-                        event=LogEvent.REQUEST_COMPLETED.value,
-                        message=f"Anthropic streaming request completed: {provider.name}",
-                        request_id=request_id,
-                        data={
-                            "provider": provider.name,
-                            "model": target_model,
-                            "stream": True,
-                            "provider_type": provider.type.value,
-                            "chunks_count": len(collected_chunks),
-                            "attempt": attempt + 1,
-                        }
+                if has_sse_error:
+                    # For SSE errors, we need to record this as an error for provider health
+                    # but still use delayed cleanup for duplicate request handling
+                    provider_manager.record_health_check_result(
+                        provider.name, True, "SSE error detected in streaming response", request_id
                     )
-                )
+                    
+                    # Use delayed cleanup for SSE errors to allow duplicate requests to get cached error response
+                    complete_and_cleanup_request_delayed(
+                        context.signature, collected_chunks, collected_chunks, True, provider.name, delay_seconds=30
+                    )
+                    
+                    # Log SSE error completion with delayed cleanup
+                    info(
+                        LogRecord(
+                            LogEvent.REQUEST_COMPLETED.value,
+                            f"Anthropic streaming request completed with SSE error (delayed cleanup): {provider.name}",
+                            request_id,
+                            data={
+                                "provider": provider.name,
+                                "model": target_model,
+                                "stream": True,
+                                "provider_type": provider.type.value,
+                                "chunks_count": len(collected_chunks),
+                                "attempt": attempt + 1,
+                                "has_sse_error": True,
+                                "cleanup_type": "delayed"
+                            }
+                        )
+                    )
+                else:
+                    # Normal completion - mark provider success and record health check
+                    provider.mark_success()
+                    provider_manager.mark_provider_success(provider.name)
+                    provider_manager.record_health_check_result(
+                        provider.name, False, None, request_id
+                    )
+                    
+                    # Cache the successful response normally
+                    complete_and_cleanup_request(context.signature, collected_chunks, collected_chunks, True, provider.name)
+                    
+                    # Log successful completion
+                    info(
+                        LogRecord(
+                            event=LogEvent.REQUEST_COMPLETED.value,
+                            message=f"Anthropic streaming request completed: {provider.name}",
+                            request_id=request_id,
+                            data={
+                                "provider": provider.name,
+                                "model": target_model,
+                                "stream": True,
+                                "provider_type": provider.type.value,
+                                "chunks_count": len(collected_chunks),
+                                "attempt": attempt + 1,
+                                "has_sse_error": False,
+                                "cleanup_type": "immediate"
+                            }
+                        )
+                    )
         
         return StreamingResponse(
             stream_anthropic_response(),
