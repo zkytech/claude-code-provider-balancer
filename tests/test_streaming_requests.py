@@ -225,7 +225,7 @@ class TestStreamingRequests:
             yield MockInterruptedResponse()
         
         # Patch the make_anthropic_streaming_request method 
-        with patch('handlers.message_handler.MessageHandler.make_anthropic_streaming_request') as mock_request:
+        with patch('routers.messages.handler.MessageHandler.make_anthropic_streaming_request') as mock_request:
             mock_request.return_value = mock_streaming_generator()
             
             response = await async_client.post(
@@ -295,17 +295,14 @@ class TestStreamingRequests:
         )
         
         # Should handle timeout error from streaming provider
-        # Timeout provider can return either 408 (timeout) or 500 (server error)
-        assert response.status_code in [408, 500]
+        # Timeout provider returns 408 (connection timeout before streaming starts)
+        assert response.status_code == 408
         
-        if response.status_code == 408:
-            error_data = response.json()
-            assert "error" in error_data
-            assert "timeout" in error_data["error"]["message"].lower()
-        elif response.status_code == 500:
-            # May return 500 if timeout occurs during streaming and is converted to internal error
-            error_data = response.json()
-            assert "error" in error_data
+        error_data = response.json()
+        assert "error" in error_data
+        assert "timeout" in error_data["error"]["message"].lower()
+        # 系统现在将HTTP 408错误专门映射为timeout_error类型
+        assert error_data["error"]["type"] == "timeout_error"
 
     @pytest.mark.asyncio
     async def test_streaming_sse_error_event_response(self, async_client: AsyncClient, claude_headers):
@@ -496,7 +493,7 @@ class TestStreamingRequests:
                 return MockHealthyStreamingResponse()
         
         # Patch the make_anthropic_request method
-        with patch('handlers.message_handler.MessageHandler.make_anthropic_request') as mock_request:
+        with patch('routers.messages.handler.MessageHandler.make_anthropic_request') as mock_request:
             mock_request.side_effect = mock_anthropic_request_with_failover
             
             # 第一次请求 - 错误计数1/2，返回错误给客户端
@@ -671,7 +668,7 @@ class TestStreamingRequests:
             yield MockResponse()
         
         # Patch the make_anthropic_streaming_request method 
-        with patch('handlers.message_handler.MessageHandler.make_anthropic_streaming_request') as mock_request:
+        with patch('routers.messages.handler.MessageHandler.make_anthropic_streaming_request') as mock_request:
             mock_request.return_value = mock_streaming_generator()
             
             response = await async_client.post(
@@ -762,7 +759,7 @@ class TestStreamingRequests:
             yield MockResponse()
         
         # Patch the make_anthropic_streaming_request method 
-        with patch('handlers.message_handler.MessageHandler.make_anthropic_streaming_request') as mock_request:
+        with patch('routers.messages.handler.MessageHandler.make_anthropic_streaming_request') as mock_request:
             mock_request.return_value = mock_streaming_generator()
             
             response = await async_client.post(

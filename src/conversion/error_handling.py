@@ -134,6 +134,8 @@ def get_anthropic_error_details_from_exc(
             return AnthropicErrorType.PERMISSION, detailed_message, 403, provider_details
         elif status_code == 404:
             return AnthropicErrorType.NOT_FOUND, detailed_message, 404, provider_details
+        elif status_code == 408:
+            return AnthropicErrorType.TIMEOUT, detailed_message, 408, provider_details
         elif status_code == 429:
             return AnthropicErrorType.RATE_LIMIT, detailed_message, 429, provider_details
         elif status_code == 400:

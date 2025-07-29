@@ -11,6 +11,7 @@ class AnthropicErrorType(str, enum.Enum):
     PERMISSION = "permission_error"
     NOT_FOUND = "not_found_error"
     RATE_LIMIT = "rate_limit_error"
+    TIMEOUT = "timeout_error"
     API_ERROR = "api_error"
     OVERLOADED = "overloaded_error"
     REQUEST_TOO_LARGE = "request_too_large_error"
