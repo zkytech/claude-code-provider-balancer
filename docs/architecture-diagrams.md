@@ -23,10 +23,11 @@ graph TB
     end
     
     subgraph "Provider Management Layer"
-        PM[Provider Manager<br/>src/provider_manager.py]
-        PC[Configuration<br/>providers.yaml]
-        HM[Health Monitor<br/>Cooldown & Recovery]
+        PM[Provider Manager<br/>src/core/provider_manager/]
+        PC[Configuration<br/>config.yaml]
+        HM[Health Monitor<br/>Error Threshold & Cooldown]
         LBS[Load Balancing<br/>Priority/RoundRobin/Random]
+        OH[OAuth Handler<br/>Token Management & Refresh]
     end
     
     subgraph "Provider Ecosystem"
@@ -40,8 +41,9 @@ graph TB
             P5[Azure OpenAI]
             P6[Custom OpenAI]
         end
-        subgraph "Zed Providers"
-            P7[Zed AI]
+        subgraph "OAuth Providers"
+            P7[Claude Code OAuth]
+            P8[Other OAuth Providers]
         end
     end
     
@@ -59,6 +61,7 @@ graph TB
     PM --> PC
     PM --> HM
     PM --> LBS
+    PM --> OH
     
     PM --> P1
     PM --> P2
@@ -67,11 +70,13 @@ graph TB
     PM --> P5
     PM --> P6
     PM --> P7
+    PM --> P8
     
     style LB fill:#e1f5fe
     style PM fill:#f3e5f5
     style DD fill:#fff3e0
     style FC fill:#e8f5e8
+    style OH fill:#e1f5fe
     style P1 fill:#c8e6c9
     style P4 fill:#ffecb3
     style P7 fill:#fce4ec
@@ -488,17 +493,18 @@ graph TB
             COA[Custom OpenAI]
         end
         
-        subgraph "Specialized"
-            ZED[Zed AI]
-            OTH[Other Providers]
+        subgraph "OAuth Compatible"
+            CCO[Claude Code OAuth]
+            OTH[Other OAuth Providers]
         end
     end
     
     subgraph "Configuration & State"
-        CFG[providers.yaml<br/>- Provider Settings<br/>- Model Routes<br/>- Global Config]
-        HM[Health Monitor<br/>- Provider Status<br/>- Cooldown Timers<br/>- Recovery Logic]
-        CACHE[Request Cache<br/>- Deduplication<br/>- Response Sharing]
-        LOGS[Logging System<br/>- Structured Logs<br/>- Performance Metrics<br/>- Error Tracking]
+        CFG[config.yaml<br/>- Provider Settings<br/>- Model Routes<br/>- Global Config]
+        HM[Health Monitor<br/>- Error Threshold & Counting<br/>- Cooldown Timers<br/>- Auto Recovery Logic]
+        CACHE[Request Cache<br/>- SHA-256 Deduplication<br/>- Concurrent Response Sharing]
+        LOGS[Logging System<br/>- Structured JSON Logs<br/>- LogEvent Enums<br/>- Error Classification]
+        OAUTH[OAuth Manager<br/>- Token Storage & Refresh<br/>- Multi-user Support<br/>- Auto Refresh Loop]
     end
     
     CC --> FE
@@ -516,6 +522,7 @@ graph TB
     
     PM -.-> CFG
     PM -.-> HM
+    PM -.-> OAUTH
     DD -.-> CACHE
     MW -.-> LOGS
     
@@ -525,7 +532,7 @@ graph TB
     FC --> OPR
     FC --> AZO
     FC --> COA
-    FC --> ZED
+    FC --> CCO
     FC --> OTH
     
     style FE fill:#e1f5fe
@@ -534,8 +541,9 @@ graph TB
     style DD fill:#fff3e0
     style ANT fill:#c8e6c9
     style OPR fill:#ffecb3
-    style ZED fill:#fce4ec
+    style CCO fill:#fce4ec
     style CFG fill:#f1f8e9
+    style OAUTH fill:#e3f2fd
 ```
 
 ## Configuration Hot Reload Flow
@@ -545,7 +553,7 @@ sequenceDiagram
     participant Admin
     participant API as FastAPI /providers/reload
     participant PM as Provider Manager
-    participant Config as providers.yaml
+    participant Config as config.yaml
     participant Providers as Active Providers
     
     Admin->>API: POST /providers/reload
@@ -571,4 +579,112 @@ sequenceDiagram
     Note over PM: Service continues running with previous config on error
 ```
 
-These diagrams provide a comprehensive visual representation of the Claude Code Provider Balancer architecture, covering all major flows, decision points, and system interactions.
+## Health Check and Error Threshold System
+
+```mermaid
+graph TD
+    Error[Provider Error Occurs] --> Classify[Classify Error Type]
+    
+    Classify --> ErrorType{Error Type}
+    ErrorType -->|Unhealthy Error| Record[Record Error Count]
+    ErrorType -->|Other Error| NoRecord[Skip Error Recording]
+    
+    Record --> Count[Current Error Count]
+    Count --> Threshold{Count >= Threshold?}
+    
+    Threshold -->|Yes| MarkUnhealthy[Mark Provider Unhealthy]
+    Threshold -->|No| BelowThreshold[Below Threshold]
+    
+    MarkUnhealthy --> StartCooldown[Start Cooldown Period]
+    StartCooldown --> Failover[Trigger Failover]
+    
+    BelowThreshold --> LogBelow[Log: count=X/Y threshold]
+    LogBelow --> ReturnError[Return Error to Client]
+    
+    NoRecord --> DirectReturn[Return Error Directly]
+    
+    subgraph "Error Types Triggering Unhealthy"
+        ET1[connection_error]
+        ET2[timeout_error] 
+        ET3[ssl_error]
+        ET4[internal_server_error]
+        ET5[bad_gateway]
+        ET6[service_unavailable]
+        ET7[too_many_requests]
+        ET8[rate_limit_exceeded]
+        ET9[Insufficient credits]
+        ET10[没有可用token]
+        ET11[无可用模型]
+    end
+    
+    subgraph "HTTP Status Codes Triggering Unhealthy"
+        HC1[402, 404, 408, 429]
+        HC2[500, 502, 503, 504]
+        HC3[520-524 Cloudflare]
+    end
+    
+    subgraph "Cooldown and Recovery"
+        StartCooldown --> CooldownTimer[Cooldown Timer: 180s default]
+        CooldownTimer --> TimeExpired{Timer Expired?}
+        TimeExpired -->|No| StillCooling[Provider Still Cooling Down]
+        TimeExpired -->|Yes| AttemptRecovery[Attempt Recovery]
+        AttemptRecovery --> Success{Recovery Success?}
+        Success -->|Yes| ResetCount[Reset Error Count]
+        Success -->|No| ExtendCooldown[Extend Cooldown]
+        ResetCount --> MarkHealthy[Mark Provider Healthy]
+    end
+    
+    style MarkUnhealthy fill:#ffcdd2
+    style BelowThreshold fill:#fff3e0
+    style MarkHealthy fill:#c8e6c9
+    style Failover fill:#ff8a65
+    style ResetCount fill:#c8e6c9
+```
+
+## OAuth Flow Integration
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Balancer as Provider Balancer
+    participant OAuth as OAuth Manager
+    participant Provider as Claude Code Provider
+    participant Anthropic as Anthropic API
+    
+    Client->>Balancer: POST /v1/messages (OAuth provider)
+    Balancer->>OAuth: Get Valid Token
+    
+    alt Valid Token Available
+        OAuth-->>Balancer: Return Access Token
+        Balancer->>Provider: Request with Bearer Token
+        Provider->>Anthropic: Forward Request
+        Anthropic-->>Provider: Response
+        Provider-->>Balancer: Response
+        Balancer-->>Client: Response
+        
+    else Token Expired
+        OAuth->>OAuth: Auto Refresh Token
+        
+        alt Refresh Success
+            OAuth-->>Balancer: Return New Token
+            Balancer->>Provider: Request with New Token
+            Provider->>Anthropic: Forward Request
+            Anthropic-->>Provider: Response
+            Provider-->>Balancer: Response
+            Balancer-->>Client: Response
+            
+        else Refresh Failed
+            OAuth-->>Balancer: Auth Error
+            Balancer-->>Client: 401 Unauthorized
+        end
+        
+    else No Valid Token
+        OAuth-->>Balancer: No Auth Available
+        Balancer-->>Client: 401 Unauthorized<br/>with OAuth URL
+    end
+    
+    Note over OAuth: Background auto-refresh runs every 30 minutes
+    Note over OAuth: Multi-user token management with keyring storage
+```
+
+These diagrams provide a comprehensive visual representation of the Claude Code Provider Balancer architecture, covering all major flows, decision points, and system interactions including the latest health check threshold system and OAuth integration.

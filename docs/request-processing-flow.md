@@ -20,74 +20,99 @@ This document provides a comprehensive overview of how the Claude Code Provider 
 
 ```mermaid
 graph TD
-    A[FastAPI Application] --> B[messages.py - 路由层]
-    B --> C[message_handler.py - 业务逻辑层]
+    A[FastAPI Application] --> B[routes.py - Request Routing]
+    B --> C[message_handler.py - HTTP Communication]
     C --> D[Provider APIs]
     
-    B --> E[请求接收和验证]
-    B --> F[Provider选择和failover]
-    B --> G[请求去重和缓存]
-    B --> H[流式响应广播]
-    B --> I[健康检查和计数]
-    B --> J[最终错误响应]
+    B --> E[Request Validation & Parsing]
+    B --> F[Provider Selection & Failover]
+    B --> G[Request Deduplication & Caching]
+    B --> H[Stream Response Broadcasting]
+    B --> I[Health Check & Error Threshold]
+    B --> J[Final Error Response]
     
-    C --> K[HTTP请求发送]
-    C --> L[Provider类型适配]
-    C --> M[错误检测和异常]
-    C --> N[超时和连接管理]
-    C --> O[请求格式化]
-    C --> P[响应预处理]
+    C --> K[Unified HTTP Request Sending]
+    C --> L[Provider Type Adaptation]
+    C --> M[Error Detection & Classification]
+    C --> N[Timeout & Connection Management]
+    C --> O[Request Format Conversion]
+    C --> P[Response Pre-processing]
+    
+    subgraph "Core Modules"
+        PM[Provider Manager]
+        HM[Health Manager]
+        OM[OAuth Manager]
+        FC[Format Converter]
+        DD[Deduplication System]
+    end
+    
+    B --> PM
+    B --> HM
+    B --> OM
+    C --> FC
+    B --> DD
 ```
 
 ## Request Lifecycle
 
 ```mermaid
 graph TD
-    A[用户请求] --> B[messages.py 接收]
-    B --> C[请求验证和解析]
-    C --> D[生成请求签名]
-    D --> E{重复请求?}
-    E -->|是| F[等待原始请求]
-    E -->|否| G[选择Provider选项]
-    G --> H[message_handler.py 处理]
-    H --> I[发送HTTP请求]
-    I --> J{HTTP状态码}
-    J -->|>=400| K[记录错误日志]
-    J -->|<400| L[正常响应]
-    K --> M[抛出HTTPStatusError]
-    M --> N[messages.py 捕获异常]
-    N --> O{可以failover?}
-    O -->|是| P[尝试下一个Provider]
-    O -->|否| Q[返回错误响应]
-    L --> R[响应处理]
-    P --> H
-    R --> S[健康检查]
-    S --> T[返回给用户]
-    F --> T
-    Q --> T
+    A[Client Request] --> B[routes.py - Request Reception]
+    B --> C[Request Validation & Parsing]
+    C --> D[Generate Request Signature]
+    D --> E{Duplicate Request?}
+    E -->|Yes| F[Wait for Original Request]
+    E -->|No| G[Select Provider Options]
+    G --> H[message_handler.py - Processing]
+    H --> I[Send HTTP Request]
+    I --> J{HTTP Status Code}
+    J -->|>=400| K[Record Error Logs]
+    J -->|<400| L[Normal Response]
+    K --> M[Throw HTTPStatusError]
+    M --> N[routes.py - Catch Exception]
+    N --> O[Health Check & Error Counting]
+    O --> P{Should Mark Unhealthy?}
+    P -->|Yes| Q[Mark Provider Unhealthy & Trigger Failover]
+    P -->|No| R[Return Error (count=X/Y)]
+    Q --> S[Try Next Provider]
+    L --> T[Response Processing]
+    S --> H
+    T --> U[Final Health Check]
+    U --> V[Return to Client]
+    F --> V
+    R --> V
 ```
 
 ## Component Responsibilities
 
-### messages.py (路由层)
-| 功能模块 | 具体职责 |
-|----------|----------|
-| **请求路由** | • FastAPI 路由处理<br>• 请求验证和解析<br>• 参数提取和清理 |
-| **Provider管理** | • Provider 选择策略<br>• Failover 逻辑<br>• 健康状态检查和计数 |
-| **请求去重** | • 签名生成和匹配<br>• 并发请求合并<br>• 缓存管理 |
-| **响应处理** | • 流式响应广播<br>• 格式转换协调<br>• 最终错误响应 |
+### routes.py (Request Routing Layer)
+| Module | Responsibilities |
+|--------|------------------|
+| **Request Routing** | • FastAPI route handling<br>• Request validation & parsing<br>• Parameter extraction & cleanup |
+| **Provider Management** | • Provider selection strategy<br>• Failover logic<br>• Health status monitoring & error counting |
+| **Request Deduplication** | • SHA-256 signature generation<br>• Concurrent request merging<br>• Cache management |
+| **Response Processing** | • Streaming response broadcasting<br>• Format conversion coordination<br>• Final error response handling |
 
-### message_handler.py (业务逻辑层)
-| 功能模块 | 具体职责 |
-|----------|----------|
-| **HTTP通信** | • 统一HTTP请求发送<br>• 连接池和超时管理<br>• 代理配置 |
-| **错误处理** | • HTTP状态码检查<br>• 错误日志记录<br>• 异常标准化 |
-| **Provider适配** | • Anthropic vs OpenAI 适配<br>• 请求格式化<br>• 头部处理 |
-| **响应预处理** | • 流式响应对象返回<br>• 非流式响应解析<br>• API错误检测 |
+### message_handler.py (HTTP Communication Layer)
+| Module | Responsibilities |
+|--------|------------------|
+| **HTTP Communication** | • Unified HTTP request sending<br>• Connection pool & timeout management<br>• Proxy configuration |
+| **Error Handling** | • HTTP status code validation<br>• Detailed error logging<br>• Exception standardization |
+| **Provider Adaptation** | • Anthropic vs OpenAI adaptation<br>• Request format conversion<br>• Header processing |
+| **Response Pre-processing** | • Stream response object return<br>• Non-stream response parsing<br>• API error detection |
+
+### Core Modules Overview
+| Module | Location | Purpose |
+|--------|----------|---------|
+| **Provider Manager** | `src/core/provider_manager/` | Provider lifecycle, selection, and health management |
+| **Health Manager** | `src/core/provider_manager/health.py` | Error threshold counting and cooldown logic |
+| **OAuth Manager** | `src/oauth/oauth_manager.py` | Token management, refresh, and multi-user support |
+| **Format Converter** | `src/conversion/` | Anthropic ↔ OpenAI format conversion |
+| **Deduplication System** | `src/caching/deduplication.py` | Request deduplication and concurrent response sharing |
 
 ## Streaming Request Flow
 
-### Phase 1: Request Preparation (messages.py)
+### Phase 1: Request Preparation (routes.py)
 ```python
 # 1. 接收和验证请求
 raw_body = await request.body()
@@ -132,7 +157,7 @@ async with httpx.AsyncClient(timeout=timeout_config) as client:
         return response
 ```
 
-### Phase 3: Stream Processing (messages.py)
+### Phase 3: Stream Processing (routes.py)
 ```python
 # 1. 创建并注册广播器
 broadcaster = create_broadcaster(request, request_id, current_provider.name)
@@ -171,7 +196,7 @@ finally:
 response = await message_handler.make_anthropic_request(...)
 ```
 
-### Phase 2: Response Handling (messages.py)
+### Phase 2: Response Handling (routes.py)
 ```python
 # 1. 格式转换 (如果是OpenAI Provider)
 if current_provider.type == ProviderType.OPENAI:
@@ -219,22 +244,52 @@ graph TD
 | **HTTP 5xx错误** | message_handler.py | • provider_http_error_details<br>• provider_request_error | 总是failover |
 | **响应体错误** | messages.py | • provider_request_error | 根据健康检查结果 |
 
-### Health Check and Provider Management
+### Health Check and Error Threshold System
 
 ```python
-# 健康状态记录
+# Error threshold-based health management
 should_mark_unhealthy = provider_manager.record_health_check_result(
     provider_name, is_error_detected, error_reason, request_id
 )
 
-# Failover决策
+# Failover decision based on error threshold
 if should_mark_unhealthy:
-    # 标记Provider不健康并尝试failover
+    # Error count reached threshold - mark provider unhealthy and trigger failover
     current_provider.mark_failure()
-    # 继续尝试下一个Provider
+    warning(LogRecord(
+        LogEvent.PROVIDER_UNHEALTHY_NON_STREAM.value,
+        f"Provider {provider.name} marked unhealthy after reaching error threshold",
+        request_id
+    ))
+    # Continue to next provider
 else:
-    # 错误计数未达阈值，直接返回错误给客户端
+    # Error count below threshold - return error directly to client
+    error_status = provider_manager.get_provider_error_status(provider_name)
+    debug(LogRecord(
+        LogEvent.PROVIDER_ERROR_BELOW_THRESHOLD.value,
+        f"Provider not marked unhealthy (count={error_count}/{threshold}), returning error to client",
+        request_id
+    ))
     return error_response
+```
+
+### Error Types Triggering Unhealthy Status
+
+```python
+# Network and connection errors
+UNHEALTHY_ERROR_TYPES = [
+    "connection_error", "timeout_error", "ssl_error",
+    "internal_server_error", "bad_gateway", "service_unavailable",
+    "too_many_requests", "rate_limit_exceeded",
+    "Insufficient credits", "没有可用token", "无可用模型"
+]
+
+# HTTP status codes triggering unhealthy marking
+UNHEALTHY_HTTP_CODES = [402, 404, 408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]
+
+# Cooldown and recovery settings
+FAILURE_COOLDOWN = 180  # seconds
+UNHEALTHY_THRESHOLD = 2  # errors before marking unhealthy
 ```
 
 ## Request Deduplication and Caching
@@ -319,14 +374,16 @@ def should_mark_unhealthy(http_status_code: int,
 
 ### Comprehensive Error Logging
 
-| 日志事件 | 记录位置 | 级别 | 用途 |
-|----------|----------|------|------|
-| `provider_request` | message_handler.py | INFO | 记录开始请求Provider |
-| `provider_http_error_details` | message_handler.py | ERROR (仅文件) | HTTP错误详细信息 |
-| `provider_request_error` | message_handler.py + messages.py | ERROR | 请求失败总体日志 |
-| `provider_health_error_recorded` | health.py | DEBUG | 健康检查错误记录 |
-| `provider_marked_unhealthy` | health.py | WARNING | Provider标记为不健康 |
-| `request_failure` | messages.py | ERROR | 最终请求失败 |
+| Log Event | Location | Level | Purpose |
+|-----------|----------|-------|---------|
+| `provider_request` | message_handler.py | INFO | Record start of provider request |
+| `provider_http_error_details` | message_handler.py | ERROR (file only) | Detailed HTTP error information |
+| `provider_request_error` | message_handler.py + routes.py | ERROR | Overall request failure log |
+| `provider_health_error_recorded` | health.py | DEBUG | Health check error recording |
+| `provider_marked_unhealthy` | health.py | WARNING | Provider marked as unhealthy |
+| `provider_error_below_threshold` | routes.py | DEBUG | Error count below threshold (count=X/Y) |
+| `provider_unhealthy_non_stream` | routes.py | WARNING | Provider unhealthy for non-stream requests |
+| `request_failure` | routes.py | ERROR | Final request failure |
 
 ### Structured Error Information
 ```python
@@ -365,22 +422,32 @@ if is_error_detected:
 ## Key Design Principles
 
 ### 1. Separation of Concerns
-- **messages.py**: 专注于业务流程、路由逻辑、failover策略
-- **message_handler.py**: 专注于HTTP通信、错误处理、协议适配
+- **routes.py**: Focuses on business flow, routing logic, and failover strategy
+- **message_handler.py**: Focuses on HTTP communication, error handling, and protocol adaptation
+- **Core modules**: Specialized functionality (provider management, health monitoring, OAuth, etc.)
 
-### 2. Unified Error Handling
-- 所有HTTP错误都在`message_handler.py`中统一检测和记录
-- 标准化的异常抛出和错误日志格式
-- 一致的健康检查和failover逻辑
+### 2. Error Threshold-Based Health Management
+- All HTTP errors are uniformly detected and recorded in `message_handler.py`
+- Error threshold counting prevents premature provider marking as unhealthy
+- Standardized exception throwing and error log formatting
+- Consistent health check and failover logic with `count=X/Y` visibility
 
-### 3. Transparent Failover
-- 用户无感知的Provider切换
-- 智能的错误分类和重试策略
-- 健康状态管理和自动恢复
+### 3. Transparent Failover with Smart Decision Making
+- User-transparent provider switching based on error thresholds
+- Intelligent error classification and retry strategies
+- Health state management with automatic recovery via cooldown periods
+- Granular logging for debugging with structured LogEvent enums
 
-### 4. High Availability
-- 请求去重避免重复处理
-- 流式响应的并发广播
-- 完善的资源清理和错误恢复
+### 4. High Availability and Performance
+- Request deduplication using SHA-256 signatures to avoid duplicate processing
+- Concurrent streaming response broadcasting for multiple clients
+- OAuth token management with automatic refresh and multi-user support
+- Comprehensive resource cleanup and error recovery mechanisms
 
-This modular architecture ensures reliable request processing with clear responsibilities, unified error handling, and comprehensive observability for production deployments.
+### 5. Production-Ready Observability
+- Structured JSON logging with LogEvent enumeration for consistency
+- Real-time provider health monitoring with `/providers` endpoint
+- Configuration hot-reload without service interruption
+- Performance metrics and error tracking for operational insights
+
+This modular architecture ensures reliable request processing with clear responsibilities, intelligent error handling, and comprehensive observability optimized for production deployments with high availability requirements.

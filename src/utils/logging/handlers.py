@@ -14,7 +14,6 @@ class LogEvent(enum.Enum):
     REQUEST_COMPLETED = "request_completed"
     REQUEST_FAILURE = "request_failure"
     REQUEST_RECEIVED = "request_received"
-    CLIENT_REQUEST_DEBUG = "client_request_debug"
     
     # Provider communication events
     PROVIDER_REQUEST = "provider_request"
@@ -95,7 +94,7 @@ class LogEvent(enum.Enum):
     STUCK_REQUEST_CLEANUP = "stuck_request_cleanup"
     
     # Provider health check events
-    PROVIDER_UNHEALTHY_STREAM_ANTHROPIC = "provider_unhealthy_stream_anthropic"
+    PROVIDER_UNHEALTHY_NON_STREAM = "provider_unhealthy_non_stream"
     PROVIDER_HEALTH_ERROR_RECORDED = "provider_health_error_recorded"
     PROVIDER_MARKED_UNHEALTHY = "provider_marked_unhealthy"
     PROVIDER_HEALTH_ERROR_BELOW_THRESHOLD = "provider_health_error_below_threshold"
@@ -167,8 +166,6 @@ class LogEvent(enum.Enum):
     OAUTH_URL_GENERATION_ERROR = "oauth_url_generation_error"
     OAUTH_MANUAL_REFRESH_ERROR = "oauth_manual_refresh_error"
     OAUTH_MANAGER_CHECK = "oauth_manager_check"
-    OAUTH_MANAGER_REINITIALIZED = "oauth_manager_reinitialized"
-    OAUTH_MANAGER_REINIT_FAILED = "oauth_manager_reinit_failed"
     OAUTH_MANAGER_INIT_FAILED = "oauth_manager_init_failed"
 
 

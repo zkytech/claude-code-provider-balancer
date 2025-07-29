@@ -842,16 +842,23 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                         # Provider not marked unhealthy, return error immediately (no failover needed)
                         provider_manager.mark_provider_used(current_provider.name)
                         
-                        info(
+                        # Get current error status for logging
+                        error_status = provider_manager.get_provider_error_status(current_provider.name)
+                        error_count = error_status.get("error_count", 0)
+                        threshold = error_status.get("threshold", 2)
+                        
+                        debug(
                             LogRecord(
                                 event=LogEvent.PROVIDER_ERROR_BELOW_THRESHOLD.value,
-                                message="Provider not marked unhealthy (error count below threshold), returning error to client",
+                                message=f"Provider not marked unhealthy (count={error_count}/{threshold}), returning error to client",
                                 request_id=request_id,
                                 data={
                                     "provider": current_provider.name,
                                     "error_reason": error_reason,
                                     "http_status_code": http_status_code,
-                                    "provider_marked_unhealthy": provider_marked_unhealthy
+                                    "provider_marked_unhealthy": provider_marked_unhealthy,
+                                    "error_count": error_count,
+                                    "threshold": threshold
                                 }
                             )
                         )
