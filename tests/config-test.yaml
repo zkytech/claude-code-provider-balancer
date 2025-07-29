@@ -811,11 +811,11 @@ settings:
 
   # 服务器配置 - 测试用独立端口
   host: "127.0.0.1"
-  port: 8999
+  port: 8998
 
   # 应用信息
   app_name: "ClaudeCode Providers Balancer - Test Mode"
-  app_version: "0.1.1-test"
+  app_version: "0.1.14-test"
 
   # OAuth配置 - 测试用禁用
   oauth:
