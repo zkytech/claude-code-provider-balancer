@@ -153,7 +153,7 @@ class AnthropicStreamingHandler(ResponseHandler):
                 if collected_chunks:
                     is_unhealthy, error_reason = validate_response_health(
                         response_content=collected_chunks,
-                        unhealthy_response_body_patterns=provider_manager.config.get('unhealthy_response_body_patterns', [])
+                        unhealthy_response_body_patterns=provider_manager.settings.get('unhealthy_response_body_patterns', [])
                     )
                     has_sse_error = is_unhealthy
                 
