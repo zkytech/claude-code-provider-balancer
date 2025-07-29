@@ -97,7 +97,6 @@ class LogEvent(enum.Enum):
     PROVIDER_UNHEALTHY_NON_STREAM = "provider_unhealthy_non_stream"
     PROVIDER_HEALTH_ERROR_RECORDED = "provider_health_error_recorded"
     PROVIDER_MARKED_UNHEALTHY = "provider_marked_unhealthy"
-    PROVIDER_HEALTH_ERROR_BELOW_THRESHOLD = "provider_health_error_below_threshold"
     PROVIDER_HEALTH_ERROR_COUNT_RESET = "provider_health_error_count_reset"
     PROVIDER_HEALTH_ERROR_COUNT_TIMEOUT_RESET = "provider_health_error_count_timeout_reset"
 

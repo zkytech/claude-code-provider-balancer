@@ -325,7 +325,6 @@ def record_health_check_result(provider_name: str, is_error_detected: bool,
         class MockLogEvent:
             PROVIDER_HEALTH_ERROR_RECORDED = type('MockValue', (), {'value': 'provider_health_error_recorded'})()
             PROVIDER_MARKED_UNHEALTHY = type('MockValue', (), {'value': 'provider_marked_unhealthy'})()
-            PROVIDER_HEALTH_ERROR_BELOW_THRESHOLD = type('MockValue', (), {'value': 'provider_health_error_below_threshold'})()
             PROVIDER_HEALTH_ERROR_COUNT_RESET = type('MockValue', (), {'value': 'provider_health_error_count_reset'})()
         LogEvent = MockLogEvent()
     
@@ -368,17 +367,6 @@ def record_health_check_result(provider_name: str, is_error_detected: bool,
                 ))
                 return True  # 应该标记为unhealthy并failover
             else:
-                debug(LogRecord(
-                    LogEvent.PROVIDER_HEALTH_ERROR_BELOW_THRESHOLD.value, 
-                    f"Provider {provider_name} error count {error_count} below threshold {health_manager.unhealthy_threshold}",
-                    request_id,
-                    {
-                        "provider": provider_name,
-                        "error_count": error_count,
-                        "threshold": health_manager.unhealthy_threshold,
-                        "error_reason": error_reason
-                    }
-                ))
                 return False  # 错误数不够，不标记unhealthy
         else:
             # 成功请求

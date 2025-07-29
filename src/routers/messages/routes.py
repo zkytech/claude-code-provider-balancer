@@ -850,7 +850,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
                         debug(
                             LogRecord(
                                 event=LogEvent.PROVIDER_ERROR_BELOW_THRESHOLD.value,
-                                message=f"Provider not marked unhealthy (count={error_count}/{threshold}), returning error to client",
+                                message=f"Provider not marked unhealthy: count={error_count}/{threshold}, returning error to client",
                                 request_id=request_id,
                                 data={
                                     "provider": current_provider.name,
