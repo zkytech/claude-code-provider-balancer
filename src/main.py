@@ -298,7 +298,7 @@ app.include_router(create_management_router(provider_manager))
 async def pydantic_validation_error_handler(request: Request, exc: ValidationError):
     """Handle Pydantic validation errors."""
     import uuid
-    from routers.messages.handler import MessageHandler
+    from routers.messages.handlers import MessageHandler
     handler = MessageHandler(provider_manager, settings)
     request_id = str(uuid.uuid4())
     return await handler.log_and_return_error_response(request, exc, request_id, 400)
@@ -308,7 +308,7 @@ async def pydantic_validation_error_handler(request: Request, exc: ValidationErr
 async def json_decode_error_handler(request: Request, exc: json.JSONDecodeError):
     """Handle JSON decode errors."""
     import uuid
-    from routers.messages.handler import MessageHandler
+    from routers.messages.handlers import MessageHandler
     handler = MessageHandler(provider_manager, settings)
     request_id = str(uuid.uuid4())
     return await handler.log_and_return_error_response(request, exc, request_id, 400)
@@ -318,7 +318,7 @@ async def json_decode_error_handler(request: Request, exc: json.JSONDecodeError)
 async def generic_exception_handler(request: Request, exc: Exception):
     """Handle generic exceptions."""
     import uuid
-    from routers.messages.handler import MessageHandler
+    from routers.messages.handlers import MessageHandler
     handler = MessageHandler(provider_manager, settings)
     request_id = str(uuid.uuid4())
     return await handler.log_and_return_error_response(request, exc, request_id, 500)

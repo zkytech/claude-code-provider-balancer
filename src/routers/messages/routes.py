@@ -13,7 +13,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
-from .handler import MessageHandler
+from .handlers import MessageHandler
 from models import MessagesRequest, TokenCountResponse
 from core.provider_manager import ProviderManager, ProviderType
 from core.provider_manager.health import validate_response_health
