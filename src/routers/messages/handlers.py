@@ -174,7 +174,7 @@ class MessageHandler:
         self.provider_manager = provider_manager
         self.settings = settings
 
-    def _create_request_summary(self, raw_body: dict) -> str:
+    def create_request_summary(self, raw_body: dict) -> str:
         """Create a concise summary of the request for logging."""
         model = raw_body.get("model", "unknown")
         stream = raw_body.get("stream", False)
@@ -193,9 +193,9 @@ class MessageHandler:
         # Stream indicator - make it more prominent
         stream_info = " [STREAM]" if stream else " [NON-STREAM]"
 
-        return f"{model}: {messages_count} msgs, max_tokens: {max_tokens}{tools_info}{stream_info}"
+        return f"{messages_count} msgs, max_tokens: {max_tokens}{tools_info}[{model}]{stream_info}"
 
-    def _create_no_providers_error_message(self, model: str, provider_name: str = None) -> str:
+    def create_no_providers_error_message(self, model: str, provider_name: str = None) -> str:
         """Create a unified error message for when no providers are available."""
         if provider_name:
             return f"Provider '{provider_name}' not found, unhealthy, or not configured for model: {model}"

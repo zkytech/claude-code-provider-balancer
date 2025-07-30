@@ -564,7 +564,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
         info(
             LogRecord(
                 event=LogEvent.REQUEST_RECEIVED.value,
-                message=message_handler._create_request_summary(parsed_body),
+                message=message_handler.create_request_summary(parsed_body),
                 request_id=request_id,
                 data={
                     "model": messages_request.model,
@@ -630,7 +630,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
         )
         
         if not provider_options:
-            error_msg = message_handler._create_no_providers_error_message(
+            error_msg = message_handler.create_no_providers_error_message(
                 context.messages_request.model, context.provider_name
             )
             raise Exception(error_msg)
