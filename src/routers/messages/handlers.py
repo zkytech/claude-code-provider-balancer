@@ -191,9 +191,9 @@ class MessageHandler:
             tools_info = f", {len(raw_body['tools'])} tools"
         
         # Stream indicator - make it more prominent
-        stream_info = " [STREAM]" if stream else " [NON-STREAM]"
+        stream_info = "[STREAM]" if stream else "[NON-STREAM]"
 
-        return f"{messages_count} msgs, max_tokens: {max_tokens}{tools_info}[{model}]{stream_info}"
+        return f"{messages_count} msgs, max_tokens: {max_tokens}{tools_info} [{model}]{stream_info}"
 
     def create_no_providers_error_message(self, model: str, provider_name: str = None) -> str:
         """Create a unified error message for when no providers are available."""
