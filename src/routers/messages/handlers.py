@@ -27,6 +27,146 @@ from utils import (
     LogRecord, LogEvent, info, error, create_debug_request_info
 )
 
+
+def extract_detailed_error_message(error: Exception) -> tuple[str, str]:
+    """
+    提取详细的错误信息，返回 (error_type, detailed_message)
+    """
+    error_type = type(error).__name__
+    
+    # 处理 HTTPStatusError (httpx)
+    if hasattr(error, 'response'):
+        try:
+            response = error.response
+            
+            # 尝试获取响应体文本
+            response_text = ""
+            if hasattr(response, 'text'):
+                response_text = response.text
+            elif hasattr(response, 'content'):
+                response_text = response.content.decode('utf-8', errors='ignore')
+            
+            if response_text:
+                # 尝试解析JSON响应
+                try:
+                    import json
+                    error_data = json.loads(response_text)
+                    if isinstance(error_data, dict):
+                        # 尝试从不同字段获取错误信息
+                        error_msg = (
+                            error_data.get('error', {}).get('message') if isinstance(error_data.get('error'), dict)
+                            else error_data.get('error')
+                            or error_data.get('message')
+                            or error_data.get('detail')
+                            or error_data.get('msg')  # 有些API使用msg字段
+                        )
+                        
+                        if error_msg and error_msg != str(error):
+                            base_error = str(error).split(': ', 1)[0] if ': ' in str(error) else str(error)
+                            return error_type, f"{base_error}: {error_msg}"
+                        
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+                
+                # JSON解析失败或没有找到错误信息，使用原始响应文本
+                if len(response_text) > 500:
+                    base_error = str(error).split(': ', 1)[0] if ': ' in str(error) else str(error)
+                    return error_type, f"{base_error}: {response_text[:500]}..."
+                else:
+                    base_error = str(error).split(': ', 1)[0] if ': ' in str(error) else str(error)
+                    return error_type, f"{base_error}: {response_text}"
+                    
+        except Exception:
+            # 获取响应信息失败，使用基本错误信息
+            pass
+    
+    # 处理其他异常类型
+    return error_type, str(error)
+
+
+def _create_error_preview(response_content, max_preview_length: int = 200):
+    """创建响应体的预览和完整内容"""
+    import json
+    
+    if isinstance(response_content, list):
+        # Stream response (List[str])
+        full_content = "".join(response_content)
+    elif isinstance(response_content, str):
+        full_content = response_content
+    elif isinstance(response_content, dict):
+        full_content = json.dumps(response_content, ensure_ascii=False)
+    else:
+        full_content = str(response_content)
+    
+    # 创建预览版本（用于控制台）
+    if len(full_content) > max_preview_length:
+        preview = full_content[:max_preview_length] + "..."
+    else:
+        preview = full_content
+    
+    return preview, full_content
+
+
+def log_provider_error(provider, error_or_reason, response_content=None, request_id: str = None, request_type: str = "unknown"):
+    """
+    统一记录provider错误的方法
+    
+    Args:
+        provider: Provider对象
+        error_or_reason: Exception对象或字符串错误原因
+        response_content: 响应内容（可选，用于响应内容错误）
+        request_id: 请求ID
+        request_type: 请求类型 (streaming, non_streaming, etc.)
+    """
+    if isinstance(error_or_reason, Exception):
+        # 处理Exception对象 - 用于连接错误等
+        error_type, detailed_message = extract_detailed_error_message(error_or_reason)
+        error(
+            LogRecord(
+                event=LogEvent.PROVIDER_REQUEST_ERROR.value,
+                message=f"Provider {provider.name} {request_type} request failed: {error_type}: {detailed_message}",
+                request_id=request_id,
+                data={
+                    "provider": provider.name,
+                    "error_type": error_type,
+                    "error_message": detailed_message,
+                    "request_type": request_type
+                }
+            )
+        )
+    else:
+        # 处理字符串错误原因 - 用于响应内容错误
+        error_reason = str(error_or_reason)
+        if response_content is not None:
+            preview, full_content = _create_error_preview(response_content)
+            error(
+                LogRecord(
+                    event=LogEvent.PROVIDER_REQUEST_ERROR.value,
+                    message=f"Provider {provider.name} {request_type} request failed: {error_reason} - Response preview: {preview}",
+                    request_id=request_id,
+                    data={
+                        "provider": provider.name,
+                        "error_reason": error_reason,
+                        "response_preview": preview,
+                        "full_response_body": full_content,
+                        "request_type": request_type
+                    }
+                )
+            )
+        else:
+            error(
+                LogRecord(
+                    event=LogEvent.PROVIDER_REQUEST_ERROR.value,
+                    message=f"Provider {provider.name} {request_type} request failed: {error_reason}",
+                    request_id=request_id,
+                    data={
+                        "provider": provider.name,
+                        "error_reason": error_reason,
+                        "request_type": request_type
+                    }
+                )
+            )
+
 class MessageHandler:
     """Handles message processing requests."""
     
@@ -102,7 +242,7 @@ class MessageHandler:
         # Default behavior: return all available options for failover
         return self.provider_manager.select_model_and_provider_options(client_model_name)
 
-    async def _make_http_request(self, provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
+    async def _make_nonstreaming_http_request(self, provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
         """Make a request to a specific provider"""
         url = self.provider_manager.get_request_url(provider, endpoint)
         headers = self.provider_manager.get_provider_headers(provider, original_headers)
@@ -245,20 +385,7 @@ class MessageHandler:
             
             except Exception as http_error:
                 # Log the specific HTTP/connection error before it propagates up
-                error_type = type(http_error).__name__
-                error(
-                    LogRecord(
-                        event=LogEvent.PROVIDER_REQUEST_ERROR.value,
-                        message=f"Provider {provider.name} request failed: {error_type}: {str(http_error)}",
-                        request_id=request_id,
-                        data={
-                            "provider": provider.name,
-                            "error_type": error_type,
-                            "error_message": str(http_error),
-                            "url": url
-                        }
-                    )
-                )
+                log_provider_error(provider, http_error, request_id=request_id, request_type="non_streaming")
                 raise  # Re-raise the exception to maintain existing error handling flow
 
     async def _make_streaming_http_request(self, provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, original_headers: Optional[Dict[str, str]] = None):
@@ -299,38 +426,43 @@ class MessageHandler:
 
         # Use stream context manager for true real-time streaming
         async with httpx.AsyncClient(timeout=timeout_config, proxy=proxy_config) as client:
-            async with client.stream("POST", url, json=data, headers=headers) as response:
-                # Check for HTTP error status codes first
-                if response.status_code >= 400:
-                    error_text = await response.aread()
+            try:
+                async with client.stream("POST", url, json=data, headers=headers) as response:
+                    # Check for HTTP error status codes first
+                    if response.status_code >= 400:
+                        error_text = await response.aread()
+                        
+                        # Try to parse error response body to extract specific error message
+                        error_msg_suffix = ""
+                        try:
+                            import json
+                            error_response_body = json.loads(error_text.decode('utf-8'))
+                            if isinstance(error_response_body, dict) and "error" in error_response_body:
+                                if isinstance(error_response_body["error"], str):
+                                    error_msg_suffix = f": {error_response_body['error']}"
+                                elif isinstance(error_response_body["error"], dict) and "message" in error_response_body["error"]:
+                                    error_msg_suffix = f": {error_response_body['error']['message']}"
+                        except Exception:
+                            # If parsing fails, just use the raw error text if it's short enough
+                            if len(error_text) < 200:
+                                error_msg_suffix = f": {error_text.decode('utf-8', errors='ignore')}"
+                        
+                        from httpx import HTTPStatusError
+                        request_obj = httpx.Request("POST", url)
+                        http_error = HTTPStatusError(
+                            f"HTTP {response.status_code} from provider {provider.name}{error_msg_suffix}",
+                            request=request_obj,
+                            response=response
+                        )
+                        http_error.status_code = response.status_code
+                        raise http_error
                     
-                    # Try to parse error response body to extract specific error message
-                    error_msg_suffix = ""
-                    try:
-                        import json
-                        error_response_body = json.loads(error_text.decode('utf-8'))
-                        if isinstance(error_response_body, dict) and "error" in error_response_body:
-                            if isinstance(error_response_body["error"], str):
-                                error_msg_suffix = f": {error_response_body['error']}"
-                            elif isinstance(error_response_body["error"], dict) and "message" in error_response_body["error"]:
-                                error_msg_suffix = f": {error_response_body['error']['message']}"
-                    except Exception:
-                        # If parsing fails, just use the raw error text if it's short enough
-                        if len(error_text) < 200:
-                            error_msg_suffix = f": {error_text.decode('utf-8', errors='ignore')}"
-                    
-                    from httpx import HTTPStatusError
-                    request_obj = httpx.Request("POST", url)
-                    http_error = HTTPStatusError(
-                        f"HTTP {response.status_code} from provider {provider.name}{error_msg_suffix}",
-                        request=request_obj,
-                        response=response
-                    )
-                    http_error.status_code = response.status_code
-                    raise http_error
-                
-                # Return the streaming response context for real-time processing
-                yield response
+                    # Return the streaming response context for real-time processing
+                    yield response
+            except Exception as streaming_error:
+                # Log the specific streaming connection error before it propagates up
+                log_provider_error(provider, streaming_error, request_id=request_id, request_type="streaming")
+                raise  # Re-raise the exception to maintain existing error handling flow
 
     async def _make_openai_client_request(self, provider: Provider, openai_params: Dict[str, Any], request_id: str, stream: bool, original_headers: Optional[Dict[str, str]] = None) -> Any:
         """Internal method to make OpenAI client requests"""
@@ -368,7 +500,7 @@ class MessageHandler:
         )
         
         # Use provider manager to get filtered headers, then extract only non-HTTP headers for OpenAI client
-        provider_headers = self.provider_manager.get_provider_headers(provider, original_headers)
+        # provider_headers = self.provider_manager.get_provider_headers(provider, original_headers)
         
         # Prepare default headers for OpenAI client
         # Extract only application-level headers, excluding HTTP transport headers and content-type
@@ -404,27 +536,14 @@ class MessageHandler:
             return response
         except Exception as e:
             # Log the specific OpenAI client error before it propagates up
-            error_type = type(e).__name__
-            error(
-                LogRecord(
-                    event=LogEvent.PROVIDER_REQUEST_ERROR.value,
-                    message=f"Provider {provider.name} OpenAI client request failed: {error_type}: {str(e)}",
-                    request_id=request_id,
-                    data={
-                        "provider": provider.name,
-                        "error_type": error_type,
-                        "error_message": str(e),
-                        "base_url": provider.base_url
-                    }
-                )
-            )
+            request_type = "streaming" if stream else "non_streaming"
+            log_provider_error(provider, e, request_id=request_id, request_type=request_type)
             # Close client on error
             try:
                 await client.close()
             except Exception:
                 pass
             raise
-
 
     async def make_anthropic_streaming_request(self, provider: Provider, messages_data: Dict[str, Any], request_id: str, original_headers: Optional[Dict[str, str]] = None):
         """Make a streaming request to an Anthropic-compatible provider"""
@@ -437,7 +556,7 @@ class MessageHandler:
 
     async def make_anthropic_nonstreaming_request(self, provider: Provider, messages_data: Dict[str, Any], request_id: str, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
         """Make a non-streaming request to an Anthropic-compatible provider"""
-        response = await self._make_http_request(provider, "v1/messages", messages_data, request_id, False, original_headers)
+        response = await self._make_nonstreaming_http_request(provider, "v1/messages", messages_data, request_id, False, original_headers)
         return response
 
     async def make_openai_streaming_request(self, provider: Provider, openai_params: Dict[str, Any], request_id: str, original_headers: Optional[Dict[str, str]] = None) -> Any:

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
-from .handlers import MessageHandler
+from .handlers import MessageHandler, log_provider_error
 from models import MessagesRequest, TokenCountResponse
 from core.provider_manager import ProviderManager, ProviderType
 from core.provider_manager.health import validate_response_health
@@ -30,7 +30,6 @@ from conversion import (
     convert_anthropic_tool_choice_to_openai, convert_openai_to_anthropic_response
 )
 from utils import LogRecord, LogEvent, info, warning, error, debug
-from core.provider_manager.health import validate_response_health
 
 
 @dataclass
@@ -84,18 +83,7 @@ class AnthropicStreamingHandler(ResponseHandler):
             
         except Exception as e:
             # Provider connection failed - let the exception propagate to trigger failover
-            error(
-                LogRecord(
-                    LogEvent.PROVIDER_REQUEST_ERROR.value,
-                    f"Provider {provider.name} streaming connection failed: {type(e).__name__}: {e}",
-                    request_id,
-                    {
-                        "provider": provider.name,
-                        "error": str(e),
-                        "can_failover": True
-                    }
-                )
-            )
+            # Error logging is now handled in handlers layer for consistency
             raise e
         
         # Provider connection successful, now create broadcaster and streaming response
@@ -277,21 +265,7 @@ class AnthropicNonStreamingHandler(ResponseHandler):
         
         if is_error_detected:
             # 如果检测到错误，记录 PROVIDER_REQUEST_ERROR 日志
-            preview, full_content = create_error_preview(response_content)
-            error(
-                LogRecord(
-                    LogEvent.PROVIDER_REQUEST_ERROR.value,
-                    f"Provider {provider.name} non-streaming request failed: {error_reason} - Response preview: {preview}",
-                    request_id,
-                    {
-                        "provider": provider.name,
-                        "error_reason": error_reason,
-                        "response_preview": preview,
-                        "full_response_body": full_content,
-                        "request_type": "non_streaming"
-                    }
-                )
-            )
+            log_provider_error(provider, error_reason, response_content, request_id, "non_streaming")
         
         # Cache the response
         complete_and_cleanup_request(context.signature, response_content, response_content, False, provider.name)
@@ -518,21 +492,7 @@ class OpenAINonStreamingHandler(ResponseHandler):
         
         if is_error_detected:
             # 如果检测到错误，记录 PROVIDER_REQUEST_ERROR 日志
-            preview, full_content = create_error_preview(response_content)
-            error(
-                LogRecord(
-                    LogEvent.PROVIDER_REQUEST_ERROR.value,
-                    f"Provider {provider.name} non-streaming request failed: {error_reason} - Response preview: {preview}",
-                    request_id,
-                    {
-                        "provider": provider.name,
-                        "error_reason": error_reason,
-                        "response_preview": preview,
-                        "full_response_body": full_content,
-                        "request_type": "non_streaming"
-                    }
-                )
-            )
+            log_provider_error(provider, error_reason, response_content, request_id, "non_streaming")
         
         # Cache the response
         complete_and_cleanup_request(context.signature, response_content, response_content, False, provider.name)
@@ -574,25 +534,6 @@ def get_response_handler(provider_type: ProviderType, is_streaming: bool) -> Res
         raise ValueError(f"Unsupported provider type: {provider_type}")
 
 
-def create_error_preview(response_content, max_preview_length: int = 200):
-    """创建响应体的预览和完整内容"""
-    if isinstance(response_content, list):
-        # Stream response (List[str])
-        full_content = "".join(response_content)
-    elif isinstance(response_content, str):
-        full_content = response_content
-    elif isinstance(response_content, dict):
-        full_content = json.dumps(response_content, ensure_ascii=False)
-    else:
-        full_content = str(response_content)
-    
-    # 创建预览版本（用于控制台）
-    if len(full_content) > max_preview_length:
-        preview = full_content[:max_preview_length] + "..."
-    else:
-        preview = full_content
-    
-    return preview, full_content
 
 
 def create_messages_router(provider_manager: ProviderManager, settings: Any) -> APIRouter:
