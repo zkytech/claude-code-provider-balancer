@@ -1,15 +1,16 @@
 """
-Simplified tests for unhealthy provider counting mechanism using the new testing framework.
+Comprehensive tests for provider error handling, including error isolation and unhealthy counting.
 
-This file tests the unhealthy counting logic through HTTP requests rather than
-direct unit testing, providing more realistic end-to-end validation.
+This test file covers:
+1. Provider error information isolation during failover scenarios
+2. Unhealthy provider counting mechanisms  
+3. Error classification and handling behaviors
+4. Provider recovery patterns
 """
 
 import asyncio
 import pytest
 import httpx
-import time
-from typing import Dict, Any
 
 # Import the new testing framework
 from framework import (
@@ -21,8 +22,286 @@ from framework import (
 MOCK_PROVIDER_BASE_URL = "http://localhost:8998/mock-provider"
 
 
-class TestUnhealthyCountingSimplified:
-    """Simplified unhealthy counting tests using dynamic configuration."""
+class TestProviderErrorHandling:
+    """Comprehensive provider error handling tests."""
+
+    # ========================================
+    # ERROR ISOLATION TESTS
+    # ========================================
+
+    @pytest.mark.asyncio
+    async def test_consecutive_provider_failures_error_isolation(self):
+        """
+        Test that when multiple providers fail consecutively, each provider returns
+        its own distinct error message without contamination from other providers.
+        """
+        scenario = TestScenario(
+            name="consecutive_failures_error_isolation",
+            providers=[
+                ProviderConfig(
+                    "provider_a_http_error",
+                    ProviderBehavior.ERROR,
+                    priority=1,
+                    error_http_code=503,
+                    error_message="Provider A service unavailable - database connection failed"
+                ),
+                ProviderConfig(
+                    "provider_b_timeout_error",
+                    ProviderBehavior.ERROR,
+                    priority=2,
+                    error_http_code=504,
+                    error_message="Provider B gateway timeout - upstream server not responding"
+                ),
+                ProviderConfig(
+                    "provider_c_auth_error",
+                    ProviderBehavior.ERROR,
+                    priority=3,
+                    error_http_code=401,  
+                    error_message="Provider C authentication failed - invalid API key"
+                )
+            ],
+            expected_behavior=ExpectedBehavior.ALL_FAIL,
+            description="Test error isolation when all providers fail consecutively"
+        )
+        
+        async with TestEnvironment(scenario) as env:
+            request_data = {
+                "model": env.effective_model_name,
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": "Test consecutive provider failures"}]
+            }
+            
+            async with httpx.AsyncClient() as client:
+                # Test each provider individually to verify error isolation
+                # Provider A - should return its specific error
+                response_a = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/provider_a_http_error/v1/messages",
+                    json=request_data
+                )
+                assert response_a.status_code == 503
+                error_a = response_a.json()
+                assert "database connection failed" in str(error_a)
+                assert "timeout" not in str(error_a).lower()
+                assert "authentication" not in str(error_a).lower()
+                
+                # Provider B - should return its specific error
+                response_b = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/provider_b_timeout_error/v1/messages",
+                    json=request_data
+                )
+                assert response_b.status_code == 504
+                error_b = response_b.json()
+                assert "timeout" in str(error_b).lower()
+                assert "database connection" not in str(error_b)
+                assert "authentication" not in str(error_b).lower()
+                
+                # Provider C - should return its specific error
+                response_c = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/provider_c_auth_error/v1/messages",
+                    json=request_data
+                )
+                assert response_c.status_code == 401
+                error_c = response_c.json()
+                assert "authentication" in str(error_c).lower()
+                assert "database connection" not in str(error_c)
+                assert "timeout" not in str(error_c).lower()
+
+    @pytest.mark.asyncio
+    async def test_provider_error_context_validation(self):
+        """
+        Test that different provider types return their own specific error messages
+        without contamination from other provider types.
+        """
+        scenario = TestScenario(
+            name="provider_error_context_validation",
+            providers=[
+                ProviderConfig(
+                    "anthropic_provider",
+                    ProviderBehavior.ERROR,
+                    priority=1,
+                    provider_type="anthropic",
+                    error_http_code=429,
+                    error_message="Rate limit exceeded for anthropic provider"
+                ),
+                ProviderConfig(
+                    "openai_provider", 
+                    ProviderBehavior.ERROR,
+                    priority=2,
+                    provider_type="openai",
+                    error_http_code=402,
+                    error_message="Insufficient credits for openai provider"
+                )
+            ],
+            expected_behavior=ExpectedBehavior.ALL_FAIL,
+            description="Test provider context validation in error responses"
+        )
+        
+        async with TestEnvironment(scenario) as env:
+            request_data = {
+                "model": env.effective_model_name,
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": "Test provider context validation"}]
+            }
+            
+            async with httpx.AsyncClient() as client:
+                # Test Anthropic provider
+                anthropic_response = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/anthropic_provider/v1/messages",
+                    json=request_data
+                )
+                assert anthropic_response.status_code == 429
+                anthropic_error = anthropic_response.json()
+                assert "rate limit" in str(anthropic_error).lower()
+                assert "credits" not in str(anthropic_error).lower()
+                
+                # Test OpenAI provider
+                openai_response = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/openai_provider/v1/messages",
+                    json=request_data
+                )
+                assert openai_response.status_code == 402
+                openai_error = openai_response.json()
+                assert "credits" in str(openai_error).lower()
+                assert "rate limit" not in str(openai_error).lower()
+
+    @pytest.mark.asyncio
+    async def test_streaming_vs_non_streaming_error_isolation(self):
+        """
+        Test error isolation for both streaming and non-streaming requests
+        to ensure the error types are correctly identified.
+        """
+        scenario = TestScenario(
+            name="stream_vs_non_stream_error_isolation",
+            providers=[
+                ProviderConfig(
+                    "streaming_error_provider",
+                    ProviderBehavior.ERROR,
+                    priority=1,
+                    error_http_code=500,
+                    error_message="Streaming connection failed"
+                ),
+                ProviderConfig(
+                    "non_streaming_error_provider",
+                    ProviderBehavior.ERROR,
+                    priority=2,
+                    error_http_code=503,
+                    error_message="Non-streaming request failed"
+                )
+            ],
+            expected_behavior=ExpectedBehavior.ALL_FAIL,
+            description="Test error isolation for different request types"
+        )
+        
+        async with TestEnvironment(scenario) as env:
+            request_data = {
+                "model": env.effective_model_name,
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": "Test error isolation"}]
+            }
+            
+            async with httpx.AsyncClient() as client:
+                # Test streaming provider error
+                streaming_response = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/streaming_error_provider/v1/messages",
+                    json={**request_data, "stream": True}
+                )
+                assert streaming_response.status_code == 500
+                streaming_error = streaming_response.json()
+                assert "streaming connection failed" in str(streaming_error).lower()
+                assert "non-streaming" not in str(streaming_error).lower()
+                
+                # Test non-streaming provider error
+                non_streaming_response = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/non_streaming_error_provider/v1/messages",
+                    json=request_data
+                )
+                assert non_streaming_response.status_code == 503
+                non_streaming_error = non_streaming_response.json()
+                assert "non-streaming request failed" in str(non_streaming_error).lower()
+                assert "streaming connection" not in str(non_streaming_error).lower()
+
+    @pytest.mark.asyncio  
+    async def test_error_message_uniqueness_across_attempts(self):
+        """
+        Test that error messages from different provider attempts are unique
+        and don't contain residual information from previous attempts.
+        """
+        scenario = TestScenario(
+            name="error_message_uniqueness_test",
+            providers=[
+                ProviderConfig(
+                    "unique_error_provider_1",
+                    ProviderBehavior.ERROR,
+                    priority=1,
+                    error_http_code=400,
+                    error_message="Unique error from provider 1: invalid request format"
+                ),
+                ProviderConfig(
+                    "unique_error_provider_2", 
+                    ProviderBehavior.ERROR,
+                    priority=2,
+                    error_http_code=422,
+                    error_message="Unique error from provider 2: validation failed"
+                ),
+                ProviderConfig(
+                    "unique_error_provider_3",
+                    ProviderBehavior.ERROR,
+                    priority=3,
+                    error_http_code=500,
+                    error_message="Unique error from provider 3: internal server error"
+                )
+            ],
+            expected_behavior=ExpectedBehavior.ALL_FAIL,
+            description="Test uniqueness of error messages across provider attempts"
+        )
+        
+        async with TestEnvironment(scenario) as env:
+            request_data = {
+                "model": env.effective_model_name,
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": "Test error message uniqueness"}]
+            }
+            
+            async with httpx.AsyncClient() as client:
+                # Test provider 1 - should contain only its unique error
+                response_1 = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/unique_error_provider_1/v1/messages",
+                    json=request_data
+                )
+                assert response_1.status_code == 400
+                error_1 = response_1.json()
+                error_1_str = str(error_1).lower()
+                assert "invalid request format" in error_1_str
+                assert "validation failed" not in error_1_str
+                assert "internal server error" not in error_1_str
+                
+                # Test provider 2 - should contain only its unique error
+                response_2 = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/unique_error_provider_2/v1/messages",
+                    json=request_data
+                )
+                assert response_2.status_code == 422
+                error_2 = response_2.json()
+                error_2_str = str(error_2).lower()
+                assert "validation failed" in error_2_str
+                assert "invalid request format" not in error_2_str
+                assert "internal server error" not in error_2_str
+                
+                # Test provider 3 - should contain only its unique error
+                response_3 = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/unique_error_provider_3/v1/messages",
+                    json=request_data
+                )
+                assert response_3.status_code == 500
+                error_3 = response_3.json()
+                error_3_str = str(error_3).lower()
+                assert "internal server error" in error_3_str
+                assert "invalid request format" not in error_3_str
+                assert "validation failed" not in error_3_str
+
+    # ========================================
+    # UNHEALTHY COUNTING TESTS
+    # ========================================
 
     @pytest.mark.asyncio
     async def test_single_error_does_not_trigger_unhealthy(self):
@@ -62,9 +341,6 @@ class TestUnhealthyCountingSimplified:
                 assert response.status_code == 500
                 error_data = response.json()
                 assert "Single error test" in error_data["error"]["message"]
-                
-                # Provider should still be considered available (error count below threshold)
-                # This is demonstrated by the mock server still responding normally
 
     @pytest.mark.asyncio
     async def test_multiple_errors_trigger_unhealthy_behavior(self):
@@ -156,9 +432,6 @@ class TestUnhealthyCountingSimplified:
                 assert response.status_code == 200
                 data = response.json()
                 assert "Successful response after error reset" in data["content"][0]["text"]
-                
-                # The success demonstrates that error counting patterns are working
-                # as expected (no accumulation of previous errors)
 
     @pytest.mark.asyncio
     async def test_independent_error_counting_across_providers(self):
@@ -207,9 +480,89 @@ class TestUnhealthyCountingSimplified:
                 assert response_b.status_code == 200
                 data_b = response_b.json()
                 assert "Provider B success" in data_b["content"][0]["text"]
+
+    # ========================================
+    # ERROR CLASSIFICATION TESTS
+    # ========================================
+
+    @pytest.mark.asyncio
+    async def test_mixed_error_types_isolation(self):
+        """
+        Test that different types of errors (HTTP codes, connection errors, etc.)
+        are properly isolated and don't cross-contaminate.
+        """
+        scenario = TestScenario(
+            name="mixed_error_types_isolation",
+            providers=[
+                ProviderConfig(
+                    "http_error_provider",
+                    ProviderBehavior.ERROR,
+                    priority=1,
+                    error_http_code=502,
+                    error_message="Bad gateway error from proxy"
+                ),
+                ProviderConfig(
+                    "rate_limit_provider",
+                    ProviderBehavior.RATE_LIMIT,
+                    priority=2,
+                    error_http_code=429,
+                    error_message="Rate limit exceeded, try again later"
+                ),
+                ProviderConfig(
+                    "insufficient_credits_provider",
+                    ProviderBehavior.INSUFFICIENT_CREDITS,
+                    priority=3,
+                    error_http_code=402,
+                    error_message="Insufficient credits to complete request"
+                )
+            ],
+            expected_behavior=ExpectedBehavior.ALL_FAIL,
+            description="Test isolation of mixed error types"
+        )
+        
+        async with TestEnvironment(scenario) as env:
+            request_data = {
+                "model": env.effective_model_name,
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": "Test mixed error types"}]
+            }
+            
+            async with httpx.AsyncClient() as client:
+                # Test HTTP error provider
+                http_response = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/http_error_provider/v1/messages",
+                    json=request_data
+                )
+                assert http_response.status_code == 502
+                http_error = http_response.json()
+                http_error_str = str(http_error).lower()
+                assert "bad gateway" in http_error_str
+                assert "rate limit" not in http_error_str
+                assert "credits" not in http_error_str
                 
-                # This demonstrates independent error counting - 
-                # Provider A errors don't affect Provider B functionality
+                # Test rate limit provider
+                rate_limit_response = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/rate_limit_provider/v1/messages",
+                    json=request_data
+                )
+                assert rate_limit_response.status_code == 429
+                rate_limit_error = rate_limit_response.json()
+                rate_limit_error_str = str(rate_limit_error).lower()
+                assert "rate limit" in rate_limit_error_str
+                assert "bad gateway" not in rate_limit_error_str
+                assert "credits" not in rate_limit_error_str
+                
+                # Test insufficient credits provider
+                credits_response = await client.post(
+                    f"{MOCK_PROVIDER_BASE_URL}/insufficient_credits_provider/v1/messages",
+                    json=request_data
+                )
+                assert credits_response.status_code == 402
+                credits_error = credits_response.json()
+                credits_error_str = str(credits_error).lower()
+                assert "credits" in credits_error_str
+                assert "bad gateway" not in credits_error_str
+                assert "rate limit" not in credits_error_str
 
     @pytest.mark.asyncio
     async def test_error_classification_behaviors(self):
@@ -384,6 +737,10 @@ class TestUnhealthyCountingSimplified:
                 error_data = response.json()
                 assert "Request Timeout" in error_data["error"]["message"]
 
+    # ========================================
+    # PROVIDER RECOVERY TESTS
+    # ========================================
+
     @pytest.mark.asyncio
     async def test_unhealthy_threshold_behavior(self):
         """Test that unhealthy threshold settings affect provider behavior."""
@@ -458,8 +815,6 @@ class TestUnhealthyCountingSimplified:
                 assert response.status_code == 200
                 data = response.json()
                 assert "Provider recovered successfully" in data["content"][0]["text"]
-                
-                # This success demonstrates recovery patterns work as expected
 
     @pytest.mark.asyncio
     async def test_unhealthy_reset_timeout_functionality(self):
@@ -519,7 +874,7 @@ class TestUnhealthyCountingSimplified:
                 assert response3.status_code == 500
                 error_data3 = response3.json()
                 assert "Timeout reset test error" in error_data3["error"]["message"]
-                
-                # The fact that this request succeeds (even with error response) demonstrates
-                # that the timeout reset worked - error count was reset and provider
-                # is not immediately marked as unhealthy again
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
