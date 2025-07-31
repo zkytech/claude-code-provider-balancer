@@ -628,8 +628,8 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
     async def _select_provider_options(context: RequestContext, request_id: str) -> list:
         """Select available provider options for failover."""
         # Select all available provider options for failover
-        provider_options = message_handler.select_model_and_provider_options(
-            context.messages_request.model, request_id, context.provider_name
+        provider_options = provider_manager.select_model_and_provider_options(
+            context.messages_request.model, context.provider_name
         )
         
         if not provider_options:

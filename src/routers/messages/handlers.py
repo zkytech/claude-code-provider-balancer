@@ -5,7 +5,7 @@ Contains the core logic for processing chat completion requests.
 
 import json
 import uuid
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, Optional, Union
 
 import httpx
 import openai
@@ -204,45 +204,6 @@ class MessageHandler:
         else:
             return f"All configured providers for model '{model}' are currently unable to process requests."
 
-    def select_model_and_provider_options(self, client_model_name: str, request_id: str, provider_name: Optional[str] = None) -> List[Tuple[str, Provider]]:
-        """Selects all available model and provider options for failover."""
-        if not self.provider_manager:
-            return []
-        
-        # If provider is specified, return only that provider option
-        if provider_name:
-            # Find the specified provider
-            target_provider = None
-            for provider in self.provider_manager.providers:
-                if provider.name == provider_name:
-                    target_provider = provider
-                    break
-            
-            if not target_provider:
-                # Provider not found
-                return []
-                
-            # Check if provider is healthy and enabled
-            if not target_provider.enabled or not target_provider.is_healthy(self.provider_manager.get_failure_cooldown()):
-                return []
-            
-            # Find model route for this specific provider
-            # Look for the target model in the provider's configured models
-            target_model = client_model_name  # Default to passthrough
-            
-            # Check if there's a specific model mapping for this provider
-            for pattern, routes in self.provider_manager.model_routes.items():
-                if self.provider_manager._matches_pattern(client_model_name, pattern):
-                    for route in routes:
-                        if route.provider == provider_name:
-                            target_model = route.model if route.model != "passthrough" else client_model_name
-                            break
-                    break
-            
-            return [(target_model, target_provider)]
-        
-        # Default behavior: return all available options for failover
-        return self.provider_manager.select_model_and_provider_options(client_model_name)
 
     async def _make_nonstreaming_http_request(self, provider: Provider, endpoint: str, data: Dict[str, Any], request_id: str, stream: bool = False, original_headers: Optional[Dict[str, str]] = None) -> Union[httpx.Response, Dict[str, Any]]:
         """Make a request to a specific provider"""

@@ -65,14 +65,15 @@ class Provider:
     proxy: Optional[str] = None
     streaming_mode: StreamingMode = StreamingMode.AUTO
     failure_count: int = 0
-    last_failure_time: float = 0
+    last_failure_time: float = 0  # 保留作为统计指标
+    last_unhealthy_time: float = 0  # 用于健康检查的时间戳
     last_success_time: float = 0  # 添加成功时间跟踪
     
     def is_healthy(self, cooldown_seconds: int = 60) -> bool:
-        """Check if provider is healthy (not in cooldown period)"""
-        if self.failure_count == 0:
+        """Check if provider is healthy (not in unhealthy cooldown period)"""
+        if self.last_unhealthy_time == 0:
             return True
-        return time.time() - self.last_failure_time > cooldown_seconds
+        return time.time() - self.last_unhealthy_time > cooldown_seconds
     
     def mark_failure(self):
         """Mark provider as failed"""
@@ -80,9 +81,10 @@ class Provider:
         self.last_failure_time = time.time()
     
     def mark_success(self):
-        """Mark provider as successful (reset failure count)"""
+        """Mark provider as successful (reset failure count and unhealthy state)"""
         self.failure_count = 0
-        self.last_failure_time = 0
+        self.last_failure_time = 0  # 保留作为统计指标
+        self.last_unhealthy_time = 0  # 重置unhealthy状态
         self.last_success_time = time.time()  # 记录成功时间
     
     def get_effective_streaming_mode(self) -> StreamingMode:
@@ -235,11 +237,48 @@ class ProviderManager:
             # 精确匹配
             return pattern_lower == model_lower
     
-    def select_model_and_provider_options(self, requested_model: str) -> List[Tuple[str, Provider]]:
+    def select_model_and_provider_options(self, requested_model: str, provider_name: Optional[str] = None) -> List[Tuple[str, Provider]]:
         """
         简化的模型选择逻辑
         返回按优先级排序的 (target_model, provider) 列表
+        
+        Args:
+            requested_model: 请求的模型名称
+            provider_name: 可选的指定provider名称，如果指定则只返回该provider的选项
         """
+        # If provider is specified, return only that provider option
+        if provider_name:
+            # Find the specified provider
+            target_provider = None
+            for provider in self.providers:
+                if provider.name == provider_name:
+                    target_provider = provider
+                    break
+            
+            if not target_provider:
+                # Provider not found
+                return []
+                
+            # Check if provider is healthy and enabled
+            if not target_provider.enabled or not target_provider.is_healthy(self.get_failure_cooldown()):
+                return []
+            
+            # Find model route for this specific provider
+            # Look for the target model in the provider's configured models
+            target_model = requested_model  # Default to passthrough
+            
+            # Check if there's a specific model mapping for this provider
+            for pattern, routes in self.model_routes.items():
+                if self._matches_pattern(requested_model, pattern):
+                    for route in routes:
+                        if route.provider == provider_name:
+                            target_model = route.model if route.model != "passthrough" else requested_model
+                            break
+                    break
+            
+            return [(target_model, target_provider)]
+        
+        # Default behavior: return all available options for failover
         # 1. 精确匹配
         if requested_model in self.model_routes:
             options = self._build_options_from_routes(self.model_routes[requested_model], requested_model)
@@ -497,8 +536,8 @@ class ProviderManager:
         # 查找需要重置的providers
         for provider in self.providers:
             if (provider.failure_count > 0 and 
-                provider.last_failure_time and 
-                current_time - provider.last_failure_time > self.unhealthy_reset_timeout):
+                provider.last_unhealthy_time and 
+                current_time - provider.last_unhealthy_time > self.unhealthy_reset_timeout):
                 providers_to_reset.append(provider)
         
         # 执行重置
@@ -545,6 +584,9 @@ class ProviderManager:
             should_mark_unhealthy = provider.failure_count >= self.unhealthy_threshold
             
             if should_mark_unhealthy:
+                # 标记为unhealthy时更新last_unhealthy_time
+                provider.last_unhealthy_time = time.time()
+                
                 warning(LogRecord(
                     LogEvent.PROVIDER_MARKED_UNHEALTHY.value,
                     f"Provider {provider_name} marked unhealthy after {provider.failure_count} errors (threshold: {self.unhealthy_threshold})",

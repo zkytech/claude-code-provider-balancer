@@ -131,17 +131,6 @@ class Environment:
         except Exception as e:
             raise RuntimeError(f"Failed to set mock server context: {str(e)}") from e
     
-    async def _save_temp_config(self) -> str:
-        """Save generated configuration to a temporary file."""
-        with tempfile.NamedTemporaryFile(
-            mode='w', 
-            suffix='.yaml', 
-            delete=False,
-            prefix=f'test_config_{self.scenario.name}_'
-        ) as f:
-            yaml.dump(self._generated_config, f, default_flow_style=False)
-            return f.name
-    
     async def _cleanup(self):
         """Clean up test environment."""
         try:

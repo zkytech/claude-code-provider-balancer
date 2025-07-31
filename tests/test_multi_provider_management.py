@@ -74,8 +74,8 @@ class TestMultiProviderManagement:
         """
         Core test for basic provider failover functionality.
         
-        This is the primary test for failover behavior. Other failover tests in different 
-        files focus on specific scenarios (streaming, concurrent, error handling, etc.).
+        This test uses the default unhealthy_threshold (2) to test realistic failover behavior.
+        The primary provider needs to fail twice before being marked unhealthy and triggering failover.
         """
         scenario = Scenario(
             name="failover_test",
@@ -97,9 +97,9 @@ class TestMultiProviderManagement:
                 )
             ],
             expected_behavior=ExpectedBehavior.FAILOVER,
-            description="Test failover from primary to secondary provider",
+            description="Test failover from primary to secondary provider with default threshold",
             settings_override={
-                "unhealthy_threshold": 1,  # Quick failover for testing
+                # 使用默认的 unhealthy_threshold: 2
                 "failure_cooldown": 5
             }
         )
@@ -112,13 +112,20 @@ class TestMultiProviderManagement:
             }
             
             async with httpx.AsyncClient() as client:
-                # Test balancer failover behavior - should use secondary after primary fails
-                response = await client.post(
+                # 第一次请求 - primary provider错误，但还未达到unhealthy阈值，应该返回错误
+                response1 = await client.post(
                     f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
-                assert response.status_code == 200
-                data = response.json()
+                assert response1.status_code == 500  # Primary provider error, no failover yet
+                
+                # 第二次请求 - primary provider再次错误，达到unhealthy阈值，应该failover到secondary
+                response2 = await client.post(
+                    f"{env.balancer_url}/v1/messages",
+                    json=request_data
+                )
+                assert response2.status_code == 200
+                data = response2.json()
                 assert "Secondary provider failover success" in data["content"][0]["text"]
 
     @pytest.mark.asyncio
