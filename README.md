@@ -125,13 +125,31 @@ claude
 
 ## 🧪 开发和测试
 
+### 环境依赖
+```bash
+# 开发依赖安装（包含 pytest, ruff, mypy 等）
+uv sync --group dev
+
+# 或使用 pip 安装开发依赖
+pip install pytest pytest-asyncio pytest-mock pytest-cov ruff mypy
+```
+
 ### 测试执行
 ```bash
-# 运行完整测试套件
+# 运行完整测试套件（推荐方式）
 python tests/run_tests.py
 
-# 运行特定测试
+# 运行特定测试文件
 python -m pytest tests/test_multi_provider_management.py -v
+
+# 运行覆盖率测试
+python -m pytest tests/ --cov=src --cov-report=html
+
+# 运行特定测试类别
+python -m pytest tests/test_streaming_requests.py -v
+python -m pytest tests/test_non_streaming_requests.py -v
+python -m pytest tests/test_duplicate_request_handling.py -v
+python -m pytest tests/test_provider_error_handling.py -v
 
 # 运行模拟服务器进行测试
 python tests/run_mock_server.py
@@ -159,6 +177,12 @@ tail -f logs/logs.jsonl | jq '.'
 
 # 监控提供商状态
 watch -n 2 'curl -s http://localhost:9090/providers | jq .'
+
+# 验证配置文件语法
+python -c "import yaml; print(yaml.safe_load(open('config.yaml')))"
+
+# 运行测试框架验证
+python -m pytest tests/test_framework_validation.py -v
 ```
 
 ## 🛠️ 故障排除
@@ -229,19 +253,21 @@ cat logs/logs.jsonl | jq 'select(.message | contains("request"))' | wc -l
 ```
 
 ### 健康恢复机制
-- **冷却期管理** - 不健康提供商进入180秒冷却期
+- **冷却期管理** - 不健康提供商进入300秒冷却期（可配置）
 - **自动恢复检测** - 冷却期结束后自动尝试恢复
-- **错误计数重置** - 成功请求后重置错误计数
+- **错误计数重置** - 成功请求后重置错误计数或超时重置
 - **渐进式恢复** - 逐步验证提供商健康状态
+- **粘滞 Provider** - 成功后5分钟内优先使用相同提供商（可配置）
 
 ## 🏗️ 技术架构特性
 
 ### 核心技术栈
-- **🐍 Python 3.8+** - 现代 Python 异步编程
+- **🐍 Python 3.10+** - 现代 Python 异步编程（pyproject.toml 要求）
 - **🚀 FastAPI** - 高性能 Web 框架，自动 API 文档
-- **⚡ Asyncio** - 原生异步编程，高并发处理
-- **🔍 Pydantic** - 数据验证和序列化
+- **⚡ HTTPX** - 现代异步 HTTP 客户端
+- **🔍 Pydantic v2** - 数据验证和序列化
 - **📦 UV** - 快速的 Python 包管理器
+- **🔧 Tiktoken** - 精确的 token 计数
 
 ### 架构设计原则
 - **🎯 模块化设计** - 清晰的代码组织和职责分离
@@ -254,21 +280,32 @@ cat logs/logs.jsonl | jq 'select(.message | contains("request"))' | wc -l
 ### 项目结构
 ```
 src/
-├── main.py              # 应用入口和 FastAPI 实例
-├── core/                # 核心业务逻辑
-│   ├── provider_manager/    # 提供商管理模块
-│   │   ├── manager.py       # 提供商生命周期管理
-│   │   └── health.py        # 错误阈值健康检查
-│   └── streaming/       # 流式响应处理
-├── routers/             # API 路由定义
-│   └── messages/        # 消息处理路由
-├── handlers/            # 请求处理器
-│   └── message_handler.py   # HTTP通信和格式转换
-├── models/              # Pydantic 数据模型
-├── oauth/               # OAuth 认证管理
-├── caching/             # 缓存和去重逻辑
-├── conversion/          # 格式转换 (Anthropic ↔ OpenAI)
-└── utils/               # 工具类和结构化日志
+├── main.py                      # 应用入口和 FastAPI 实例
+├── core/                        # 核心业务逻辑
+│   ├── provider_manager/        # 提供商管理模块
+│   │   ├── manager.py           # 提供商生命周期管理
+│   │   ├── health.py            # 错误阈值健康检查
+│   │   └── provider_auth.py     # 提供商认证处理
+│   └── streaming/               # 流式响应处理
+│       └── parallel_broadcaster.py  # 并行广播器
+├── routers/                     # API 路由定义
+│   ├── messages/                # 消息处理路由
+│   │   ├── handlers.py          # 请求处理逻辑
+│   │   └── routes.py            # 路由定义
+│   ├── oauth.py                 # OAuth 认证路由
+│   ├── health.py                # 健康检查路由
+│   └── management.py            # 配置管理路由
+├── models/                      # Pydantic 数据模型
+├── oauth/                       # OAuth 认证管理
+│   └── oauth_manager.py         # OAuth 2.0 流程处理
+├── caching/                     # 缓存和去重逻辑
+│   └── deduplication.py         # 请求去重处理
+├── conversion/                  # 格式转换 (Anthropic ↔ OpenAI)
+│   ├── anthropic_to_openai.py   # Anthropic → OpenAI 转换
+│   ├── openai_to_anthropic.py   # OpenAI → Anthropic 转换
+│   └── token_counting.py        # Token 计数
+└── utils/                       # 工具类和结构化日志
+    └── logging/                 # 结构化日志系统
 ```
 
 ## 📄 许可证
