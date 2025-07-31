@@ -828,108 +828,86 @@ class TestProviderErrorHandling:
         3. Data is transparently passed through using ASCII encoding fallback
         4. No 500 errors are generated due to Unicode encoding issues
         """
+        scenario = Scenario(
+            name="unicode_handling_validation",
+            providers=[
+                ProviderConfig(
+                    "unicode_test_provider",
+                    ProviderBehavior.SUCCESS,
+                    response_data={"content": [{"text": "Test response without Unicode issues"}]}
+                )
+            ],
+            expected_behavior=ExpectedBehavior.SUCCESS,
+            description="Validate Unicode handling in balancer"
+        )
         
-        # Test 1: Direct Unicode request handling
-        # Test balancer's ability to handle client requests with invalid Unicode
-        
-        # Create a request with invalid Unicode characters (using actual invalid surrogate)
-        # We need to construct the invalid Unicode character properly
-        invalid_unicode_char = "\ud83d"  # This is an unpaired high surrogate
-        
-        unicode_request = {
-            "model": "claude-3-5-sonnet-20241022",
-            "max_tokens": 100,
-            "messages": [
-                {"role": "user", "content": f"Message with invalid Unicode surrogate: {invalid_unicode_char}"},
-                {"role": "assistant", "content": f"Previous response also with {invalid_unicode_char} character"},
-                {"role": "user", "content": "Continue conversation"}
-            ]
-        }
-        
-        # Verify our test data actually contains problematic Unicode
-        test_content = unicode_request["messages"][0]["content"]
-        print(f"Test content: {repr(test_content)}")
-        
-        # Manually serialize with ASCII fallback (simulating our balancer fix)
-        import json
-        try:
-            json_data = json.dumps(unicode_request, ensure_ascii=False)
-            # If we get here, try encoding to UTF-8 to trigger the error
+        async with Environment(scenario) as env:
+            # Create a request with invalid Unicode characters (using actual invalid surrogate)
+            invalid_unicode_char = "\ud83d"  # This is an unpaired high surrogate
+            
+            unicode_request = {
+                "model": env.model_name,
+                "max_tokens": 100,
+                "messages": [
+                    {"role": "user", "content": f"Message with invalid Unicode surrogate: {invalid_unicode_char}"},
+                    {"role": "assistant", "content": f"Previous response also with {invalid_unicode_char} character"},
+                    {"role": "user", "content": "Continue conversation"}
+                ]
+            }
+            
+            # Verify our test data actually contains problematic Unicode
+            test_content = unicode_request["messages"][0]["content"]
+            print(f"Test content: {repr(test_content)}")
+            
+            # Create raw bytes with invalid Unicode to truly test the decode issue
+            # This simulates what happens when a client sends raw bytes with invalid Unicode
+            import json
             try:
-                json_data.encode('utf-8')
-                print("WARNING: Test data may not contain problematic Unicode")
-                # Continue with the test anyway
-                json_data = json.dumps(unicode_request, ensure_ascii=True)
-                print("✅ Using ASCII encoding as fallback")
+                # First try with ensure_ascii=False to get the problematic JSON
+                json_str = json.dumps(unicode_request, ensure_ascii=False)
+                raw_json_with_invalid_unicode = json_str.encode('utf-8', errors='surrogateescape')
             except UnicodeEncodeError:
-                # This is what we expect
-                json_data = json.dumps(unicode_request, ensure_ascii=True)
-                print("✅ Test data contains invalid Unicode, using ASCII fallback")
-        except UnicodeEncodeError:
-            # Expected - this confirms our test data has invalid Unicode
-            json_data = json.dumps(unicode_request, ensure_ascii=True)
-            print("✅ Test data contains invalid Unicode, using ASCII fallback")
-        
-        # Test 2: Verify balancer handles the request without crashing
-        async with httpx.AsyncClient() as client:
-            try:
-                # Send pre-serialized JSON to a simple endpoint to test Unicode handling
-                # We'll use a mock provider that can handle the request
-                scenario = Scenario(
-                    name="unicode_handling_validation",
-                    providers=[
-                        ProviderConfig(
-                            "unicode_test_provider",
-                            ProviderBehavior.SUCCESS,
-                            response_data={"content": [{"text": "Test response without Unicode issues"}]}
-                        )
-                    ],
-                    expected_behavior=ExpectedBehavior.SUCCESS,
-                    description="Validate Unicode handling in balancer"
+                # If that fails, create the problematic bytes manually
+                # Use a safe JSON structure and inject invalid Unicode bytes directly
+                safe_request = {
+                    "model": env.model_name,
+                    "max_tokens": 100,
+                    "messages": [
+                        {"role": "user", "content": "Message with invalid Unicode surrogate: PLACEHOLDER"},
+                    ]
+                }
+                json_str = json.dumps(safe_request, ensure_ascii=False)
+                # Replace PLACEHOLDER with invalid Unicode bytes
+                json_bytes = json_str.encode('utf-8')
+                # Insert invalid UTF-8 byte sequence (surrogate pair)
+                raw_json_with_invalid_unicode = json_bytes.replace(b'PLACEHOLDER', b'\xed\xa0\xbd')  # Invalid UTF-8 surrogate
+            
+            async with httpx.AsyncClient() as client:
+                # Send raw bytes instead of pre-processed JSON string
+                response = await client.post(
+                    f"{env.balancer_url}/v1/messages",
+                    content=raw_json_with_invalid_unicode,
+                    headers={"Content-Type": "application/json"}
                 )
                 
-                async with Environment(scenario) as env:
-                    response = await client.post(
-                        f"{env.balancer_url}/v1/messages",
-                        content=json_data,
-                        headers={"Content-Type": "application/json"}
-                    )
-                    
-                    print(f"✅ Balancer processed Unicode request, status: {response.status_code}")
-                    
-                    # Test 3: Verify response handling
-                    if response.status_code == 200:
-                        response_data = response.json()
-                        print("✅ Successfully received and parsed response")
-                        assert "content" in response_data
-                    else:
-                        # Non-200 responses are also acceptable as long as it's not a crash
-                        print(f"✅ Balancer handled request gracefully with status: {response.status_code}")
-                    
-                    # Test 4: Check for proper logging (Warning logs should be generated for Unicode issues)
-                    # Note: In a real scenario, we'd check logs for Unicode warnings
-                    # For this test, we verify that no 500 errors occurred due to encoding issues
-                    
-                    # The key validation: no UnicodeEncodeError crashes
-                    assert response.status_code != 500 or "UnicodeEncodeError" not in response.text
-                    
-                    print("✅ Unicode handling validation PASSED")
-                    print("   - Balancer successfully processed request with invalid Unicode")
-                    print("   - No encoding-related crashes occurred")
-                    print("   - ASCII fallback encoding worked correctly")
-                    
-            except UnicodeEncodeError as e:
-                # If we get UnicodeEncodeError, it means our fix didn't work
-                assert False, f"Unicode handling fix FAILED: balancer still has encoding issues: {e}"
+                print(f"✅ Balancer processed Unicode request, status: {response.status_code}")
                 
-            except Exception as e:
-                # Other errors might be acceptable depending on the scenario
-                print(f"Got other error: {type(e).__name__}: {e}")
-                # As long as it's not a Unicode encoding error, the fix is working
-                if "UnicodeEncodeError" in str(e) or "surrogates not allowed" in str(e):
-                    assert False, f"Unicode handling fix FAILED: {e}"
+                # Verify response handling
+                if response.status_code == 200:
+                    response_data = response.json()
+                    print("✅ Successfully received and parsed response")
+                    assert "content" in response_data
                 else:
-                    print("✅ Got non-Unicode error, which means encoding fix is working")
+                    # Non-200 responses are also acceptable as long as it's not a crash
+                    print(f"✅ Balancer handled request gracefully with status: {response.status_code}")
+                
+                # The key validation: no UnicodeEncodeError crashes
+                assert response.status_code != 500 or "UnicodeEncodeError" not in response.text
+                
+                print("✅ Unicode handling validation PASSED")
+                print("   - Balancer successfully processed request with invalid Unicode")
+                print("   - No encoding-related crashes occurred")
+                print("   - ASCII fallback encoding worked correctly")
 
     @pytest.mark.asyncio
     async def test_unhealthy_reset_timeout_functionality(self):

@@ -42,8 +42,11 @@ def mask_sensitive_data(data: Any, mask_char: str = "*") -> Any:
 def _safe_json_dumps(data: Any) -> str:
     """Safely serialize data to JSON with fallback handling for encoding issues."""
     try:
-        return json.dumps(data, ensure_ascii=False)
-    except UnicodeEncodeError:
+        json_str = json.dumps(data, ensure_ascii=False)
+        # Test if the JSON string can be safely encoded to UTF-8
+        json_str.encode('utf-8')
+        return json_str
+    except (UnicodeEncodeError, UnicodeDecodeError):
         try:
             # Fall back to ASCII encoding for invalid Unicode characters
             return json.dumps(data, ensure_ascii=True)

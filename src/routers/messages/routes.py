@@ -548,7 +548,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
         """Extract and validate request data, create context object."""
         # Get request body for logging and caching
         raw_body = await request.body()
-        parsed_body = json.loads(raw_body.decode('utf-8'))
+        parsed_body = json.loads(raw_body.decode('utf-8', errors='ignore'))
         
         # Extract provider parameter separately before validation
         provider_name = parsed_body.pop("provider", None)

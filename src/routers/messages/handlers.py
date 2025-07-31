@@ -244,7 +244,9 @@ class MessageHandler:
         # Handle JSON serialization manually to prevent Unicode encoding errors
         try:
             json_data = json.dumps(data, ensure_ascii=False)
-        except UnicodeEncodeError:
+            # Test if the JSON string can be safely encoded to UTF-8
+            json_data.encode('utf-8')
+        except (UnicodeEncodeError, UnicodeDecodeError):
             # Log warning for Unicode issues but continue with ASCII fallback
             from utils import warning
             warning(LogRecord(
@@ -419,7 +421,9 @@ class MessageHandler:
         # Handle JSON serialization manually to prevent Unicode encoding errors
         try:
             json_data = json.dumps(data, ensure_ascii=False)
-        except UnicodeEncodeError:
+            # Test if the JSON string can be safely encoded to UTF-8
+            json_data.encode('utf-8')
+        except (UnicodeEncodeError, UnicodeDecodeError):
             # Log warning for Unicode issues but continue with ASCII fallback
             from utils import warning
             warning(LogRecord(

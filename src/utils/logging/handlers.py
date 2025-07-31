@@ -212,7 +212,15 @@ def _log(level: int, record: LogRecord, exc: Optional[Exception] = None) -> None
             elif not record.message:
                 record.message = "An unspecified error occurred"
 
-        _logger.log(level=level, msg=record.message, extra={"log_record": record})
+        # Ensure the message is safe for logging by checking encoding
+        safe_message = record.message
+        try:
+            safe_message.encode('utf-8')
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            # Fallback to ASCII representation for problematic characters
+            safe_message = safe_message.encode('ascii', errors='replace').decode('ascii')
+        
+        _logger.log(level=level, msg=safe_message, extra={"log_record": record})
     except Exception:
         # Last resort: use standard Python logging without custom formatting
         try:
@@ -310,9 +318,17 @@ def error_file_only(record: LogRecord, exc: Optional[Exception] = None):
             elif not record.message:
                 record.message = "An unspecified error occurred"
 
+        # Ensure the message is safe for logging
+        safe_message = record.message
+        try:
+            safe_message.encode('utf-8')
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            # Fallback to ASCII representation for problematic characters
+            safe_message = safe_message.encode('ascii', errors='replace').decode('ascii')
+
         # Log only to file
         if file_logger.handlers:
-            file_logger.error(record.message, extra={"log_record": record})
+            file_logger.error(safe_message, extra={"log_record": record})
         else:
             # Fallback: if no file handler available, log to main logger with a marker
             record.message = f"[FILE_ONLY] {record.message}"

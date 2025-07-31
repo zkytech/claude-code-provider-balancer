@@ -286,8 +286,12 @@ def generate_request_signature(data: Dict[str, Any]) -> str:
         ))
         signature_str = json.dumps(signature_data, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
 
-    # 生成 SHA256 哈希
-    signature_hash = hashlib.sha256(signature_str.encode('utf-8')).hexdigest()
+    # 生成 SHA256 哈希，使用安全的编码方式
+    try:
+        signature_hash = hashlib.sha256(signature_str.encode('utf-8')).hexdigest()
+    except UnicodeEncodeError:
+        # Final fallback: use errors='ignore' to handle any remaining Unicode issues
+        signature_hash = hashlib.sha256(signature_str.encode('utf-8', errors='ignore')).hexdigest()
 
     # 添加调试日志
     try:
