@@ -10,13 +10,13 @@ import httpx
 from typing import Optional, Dict, Any
 from pathlib import Path
 
-from .test_scenario import TestScenario
+from .test_scenario import Scenario
 from .config_factory import TestConfigFactory
 from .test_context import TestContextManager
 from .balancer_test_server import BalancerTestServer
 
 
-class TestEnvironment:
+class Environment:
     """
     Test environment context manager.
     
@@ -26,7 +26,7 @@ class TestEnvironment:
     
     def __init__(
         self, 
-        scenario: TestScenario, 
+        scenario: Scenario, 
         model_name: Optional[str] = None,
         config_factory: Optional[TestConfigFactory] = None,
         mock_server_url: str = "http://localhost:8998",
@@ -44,7 +44,7 @@ class TestEnvironment:
         self._original_config_backup: Optional[str] = None
         self._balancer_server: Optional[BalancerTestServer] = None
         
-    async def __aenter__(self) -> 'TestEnvironment':
+    async def __aenter__(self) -> 'Environment':
         """Enter test environment - generate and apply configuration."""
         try:
             # 1. Generate configuration from scenario
@@ -239,7 +239,7 @@ class TestEnvironment:
         return self.scenario.expected_behavior
 
 
-class ConfigurableTestEnvironment(TestEnvironment):
+class ConfigurableEnvironment(Environment):
     """
     Test environment with more configuration options.
     
@@ -248,7 +248,7 @@ class ConfigurableTestEnvironment(TestEnvironment):
     
     def __init__(
         self,
-        scenario: TestScenario,
+        scenario: Scenario,
         model_name: Optional[str] = None,
         config_factory: Optional[TestConfigFactory] = None,
         auto_reload_config: bool = True,
@@ -266,7 +266,7 @@ class ConfigurableTestEnvironment(TestEnvironment):
         # Re-apply current configuration
         await self._apply_configuration()
     
-    async def update_scenario(self, new_scenario: TestScenario):
+    async def update_scenario(self, new_scenario: Scenario):
         """Update the test scenario and reload configuration."""
         self.scenario = new_scenario
         
@@ -287,23 +287,23 @@ class ConfigurableTestEnvironment(TestEnvironment):
 # Convenience functions for common test patterns
 async def with_simple_success_test(test_func, model_name: Optional[str] = None):
     """Run test with simple success scenario."""
-    from .test_scenario import TestScenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
+    from .test_scenario import Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
     
-    scenario = TestScenario(
+    scenario = Scenario(
         name="simple_success",
         providers=[ProviderConfig("success_provider", ProviderBehavior.SUCCESS)],
         expected_behavior=ExpectedBehavior.SUCCESS
     )
     
-    async with TestEnvironment(scenario, model_name) as env:
+    async with Environment(scenario, model_name) as env:
         return await test_func(env)
 
 
 async def with_failover_test(test_func, model_name: Optional[str] = None):
     """Run test with failover scenario."""
-    from .test_scenario import TestScenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
+    from .test_scenario import Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
     
-    scenario = TestScenario(
+    scenario = Scenario(
         name="failover_test",
         providers=[
             ProviderConfig("primary_fail", ProviderBehavior.ERROR, priority=1),
@@ -312,5 +312,5 @@ async def with_failover_test(test_func, model_name: Optional[str] = None):
         expected_behavior=ExpectedBehavior.FAILOVER
     )
     
-    async with TestEnvironment(scenario, model_name) as env:
+    async with Environment(scenario, model_name) as env:
         return await test_func(env)

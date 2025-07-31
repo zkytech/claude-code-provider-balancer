@@ -12,8 +12,8 @@ from typing import Dict, Any
 
 # Import the new testing framework
 from framework import (
-    TestScenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
-    TestEnvironment
+    Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
+    Environment
 )
 
 # Test constants - all requests now go through balancer
@@ -26,7 +26,7 @@ class TestNonStreamingRequests:
     @pytest.mark.asyncio
     async def test_successful_non_streaming_response(self):
         """Test successful non-streaming response handling."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="non_streaming_success",
             providers=[
                 ProviderConfig(
@@ -41,7 +41,7 @@ class TestNonStreamingRequests:
             description="Test successful non-streaming response"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -73,7 +73,7 @@ class TestNonStreamingRequests:
     @pytest.mark.asyncio
     async def test_non_streaming_with_system_message(self):
         """Test non-streaming request with system message."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="system_message_test",
             providers=[
                 ProviderConfig(
@@ -88,7 +88,7 @@ class TestNonStreamingRequests:
             description="Test non-streaming with system message"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -116,7 +116,7 @@ class TestNonStreamingRequests:
     @pytest.mark.asyncio
     async def test_non_streaming_with_temperature(self):
         """Test non-streaming request with temperature parameter."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="temperature_test",
             providers=[
                 ProviderConfig(
@@ -131,7 +131,7 @@ class TestNonStreamingRequests:
             description="Test non-streaming with temperature"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -153,7 +153,7 @@ class TestNonStreamingRequests:
     @pytest.mark.asyncio
     async def test_non_streaming_provider_error_500(self):
         """Test non-streaming request with provider returning 500 error."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="error_500_test",
             providers=[
                 ProviderConfig(
@@ -167,7 +167,7 @@ class TestNonStreamingRequests:
             description="Test 500 error handling"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -188,7 +188,7 @@ class TestNonStreamingRequests:
     @pytest.mark.asyncio
     async def test_non_streaming_provider_error_401(self):
         """Test non-streaming request with authentication error."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="error_401_test",
             providers=[
                 ProviderConfig(
@@ -202,7 +202,7 @@ class TestNonStreamingRequests:
             description="Test 401 authentication error"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -223,7 +223,7 @@ class TestNonStreamingRequests:
     @pytest.mark.asyncio
     async def test_non_streaming_provider_error_429(self):
         """Test non-streaming request with rate limit error."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="error_429_test",
             providers=[
                 ProviderConfig(
@@ -237,7 +237,7 @@ class TestNonStreamingRequests:
             description="Test 429 rate limit error"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -258,7 +258,7 @@ class TestNonStreamingRequests:
     @pytest.mark.asyncio
     async def test_non_streaming_connection_error(self):
         """Test non-streaming request with connection error."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="connection_error_test",
             providers=[
                 ProviderConfig(
@@ -272,7 +272,7 @@ class TestNonStreamingRequests:
             description="Test connection error handling"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -293,7 +293,7 @@ class TestNonStreamingRequests:
     @pytest.mark.asyncio
     async def test_non_streaming_timeout_error(self):
         """Test non-streaming request with timeout."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="timeout_test",
             providers=[
                 ProviderConfig(
@@ -307,7 +307,7 @@ class TestNonStreamingRequests:
             description="Test timeout error handling"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -330,7 +330,7 @@ class TestNonStreamingRequests:
     @pytest.mark.asyncio
     async def test_non_streaming_with_tools(self):
         """Test non-streaming request with tools."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="tools_test",
             providers=[
                 ProviderConfig(
@@ -352,7 +352,7 @@ class TestNonStreamingRequests:
             description="Test tools functionality"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -397,60 +397,13 @@ class TestNonStreamingRequests:
                 # just verify the response structure is correct
                 assert "text" in data["content"][0]
 
-    @pytest.mark.asyncio
-    async def test_non_streaming_failover_scenario(self):
-        """Test failover between providers for non-streaming requests."""
-        scenario = TestScenario(
-            name="failover_test",
-            providers=[
-                ProviderConfig(
-                    "failing_provider",
-                    ProviderBehavior.INTERNAL_SERVER_ERROR,
-                    priority=1,
-                    error_http_code=500,
-                    error_message="First provider error"
-                ),
-                ProviderConfig(
-                    "success_provider",
-                    ProviderBehavior.SUCCESS,
-                    priority=2,
-                    response_data={
-                        "content": "Failover successful!"
-                    }
-                )
-            ],
-            expected_behavior=ExpectedBehavior.FAILOVER,
-            description="Test non-streaming failover scenario",
-            settings_override={
-                "unhealthy_threshold": 1  # Trigger failover after first error
-            }
-        )
-        
-        async with TestEnvironment(scenario) as env:
-            request_data = {
-                "model": env.effective_model_name,
-                "max_tokens": 1000,
-                "messages": [{"role": "user", "content": "Hello"}],
-                "stream": False
-            }
-            
-            async with httpx.AsyncClient() as client:
-                # Test failover through balancer
-                response = await client.post(
-                    f"{env.balancer_url}/v1/messages",
-                    json=request_data
-                )
-                assert response.status_code == 200
-                response_data = response2.json()
-                assert "id" in response_data
-                assert response_data["type"] == "message"
-                assert "content" in response_data
-                assert "Failover successful!" in response_data["content"][0]["text"]
+    # Note: Basic failover testing is covered in test_multi_provider_management.py
+    # This file focuses on non-streaming specific request handling
 
     @pytest.mark.asyncio
     async def test_non_streaming_custom_response_format(self):
         """Test non-streaming with custom response format."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="custom_format_test",
             providers=[
                 ProviderConfig(
@@ -465,7 +418,7 @@ class TestNonStreamingRequests:
             description="Test custom response format"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -487,7 +440,7 @@ class TestNonStreamingRequests:
     @pytest.mark.asyncio
     async def test_non_streaming_response_with_delay(self):
         """Test non-streaming response with processing delay."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="delay_test",
             providers=[
                 ProviderConfig(
@@ -503,7 +456,7 @@ class TestNonStreamingRequests:
             description="Test response with delay"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -532,7 +485,7 @@ class TestNonStreamingRequests:
     async def test_non_streaming_multiple_error_types(self):
         """Test handling of different error types in sequence."""
         # Test SSL error
-        ssl_scenario = TestScenario(
+        ssl_scenario = Scenario(
             name="ssl_error_test",
             providers=[
                 ProviderConfig(
@@ -546,7 +499,7 @@ class TestNonStreamingRequests:
             description="Test SSL error handling"
         )
         
-        async with TestEnvironment(ssl_scenario) as env:
+        async with Environment(ssl_scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -566,7 +519,7 @@ class TestNonStreamingRequests:
     @pytest.mark.asyncio
     async def test_non_streaming_insufficient_credits(self):
         """Test handling of insufficient credits error."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="insufficient_credits_test",
             providers=[
                 ProviderConfig(
@@ -580,7 +533,7 @@ class TestNonStreamingRequests:
             description="Test insufficient credits error"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,

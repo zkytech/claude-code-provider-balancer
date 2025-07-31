@@ -12,8 +12,8 @@ from typing import Dict, Any
 
 # Import the new testing framework
 from framework import (
-    TestScenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
-    TestEnvironment
+    Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
+    Environment
 )
 
 # Test constants - all requests now go through balancer
@@ -26,7 +26,7 @@ class TestMixedProviderResponses:
     @pytest.mark.asyncio
     async def test_successful_provider_response(self):
         """Test basic successful provider response format."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="success_test",
             providers=[
                 ProviderConfig(
@@ -41,7 +41,7 @@ class TestMixedProviderResponses:
             description="Test successful provider response"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -77,7 +77,7 @@ class TestMixedProviderResponses:
     @pytest.mark.asyncio
     async def test_error_provider_response(self):
         """Test error provider response handling."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="error_test",
             providers=[
                 ProviderConfig(
@@ -91,7 +91,7 @@ class TestMixedProviderResponses:
             description="Test error provider response"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -117,7 +117,7 @@ class TestMixedProviderResponses:
     @pytest.mark.asyncio
     async def test_service_unavailable_provider(self):
         """Test service unavailable provider behavior."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="service_unavailable_test",
             providers=[
                 ProviderConfig(
@@ -131,7 +131,7 @@ class TestMixedProviderResponses:
             description="Test service unavailable behavior"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -157,7 +157,7 @@ class TestMixedProviderResponses:
     @pytest.mark.asyncio
     async def test_rate_limit_provider(self):
         """Test rate limit provider behavior."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="rate_limit_test",
             providers=[
                 ProviderConfig(
@@ -171,7 +171,7 @@ class TestMixedProviderResponses:
             description="Test rate limit behavior"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -197,7 +197,7 @@ class TestMixedProviderResponses:
     @pytest.mark.asyncio
     async def test_insufficient_credits_provider(self):
         """Test insufficient credits provider behavior."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="insufficient_credits_test",
             providers=[
                 ProviderConfig(
@@ -211,7 +211,7 @@ class TestMixedProviderResponses:
             description="Test insufficient credits behavior"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -236,8 +236,13 @@ class TestMixedProviderResponses:
 
     @pytest.mark.asyncio
     async def test_mixed_provider_failover_scenario(self):
-        """Test failover between different provider types."""
-        scenario = TestScenario(
+        """
+        Test failover between different provider types with detailed provider status checking.
+        
+        Note: This test is more comprehensive than basic failover tests as it also validates
+        provider health status tracking and unhealthy_threshold behavior.
+        """
+        scenario = Scenario(
             name="mixed_failover_test",
             providers=[
                 ProviderConfig(
@@ -263,7 +268,7 @@ class TestMixedProviderResponses:
             }
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             # Test that both providers are configured correctly
             request_data = {
                 "model": env.effective_model_name,
@@ -313,11 +318,9 @@ class TestMixedProviderResponses:
                     # Failover occurred - verify response comes from success_provider
                     data1 = response1.json()
                     assert "Successfully failed over to second provider" in data1["content"][0]["text"]
-                    print("✓ First request succeeded via failover")
                 else:
                     # No failover - should be 503 from failing_provider
                     assert response1.status_code == 503
-                    print("✓ First request failed as expected (503)")
                 
                 # Test second request - should always go to success_provider (failing_provider is unhealthy)
                 response2 = await client.post(
@@ -327,19 +330,16 @@ class TestMixedProviderResponses:
                 assert response2.status_code == 200
                 data2 = response2.json()
                 assert "Successfully failed over to second provider" in data2["content"][0]["text"]
-                print("✓ Second request succeeded via healthy provider")
                 
                 # Verify the unhealthy_threshold=1 took effect by checking error counts
                 if "error_count" in failing_provider_status:
                     assert failing_provider_status["error_count"] >= 1, f"Expected error_count >= 1, got {failing_provider_status.get('error_count', 0)}"
                     print(f"✓ failing_provider has error_count: {failing_provider_status['error_count']}")
-                
-                print("✓ Failover test completed successfully")
 
     @pytest.mark.asyncio
     async def test_streaming_request_handling(self):
         """Test streaming request handling."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_test",
             providers=[
                 ProviderConfig(
@@ -354,7 +354,7 @@ class TestMixedProviderResponses:
             description="Test streaming request handling"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -386,7 +386,7 @@ class TestMixedProviderResponses:
             "custom_field": "test_value"
         }
         
-        scenario = TestScenario(
+        scenario = Scenario(
             name="custom_response_test",
             providers=[
                 ProviderConfig(
@@ -399,7 +399,7 @@ class TestMixedProviderResponses:
             description="Test provider with custom response data"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -431,7 +431,7 @@ class TestMixedProviderResponses:
     @pytest.mark.asyncio
     async def test_provider_with_delay(self):
         """Test provider with response delay."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="delay_test",
             providers=[
                 ProviderConfig(
@@ -447,7 +447,7 @@ class TestMixedProviderResponses:
             description="Test provider with response delay"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,

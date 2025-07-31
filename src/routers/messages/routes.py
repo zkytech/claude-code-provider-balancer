@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from .handlers import MessageHandler, log_provider_error
 from models import MessagesRequest, TokenCountResponse
 from core.provider_manager import ProviderManager, ProviderType
-from core.provider_manager.health import validate_response_health
+from core.provider_manager.health import should_mark_unhealthy
 from core.streaming import (
     has_active_broadcaster, handle_duplicate_stream_request,
     create_broadcaster, register_broadcaster, unregister_broadcaster
@@ -139,8 +139,9 @@ class AnthropicStreamingHandler(ResponseHandler):
                 # Check if collected chunks contain SSE error for delayed cleanup using health module
                 has_sse_error = False
                 if collected_chunks:
-                    is_unhealthy, error_reason = validate_response_health(
-                        response_content=collected_chunks,
+                    is_unhealthy, error_reason = should_mark_unhealthy(
+                        error_message="".join(collected_chunks) if isinstance(collected_chunks, list) else str(collected_chunks),
+                        source_type="response_body",
                         unhealthy_response_body_patterns=provider_manager.settings.get('unhealthy_response_body_patterns', [])
                     )
                     has_sse_error = is_unhealthy
@@ -234,19 +235,20 @@ class AnthropicNonStreamingHandler(ResponseHandler):
             response_status_code = response.status_code
         
         # 使用简化的健康检查
-        is_error_detected, error_reason = validate_response_health(
-            response_content,
-            response_status_code,
-            provider_manager.settings.get('unhealthy_http_codes', []),
-            provider_manager.settings.get('unhealthy_response_body_patterns', [])
+        is_error_detected, error_reason = should_mark_unhealthy(
+            http_status_code=response_status_code,
+            error_message=str(response_content),
+            source_type="response_body",
+            unhealthy_http_codes=provider_manager.settings.get('unhealthy_http_codes', []),
+            unhealthy_response_body_patterns=provider_manager.settings.get('unhealthy_response_body_patterns', [])
         )
         
         # 使用ProviderManager的错误计数机制
-        should_mark_unhealthy = provider_manager.record_health_check_result(
+        provider_marked_unhealthy = provider_manager.record_health_check_result(
             provider.name, is_error_detected, error_reason, request_id
         )
         
-        if should_mark_unhealthy:
+        if provider_marked_unhealthy:
             warning(
                 LogRecord(
                     LogEvent.PROVIDER_UNHEALTHY_NON_STREAM.value,
@@ -461,19 +463,20 @@ class OpenAINonStreamingHandler(ResponseHandler):
             response_status_code = response.status_code
         
         # 使用简化的健康检查
-        is_error_detected, error_reason = validate_response_health(
-            response_content,
-            response_status_code,
-            provider_manager.settings.get('unhealthy_http_codes', []),
-            provider_manager.settings.get('unhealthy_response_body_patterns', [])
+        is_error_detected, error_reason = should_mark_unhealthy(
+            http_status_code=response_status_code,
+            error_message=str(response_content),
+            source_type="response_body",
+            unhealthy_http_codes=provider_manager.settings.get('unhealthy_http_codes', []),
+            unhealthy_response_body_patterns=provider_manager.settings.get('unhealthy_response_body_patterns', [])
         )
         
         # 使用ProviderManager的错误计数机制
-        should_mark_unhealthy = provider_manager.record_health_check_result(
+        provider_marked_unhealthy = provider_manager.record_health_check_result(
             provider.name, is_error_detected, error_reason, request_id
         )
         
-        if should_mark_unhealthy:
+        if provider_marked_unhealthy:
             warning(
                 LogRecord(
                     LogEvent.PROVIDER_UNHEALTHY_NON_STREAM.value,
@@ -710,6 +713,9 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
         request_id = str(uuid.uuid4())
         
         try:
+            # Check and reset timed-out provider errors before processing request
+            provider_manager.check_and_reset_timeout_errors()
+            
             # Preprocess request and create context
             context = await _preprocess_request(request, request_id)
             
@@ -870,7 +876,7 @@ def create_messages_router(provider_manager: ProviderManager, settings: Any) -> 
             )
             
             # Create a generic error message for the client that doesn't expose provider details
-            client_error_message = message_handler._create_no_providers_error_message(context.messages_request.model)
+            client_error_message = message_handler.create_no_providers_error_message(context.messages_request.model)
             client_error = Exception(client_error_message)
             
             # 当所有providers都不可用时，返回503 Service Unavailable

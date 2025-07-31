@@ -13,8 +13,8 @@ from typing import Dict, Any
 
 # Import the new testing framework
 from framework import (
-    TestScenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
-    TestEnvironment
+    Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
+    Environment
 )
 
 # Test constants - all requests now go through balancer
@@ -27,7 +27,7 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_successful_streaming_response(self):
         """Test successful streaming response handling."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_success_test",
             providers=[
                 ProviderConfig(
@@ -42,7 +42,7 @@ class TestStreamingRequests:
             description="Test successful streaming response"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -77,7 +77,7 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_streaming_provider_error(self):
         """Test streaming request with provider returning error."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_error_test",
             providers=[
                 ProviderConfig(
@@ -91,7 +91,7 @@ class TestStreamingRequests:
             description="Test streaming provider error handling"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -113,7 +113,7 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_streaming_timeout_handling(self):
         """Test streaming request timeout handling."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_timeout_test",
             providers=[
                 ProviderConfig(
@@ -127,7 +127,7 @@ class TestStreamingRequests:
             description="Test streaming timeout handling"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -149,30 +149,33 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_streaming_failover(self):
         """Test failover for streaming requests."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_failover_test",
             providers=[
                 ProviderConfig(
-                    "primary_stream_error",
+                    "streaming_error_provider",
                     ProviderBehavior.ERROR,
                     priority=1,
                     error_http_code=500,
-                    error_message="Primary streaming error"
+                    error_message="Streaming provider error"
                 ),
                 ProviderConfig(
-                    "secondary_stream_success",
+                    "streaming_success_provider",
                     ProviderBehavior.STREAMING_SUCCESS,
                     priority=2,
                     response_data={
-                        "content": "Streaming failover successful"
+                        "content": "Streaming failover success"
                     }
                 )
             ],
+            settings_override={
+                "unhealthy_threshold": 1  # Trigger failover after first error
+            },
             expected_behavior=ExpectedBehavior.FAILOVER,
-            description="Test streaming request failover"
+            description="Test streaming request failover behavior"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -187,12 +190,12 @@ class TestStreamingRequests:
                     json=request_data
                 )
                 assert response.status_code == 200
-                assert "text/event-stream" in response2.headers.get("content-type", "")
+                assert "text/event-stream" in response.headers.get("content-type", "")
 
     @pytest.mark.asyncio
     async def test_streaming_rate_limit_error(self):
         """Test streaming request with rate limit error."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_rate_limit_test",
             providers=[
                 ProviderConfig(
@@ -206,7 +209,7 @@ class TestStreamingRequests:
             description="Test streaming rate limit error"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -228,7 +231,7 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_streaming_connection_error(self):
         """Test streaming request with connection error."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_connection_error_test",
             providers=[
                 ProviderConfig(
@@ -242,7 +245,7 @@ class TestStreamingRequests:
             description="Test streaming connection error"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -264,7 +267,7 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_streaming_service_unavailable(self):
         """Test streaming request with service unavailable error."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_service_unavailable_test",
             providers=[
                 ProviderConfig(
@@ -278,7 +281,7 @@ class TestStreamingRequests:
             description="Test streaming service unavailable error"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -300,7 +303,7 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_streaming_insufficient_credits(self):
         """Test streaming request with insufficient credits error."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_insufficient_credits_test",
             providers=[
                 ProviderConfig(
@@ -314,7 +317,7 @@ class TestStreamingRequests:
             description="Test streaming insufficient credits error"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -343,7 +346,7 @@ class TestStreamingRequests:
         ]
         
         for model_name, expected_content in models_to_test:
-            scenario = TestScenario(
+            scenario = Scenario(
                 name=f"streaming_model_test_{model_name.replace('-', '_').replace('.', '_')}",
                 providers=[
                     ProviderConfig(
@@ -358,9 +361,9 @@ class TestStreamingRequests:
                 description=f"Test streaming with {model_name}"
             )
             
-            async with TestEnvironment(scenario) as env:
+            async with Environment(scenario) as env:
                 request_data = {
-                    "model": model_name,
+                    "model": env.effective_model_name,  # Use the test framework's unique model name
                     "max_tokens": 100,
                     "stream": True,
                     "messages": [{"role": "user", "content": f"Test streaming for {model_name}"}]
@@ -394,7 +397,7 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_streaming_concurrent_requests(self):
         """Test concurrent streaming requests."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_concurrent_test",
             providers=[
                 ProviderConfig(
@@ -409,7 +412,7 @@ class TestStreamingRequests:
             description="Test concurrent streaming requests"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             async def make_streaming_request(client, content_suffix=""):
                 return await client.post(
                     f"{env.balancer_url}/v1/messages",
@@ -447,7 +450,7 @@ class TestStreamingRequests:
         """Test streaming response with large content."""
         large_content = "This is a large streaming response. " * 100  # Repeat to make it large
         
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_large_response_test",
             providers=[
                 ProviderConfig(
@@ -462,7 +465,7 @@ class TestStreamingRequests:
             description="Test streaming large response handling"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 1000,
@@ -494,7 +497,7 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_streaming_empty_content(self):
         """Test streaming response with empty content."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_empty_content_test",
             providers=[
                 ProviderConfig(
@@ -509,7 +512,7 @@ class TestStreamingRequests:
             description="Test streaming empty content handling"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -538,7 +541,7 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_streaming_with_system_message(self):
         """Test streaming request with system message."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_system_message_test",
             providers=[
                 ProviderConfig(
@@ -553,7 +556,7 @@ class TestStreamingRequests:
             description="Test streaming with system message"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -589,7 +592,7 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_streaming_with_temperature_parameter(self):
         """Test streaming request with temperature parameter."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_temperature_test",
             providers=[
                 ProviderConfig(
@@ -604,7 +607,7 @@ class TestStreamingRequests:
             description="Test streaming with temperature parameter"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -626,7 +629,7 @@ class TestStreamingRequests:
     async def test_streaming_multiple_provider_types(self):
         """Test streaming with different provider types."""
         # Test Anthropic-style streaming
-        anthropic_scenario = TestScenario(
+        anthropic_scenario = Scenario(
             name="streaming_anthropic_type_test",
             providers=[
                 ProviderConfig(
@@ -642,7 +645,7 @@ class TestStreamingRequests:
             description="Test Anthropic-style streaming"
         )
         
-        async with TestEnvironment(anthropic_scenario) as env:
+        async with Environment(anthropic_scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -660,7 +663,7 @@ class TestStreamingRequests:
                 assert "text/event-stream" in response.headers.get("content-type", "")
 
         # Test OpenAI-style streaming
-        openai_scenario = TestScenario(
+        openai_scenario = Scenario(
             name="streaming_openai_type_test",
             providers=[
                 ProviderConfig(
@@ -676,7 +679,7 @@ class TestStreamingRequests:
             description="Test OpenAI-style streaming"
         )
         
-        async with TestEnvironment(openai_scenario) as env:
+        async with Environment(openai_scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -696,7 +699,7 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_streaming_error_recovery(self):
         """Test streaming error recovery patterns."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_error_recovery_test",
             providers=[
                 ProviderConfig(
@@ -711,7 +714,7 @@ class TestStreamingRequests:
             description="Test streaming error recovery"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -747,7 +750,7 @@ class TestStreamingRequests:
     @pytest.mark.asyncio
     async def test_streaming_request_validation(self):
         """Test streaming request parameter validation."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="streaming_validation_test",
             providers=[
                 ProviderConfig(
@@ -762,7 +765,7 @@ class TestStreamingRequests:
             description="Test streaming request validation"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             # Test with various valid parameters
             test_cases = [
                 {

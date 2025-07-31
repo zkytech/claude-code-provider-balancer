@@ -18,9 +18,9 @@ import httpx
 # OAuth manager will be imported dynamically when needed
 from utils import info, warning, error, debug, LogRecord, LogEvent
 from .health import (
-    get_error_handling_decision, record_health_check_result, 
-    get_provider_error_status, is_provider_healthy
+    get_error_handling_decision
 )
+from .provider_auth import ProviderAuth
 
 
 class ProviderType(str, Enum):
@@ -66,10 +66,13 @@ class Provider:
     streaming_mode: StreamingMode = StreamingMode.AUTO
     failure_count: int = 0
     last_failure_time: float = 0
+    last_success_time: float = 0  # 添加成功时间跟踪
     
     def is_healthy(self, cooldown_seconds: int = 60) -> bool:
         """Check if provider is healthy (not in cooldown period)"""
-        return is_provider_healthy(self.name, self.failure_count, self.last_failure_time, cooldown_seconds)
+        if self.failure_count == 0:
+            return True
+        return time.time() - self.last_failure_time > cooldown_seconds
     
     def mark_failure(self):
         """Mark provider as failed"""
@@ -80,6 +83,7 @@ class Provider:
         """Mark provider as successful (reset failure count)"""
         self.failure_count = 0
         self.last_failure_time = 0
+        self.last_success_time = time.time()  # 记录成功时间
     
     def get_effective_streaming_mode(self) -> StreamingMode:
         """Get the effective streaming mode based on configuration and provider type"""
@@ -106,6 +110,9 @@ class ProviderManager:
         self.config_path = Path(config_path)
         self.providers: List[Provider] = []
         self.settings: Dict[str, Any] = {}
+        
+        # Provider认证处理器
+        self.provider_auth = ProviderAuth()
         
         # 简化的配置
         self.model_routes: Dict[str, List[ModelRoute]] = {}
@@ -383,11 +390,6 @@ class ProviderManager:
         # Removed debug print - this would be too noisy in production
         return healthy_providers
     
-    def mark_request_start(self):
-        """标记请求开始，更新活跃状态"""
-        # 不在请求开始时更新时间，而是在请求完成时更新
-        pass
-    
     def mark_provider_success(self, provider_name: str):
         """标记provider成功，更新粘滞状态"""
         self._last_successful_provider = provider_name
@@ -409,95 +411,7 @@ class ProviderManager:
     
     def get_provider_headers(self, provider: Provider, original_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         """Get authentication headers for a provider, optionally merging with original headers"""
-        headers = {
-            "Content-Type": "application/json"
-        }
-        
-        debug(LogRecord(
-            event=LogEvent.GET_PROVIDER_HEADERS_START.value,
-            message=f"Provider {provider.name}: auth_type={provider.auth_type}, auth_value=[REDACTED]"
-        ))
-        
-        
-        # 如果提供了原始请求头，先复制它们（排除需要替换的认证头、host头和content-length头）
-        if original_headers:
-            for key, value in original_headers.items():
-                # 跳过需要替换的认证相关头部、host头部和content-length头部
-                if key.lower() not in ['authorization', 'x-api-key', 'host', 'content-length']:
-                    headers[key] = value
-        
-        # 检查auth_value模式
-        if provider.auth_value == "passthrough":
-            # 透传模式：使用原始请求的认证头
-            if original_headers:
-                # 保留原始请求的Authorization和x-api-key头部（不区分大小写查找）
-                for key, value in original_headers.items():
-                    if key.lower() == "authorization":
-                        headers["Authorization"] = value
-                    elif key.lower() == "x-api-key":
-                        headers["x-api-key"] = value
-            # 为Anthropic类型的provider添加版本头
-            if provider.type == ProviderType.ANTHROPIC:
-                headers["anthropic-version"] = "2023-06-01"
-        elif provider.auth_type == AuthType.OAUTH:
-            # OAuth模式：从OAuth manager获取token
-            try:
-                from oauth import get_oauth_manager
-                oauth_manager = get_oauth_manager()
-            except ImportError:
-                oauth_manager = None
-            
-            debug(LogRecord(
-                event=LogEvent.OAUTH_MANAGER_CHECK.value, 
-                message=f"OAuth manager status: {oauth_manager is not None}, type: {type(oauth_manager)}"
-            ))
-            if not oauth_manager:
-                # OAuth manager未初始化，触发OAuth授权流程
-                self.handle_oauth_authorization_required(provider)
-                from httpx import HTTPStatusError
-                import httpx
-                response = httpx.Response(
-                    status_code=401,
-                    text="Unauthorized: OAuth manager not initialized",
-                    request=httpx.Request("POST", "http://example.com")
-                )
-                raise HTTPStatusError("401 Unauthorized", request=response.request, response=response)
-            
-            access_token = oauth_manager.get_current_token()
-            if not access_token:
-                # 触发OAuth授权流程 (永远启用)
-                self.handle_oauth_authorization_required(provider)
-                # 创建一个401错误来触发标准的错误处理流程
-                from httpx import HTTPStatusError
-                import httpx
-                response = httpx.Response(
-                    status_code=401,
-                    text="Unauthorized: No valid token available",
-                    request=httpx.Request("POST", "http://example.com")
-                )
-                raise HTTPStatusError("401 Unauthorized", request=response.request, response=response)
-            
-            # 使用OAuth token作为Bearer token
-            headers["Authorization"] = f"Bearer {access_token}"
-            
-            # 为Anthropic类型的provider添加版本头
-            if provider.type == ProviderType.ANTHROPIC:
-                headers["anthropic-version"] = "2023-06-01"
-        else:
-            # 正常模式：使用配置的认证值
-            if provider.auth_type == AuthType.API_KEY:
-                if provider.type == ProviderType.ANTHROPIC:
-                    headers["x-api-key"] = provider.auth_value
-                    headers["anthropic-version"] = "2023-06-01"
-                else:  # OpenAI compatible
-                    headers["Authorization"] = f"Bearer {provider.auth_value}"
-            elif provider.auth_type == AuthType.AUTH_TOKEN:
-                # 对于使用auth_token的服务商
-                headers["Authorization"] = f"Bearer {provider.auth_value}"
-                if provider.type == ProviderType.ANTHROPIC:
-                    headers["anthropic-version"] = "2023-06-01"
-        
-        return headers
+        return self.provider_auth.get_provider_headers(provider, original_headers)
     
     def get_request_url(self, provider: Provider, endpoint: str) -> str:
         """Get full request URL for a provider"""
@@ -537,50 +451,7 @@ class ProviderManager:
     
     def handle_oauth_authorization_required(self, provider: Provider, http_status_code: int = 401) -> str:
         """Handle 401/403 authorization required error for OAuth providers"""
-        if provider.name == "Claude Code Official":
-            # Check if OAuth manager is available
-            try:
-                from oauth import get_oauth_manager
-                oauth_manager = get_oauth_manager()
-            except ImportError:
-                oauth_manager = None
-                
-            if not oauth_manager:
-                print("\n" + "="*80)
-                print("❌ OAUTH MANAGER NOT AVAILABLE")
-                print("="*80)
-                print("The OAuth manager failed to initialize properly.")
-                print("Please check the logs for initialization errors.")
-                print("OAuth authentication is not available at this time.")
-                print("="*80)
-                print()
-                return ""
-            
-            # Print instructions to console
-            status_text = "401 Unauthorized" if http_status_code == 401 else "403 Forbidden"
-            print("\n" + "="*80)
-            print("🔐 CLAUDE CODE OFFICIAL AUTHORIZATION REQUIRED")
-            print("="*80)
-            print(f"Provider '{provider.name}' returned {status_text}.")
-            print("Please complete the OAuth authorization process:")
-            print()
-            print("1. 🌐 Click the following URL to generate and get authorization link:")
-            print(f"   http://localhost:9090/oauth/generate-url")
-            print()
-            print("2. 📝 After successful login, you will be redirected to a callback URL.")
-            print("   Copy the 'code' parameter from the callback URL.")
-            print()
-            print("3. 💻 Run the following command to complete the authorization:")
-            print(f"   curl -X POST http://localhost:9090/oauth/exchange-code -d '{{\"code\": \"YOUR_CODE\", \"account_email\": \"user@example.com\"}}'")
-            print("   Note: account_email is required for account identification and preventing duplicates")
-            print()
-            print("4. 🔄 The system will automatically exchange the code for tokens and start using them.")
-            print("="*80)
-            print()
-            
-            return "http://localhost:9090/oauth/generate-url"
-        
-        return ""
+        return self.provider_auth.handle_oauth_authorization_required(provider, http_status_code)
     
     def get_error_handling_decision(self, error: Exception, http_status_code: Optional[int] = None, is_streaming: bool = False) -> tuple[str, bool, bool]:
         """
@@ -609,27 +480,99 @@ class ProviderManager:
             return True
         return False
 
-    def record_health_check_result(self, provider_name: str, is_error_detected: bool, error_type: Optional[str] = None, request_id: str = "") -> bool:
-        """记录健康检查结果，返回是否应该标记为unhealthy"""
-        provider_instance = self.get_provider_by_name(provider_name)
-        return record_health_check_result(
-            provider_name, is_error_detected, error_type, request_id,
-            self.unhealthy_threshold, self.unhealthy_reset_on_success,
-            provider_instance, self.unhealthy_reset_timeout
-        )
-    
-    
     def reset_all_provider_states(self):
         """重置所有provider的状态（用于测试）"""
         for provider in self.providers:
             provider.mark_success()  # Reset failure count and last_failure_time
     
+    def check_and_reset_timeout_errors(self):
+        """检查并重置超时的provider错误状态"""
+        if self.unhealthy_reset_timeout <= 0:
+            return
+            
+        current_time = time.time()
+        
+        for provider in self.providers:
+            if (provider.failure_count > 0 and 
+                provider.last_failure_time > 0 and
+                current_time - provider.last_failure_time > self.unhealthy_reset_timeout):
+                
+                old_count = provider.failure_count
+                provider.mark_success()  # 重置所有状态
+                
+                # 记录日志
+                debug(LogRecord(
+                    LogEvent.PROVIDER_HEALTH_ERROR_COUNT_TIMEOUT_RESET.value,
+                    f"Provider {provider.name} error count reset from {old_count} to 0 after timeout ({self.unhealthy_reset_timeout}s)",
+                    "",
+                    {
+                        "provider": provider.name,
+                        "old_count": old_count,
+                        "timeout": self.unhealthy_reset_timeout
+                    }
+                ))
+    
+    def record_health_check_result(self, provider_name: str, is_error_detected: bool, error_type: Optional[str] = None, request_id: str = "") -> bool:
+        """记录健康检查结果，返回是否应该标记为unhealthy"""
+        provider = self.get_provider_by_name(provider_name)
+        if not provider:
+            return False
+            
+        if is_error_detected:
+            provider.mark_failure()
+            
+            # Check if provider should be marked unhealthy based on threshold
+            should_mark_unhealthy = provider.failure_count >= self.unhealthy_threshold
+            
+            if should_mark_unhealthy:
+                debug(LogRecord(
+                    LogEvent.PROVIDER_MARKED_UNHEALTHY.value,
+                    f"Provider {provider_name} marked unhealthy after {provider.failure_count} failures",
+                    request_id,
+                    {
+                        "provider": provider_name,
+                        "failure_count": provider.failure_count,
+                        "threshold": self.unhealthy_threshold,
+                        "error_type": error_type or "unknown"
+                    }
+                ))
+            
+            return should_mark_unhealthy
+        else:
+            # Success case - reset failures if enabled
+            if self.unhealthy_reset_on_success and provider.failure_count > 0:
+                old_count = provider.failure_count
+                provider.mark_success()
+                
+                debug(LogRecord(
+                    LogEvent.PROVIDER_HEALTH_RESET_ON_SUCCESS.value,
+                    f"Provider {provider_name} error count reset from {old_count} to 0 on success",
+                    request_id,
+                    {
+                        "provider": provider_name,
+                        "old_count": old_count
+                    }
+                ))
+            
+            return False
+    
     def get_provider_error_status(self, provider_name: str) -> Dict[str, Any]:
         """获取Provider的错误状态信息"""
-        return get_provider_error_status(
-            provider_name, self.unhealthy_threshold,
-            self.unhealthy_reset_on_success, self.unhealthy_reset_timeout
-        )
+        provider = self.get_provider_by_name(provider_name)
+        if not provider:
+            return {
+                "provider": provider_name,
+                "error": "Provider not found"
+            }
+            
+        return {
+            "provider": provider_name,
+            "failure_count": provider.failure_count,
+            "last_failure_time": provider.last_failure_time,
+            "last_success_time": provider.last_success_time,
+            "is_healthy": provider.is_healthy(self.get_failure_cooldown()),
+            "unhealthy_threshold": self.unhealthy_threshold
+        }
 
     def shutdown(self):
         """Shutdown the provider manager"""

@@ -18,7 +18,7 @@ from typing import Dict, Any, Optional
 from contextlib import asynccontextmanager
 import sys
 
-from .test_scenario import TestScenario
+from .test_scenario import Scenario
 
 
 class BalancerTestServer:
@@ -134,13 +134,12 @@ class BalancerTestServer:
         if str(self.src_dir) not in sys.path:
             sys.path.insert(0, str(self.src_dir))
         
-        # Import the main app factory
+        # Import the test app factory
         try:
-            # We need to create the app dynamically with our test config
-            from main import create_test_app
+            # Import from our test framework
+            from .test_app import create_test_app
         except ImportError:
-            # If create_test_app doesn't exist, we'll need to create it
-            raise RuntimeError("Test app factory not found. Need to add create_test_app to main.py")
+            raise RuntimeError("Test app factory not found. Need test_app module in framework.")
         
         # Create the app with test configuration
         try:
@@ -266,7 +265,7 @@ class BalancerTestServerFactory:
     
     @staticmethod
     def create_server_for_scenario(
-        scenario: TestScenario,
+        scenario: Scenario,
         mock_server_port: int = 8998,
         **server_kwargs
     ) -> BalancerTestServer:
@@ -278,7 +277,7 @@ class BalancerTestServerFactory:
     
     @staticmethod
     async def start_server_with_scenario(
-        scenario: TestScenario,
+        scenario: Scenario,
         config: Dict[str, Any],
         **server_kwargs
     ) -> BalancerTestServer:

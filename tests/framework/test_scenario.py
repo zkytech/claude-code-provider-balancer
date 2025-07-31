@@ -52,7 +52,7 @@ class ProviderConfig:
 
 
 @dataclass
-class TestScenario:
+class Scenario:
     """Test scenario definition with providers and expected behavior."""
     name: str
     providers: List[ProviderConfig]

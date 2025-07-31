@@ -11,20 +11,16 @@ def create_unified_mock_router() -> APIRouter:
     """Create unified mock router that handles all provider requests."""
     router = APIRouter()
     
-    @router.post("/mock-provider/{provider_name}/v1/messages")
-    async def unified_mock_provider(provider_name: str, request: Request):
+    async def _handle_mock_provider_request(provider_name: str, request: Request):
         """
-        Unified mock provider handler.
-        
-        This single endpoint replaces dozens of specialized mock endpoints.
-        It dynamically generates responses based on the current test scenario.
+        Common handler for both Anthropic and OpenAI API format requests.
         """
         try:
             # Get current test context
             test_context = TestContextManager.get_current_context()
             if not test_context:
                 # For now, return a default success response when no context is set
-                # This allows direct testing of the mock server without TestEnvironment
+                # This allows direct testing of the mock server without Environment
                 from .test_scenario import ProviderConfig, ProviderBehavior
                 
                 default_config = ProviderConfig(
@@ -67,6 +63,34 @@ def create_unified_mock_router() -> APIRouter:
             logging.error(f"Mock provider error for {provider_name}: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Mock provider error: {str(e)}")
     
+    @router.post("/mock-provider/{provider_name}/v1/messages")
+    async def unified_mock_provider_anthropic(provider_name: str, request: Request):
+        """
+        Unified mock provider handler for Anthropic API format.
+        
+        This single endpoint replaces dozens of specialized mock endpoints.
+        It dynamically generates responses based on the current test scenario.
+        """
+        return await _handle_mock_provider_request(provider_name, request)
+    
+    @router.post("/mock-provider/{provider_name}/v1/chat/completions")
+    async def unified_mock_provider_openai_v1(provider_name: str, request: Request):
+        """
+        Unified mock provider handler for OpenAI API format (v1 path).
+        
+        Handles OpenAI-style requests and generates appropriate responses.
+        """
+        return await _handle_mock_provider_request(provider_name, request)
+    
+    @router.post("/mock-provider/{provider_name}/chat/completions")
+    async def unified_mock_provider_openai(provider_name: str, request: Request):
+        """
+        Unified mock provider handler for OpenAI API format (standard path).
+        
+        Handles OpenAI-style requests and generates appropriate responses.
+        """
+        return await _handle_mock_provider_request(provider_name, request)
+    
     @router.get("/mock-provider/{provider_name}/health")
     async def mock_provider_health(provider_name: str):
         """Health check for mock providers."""
@@ -91,8 +115,8 @@ def create_unified_mock_router() -> APIRouter:
         try:
             context_data = await request.json()
             
-            # Reconstruct TestScenario from JSON data
-            from .test_scenario import TestScenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
+            # Reconstruct Scenario from JSON data
+            from .test_scenario import Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
             
             providers = []
             for p_data in context_data.get("providers", []):
@@ -104,11 +128,12 @@ def create_unified_mock_router() -> APIRouter:
                     priority=p_data.get("priority", 1),
                     error_count=p_data.get("error_count", 0),
                     error_http_code=p_data.get("error_http_code", 500),
-                    error_message=p_data.get("error_message", "Mock provider error")
+                    error_message=p_data.get("error_message", "Mock provider error"),
+                    provider_type=p_data.get("provider_type", "anthropic")
                 )
                 providers.append(provider)
             
-            scenario = TestScenario(
+            scenario = Scenario(
                 name=context_data["name"],
                 providers=providers,
                 expected_behavior=ExpectedBehavior(context_data.get("expected_behavior", "success")),

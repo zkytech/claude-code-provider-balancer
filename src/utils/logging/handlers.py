@@ -75,6 +75,7 @@ class LogEvent(enum.Enum):
     # System events
     PARAMETER_UNSUPPORTED = "parameter_unsupported"
     FASTAPI_STARTUP_COMPLETE = "fastapi_startup_complete"
+    FASTAPI_STARTUP_FAILED = "fastapi_startup_failed"
     FASTAPI_SHUTDOWN = "fastapi_shutdown"
     HTTP_REQUEST = "http_request"
     

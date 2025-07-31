@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 # Import the new testing framework
 from framework import (
-    TestScenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
-    TestEnvironment
+    Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
+    Environment
 )
 
 # Test constants - all requests now go through balancer
@@ -27,7 +27,7 @@ class TestDuplicateRequestHandling:
     async def test_duplicate_non_streaming_requests(self):
         """Test duplicate non-streaming requests are properly cached."""
         # Create test scenario with duplicate caching behavior
-        scenario = TestScenario(
+        scenario = Scenario(
             name="duplicate_non_streaming",
             providers=[
                 ProviderConfig(
@@ -40,7 +40,7 @@ class TestDuplicateRequestHandling:
             description="Test non-streaming request caching"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             test_request = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -80,7 +80,7 @@ class TestDuplicateRequestHandling:
     @pytest.mark.asyncio
     async def test_duplicate_streaming_requests(self):
         """Test duplicate streaming requests are handled appropriately."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="duplicate_streaming", 
             providers=[
                 ProviderConfig(
@@ -92,7 +92,7 @@ class TestDuplicateRequestHandling:
             expected_behavior=ExpectedBehavior.SUCCESS
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             test_streaming_request = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -145,7 +145,7 @@ class TestDuplicateRequestHandling:
     @pytest.mark.asyncio
     async def test_mixed_streaming_non_streaming_duplicates(self):
         """Test duplicate requests with mixed streaming and non-streaming modes."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="mixed_duplicate",
             providers=[
                 ProviderConfig(
@@ -156,7 +156,7 @@ class TestDuplicateRequestHandling:
             ]
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             base_request = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -205,7 +205,7 @@ class TestDuplicateRequestHandling:
     @pytest.mark.asyncio
     async def test_concurrent_duplicate_requests(self):
         """Test concurrent duplicate requests are handled properly."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="concurrent_duplicate",
             providers=[
                 ProviderConfig(
@@ -217,7 +217,7 @@ class TestDuplicateRequestHandling:
             ]
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             test_request = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -268,7 +268,7 @@ class TestDuplicateRequestHandling:
     @pytest.mark.asyncio
     async def test_duplicate_requests_with_different_parameters(self):
         """Test that requests with different parameters are not considered duplicates."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="parameter_sensitive",
             providers=[
                 ProviderConfig(
@@ -279,7 +279,7 @@ class TestDuplicateRequestHandling:
             ]
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             base_messages = [
                 {
                     "role": "user",
@@ -327,7 +327,7 @@ class TestDuplicateRequestHandling:
     @pytest.mark.asyncio
     async def test_duplicate_requests_with_system_messages(self):
         """Test duplicate detection with system messages."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="system_message_duplicate",
             providers=[
                 ProviderConfig(
@@ -338,7 +338,7 @@ class TestDuplicateRequestHandling:
             ]
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -376,7 +376,7 @@ class TestDuplicateRequestHandling:
     @pytest.mark.asyncio
     async def test_duplicate_requests_with_tools(self):
         """Test duplicate detection with tool definitions."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="tools_duplicate",
             providers=[
                 ProviderConfig(
@@ -387,7 +387,7 @@ class TestDuplicateRequestHandling:
             ]
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -437,7 +437,7 @@ class TestDuplicateRequestHandling:
     @pytest.mark.asyncio
     async def test_cache_expiration_behavior(self):
         """Test cache expiration and refresh behavior."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="cache_expiration",
             providers=[
                 ProviderConfig(
@@ -448,7 +448,7 @@ class TestDuplicateRequestHandling:
             ]
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             test_request = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -486,7 +486,7 @@ class TestDuplicateRequestHandling:
     @pytest.mark.asyncio
     async def test_duplicate_detection_with_provider_failover(self):
         """Test duplicate detection when provider failover occurs."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="failover_duplicate",
             providers=[
                 ProviderConfig(
@@ -499,7 +499,7 @@ class TestDuplicateRequestHandling:
             expected_behavior=ExpectedBehavior.SUCCESS
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             test_request = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,

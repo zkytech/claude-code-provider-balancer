@@ -4,22 +4,24 @@ Simplified Testing Framework
 A framework for dynamic test configuration generation and simplified mock server management.
 """
 
-from .test_scenario import TestScenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
+from .test_scenario import Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
 from .config_factory import TestConfigFactory
 from .test_context import TestContextManager
-from .test_environment import TestEnvironment, ConfigurableTestEnvironment
+from .test_environment import Environment, ConfigurableEnvironment
 from .unified_mock import create_unified_mock_router
 from .response_generator import MockResponseGenerator
+from .test_app import create_test_app
 
 __all__ = [
-    'TestScenario',
+    'Scenario',
     'ProviderConfig',
     'ProviderBehavior', 
     'ExpectedBehavior',
     'TestConfigFactory',
     'TestContextManager',
-    'TestEnvironment',
-    'ConfigurableTestEnvironment',
+    'Environment',
+    'ConfigurableEnvironment',
     'create_unified_mock_router',
-    'MockResponseGenerator'
+    'MockResponseGenerator',
+    'create_test_app'
 ]

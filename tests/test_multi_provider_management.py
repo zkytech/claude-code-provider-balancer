@@ -3,6 +3,14 @@ Simplified tests for multi-provider management using the new testing framework.
 
 This file tests provider management, failover, and availability scenarios through
 HTTP requests with dynamic configuration generation.
+
+Failover Test Coverage:
+- test_basic_provider_failover: Core failover functionality (PRIMARY TEST)
+- test_concurrent_requests_with_failover: Concurrent request handling during failover
+- Additional specialized failover tests are in their respective files:
+  * test_streaming_requests.py: Streaming-specific failover
+  * test_provider_error_handling.py: Error-triggered failover
+  * test_mixed_provider_responses.py: Mixed provider type failover with status tracking
 """
 
 import asyncio
@@ -13,8 +21,8 @@ from typing import Dict, Any
 
 # Import the new testing framework
 from framework import (
-    TestScenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
-    TestEnvironment
+    Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
+    Environment
 )
 
 # Test constants - all requests now go through balancer
@@ -27,7 +35,7 @@ class TestMultiProviderManagement:
     @pytest.mark.asyncio
     async def test_primary_provider_success(self):
         """Test successful request to primary provider."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="primary_success_test",
             providers=[
                 ProviderConfig(
@@ -43,7 +51,7 @@ class TestMultiProviderManagement:
             description="Test primary provider handles requests successfully"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -62,9 +70,14 @@ class TestMultiProviderManagement:
                 assert "Primary provider successful response" in data["content"][0]["text"]
 
     @pytest.mark.asyncio
-    async def test_failover_to_secondary_provider(self):
-        """Test failover when primary provider fails."""
-        scenario = TestScenario(
+    async def test_basic_provider_failover(self):
+        """
+        Core test for basic provider failover functionality.
+        
+        This is the primary test for failover behavior. Other failover tests in different 
+        files focus on specific scenarios (streaming, concurrent, error handling, etc.).
+        """
+        scenario = Scenario(
             name="failover_test",
             providers=[
                 ProviderConfig(
@@ -91,7 +104,7 @@ class TestMultiProviderManagement:
             }
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -111,7 +124,7 @@ class TestMultiProviderManagement:
     @pytest.mark.asyncio
     async def test_all_providers_unavailable(self):
         """Test scenario when all providers are unavailable."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="all_providers_error_test",
             providers=[
                 ProviderConfig(
@@ -133,7 +146,7 @@ class TestMultiProviderManagement:
             description="Test behavior when all providers are unavailable"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -152,7 +165,7 @@ class TestMultiProviderManagement:
     @pytest.mark.asyncio
     async def test_provider_cooldown_mechanism(self):
         """Test provider cooldown mechanism after failures."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="cooldown_test",
             providers=[
                 ProviderConfig(
@@ -170,7 +183,7 @@ class TestMultiProviderManagement:
             }
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -191,7 +204,7 @@ class TestMultiProviderManagement:
     @pytest.mark.asyncio
     async def test_provider_recovery_after_cooldown(self):
         """Test provider recovery after cooldown period."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="recovery_test",
             providers=[
                 ProviderConfig(
@@ -210,7 +223,7 @@ class TestMultiProviderManagement:
             }
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -228,52 +241,9 @@ class TestMultiProviderManagement:
                 assert "Provider recovered successfully" in data["content"][0]["text"]
 
     @pytest.mark.asyncio
-    async def test_streaming_failover(self):
-        """Test failover for streaming requests."""
-        scenario = TestScenario(
-            name="streaming_failover_test",
-            providers=[
-                ProviderConfig(
-                    "streaming_error_provider",
-                    ProviderBehavior.ERROR,
-                    priority=1,
-                    error_http_code=500,
-                    error_message="Streaming provider error"
-                ),
-                ProviderConfig(
-                    "streaming_success_provider",
-                    ProviderBehavior.STREAMING_SUCCESS,
-                    priority=2,
-                    response_data={
-                        "content": "Streaming failover success"
-                    }
-                )
-            ],
-            expected_behavior=ExpectedBehavior.FAILOVER,
-            description="Test streaming request failover behavior"
-        )
-        
-        async with TestEnvironment(scenario) as env:
-            request_data = {
-                "model": env.effective_model_name,
-                "max_tokens": 100,
-                "stream": True,
-                "messages": [{"role": "user", "content": "Test streaming failover"}]
-            }
-            
-            async with httpx.AsyncClient() as client:
-                # Test streaming failover through balancer
-                response = await client.post(
-                    f"{env.balancer_url}/v1/messages",
-                    json=request_data
-                )
-                assert response.status_code == 200
-                assert "text/event-stream" in response.headers.get("content-type", "")
-
-    @pytest.mark.asyncio
     async def test_provider_priority_ordering(self):
         """Test that providers are selected based on priority ordering."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="priority_test",
             providers=[
                 ProviderConfig(
@@ -297,7 +267,7 @@ class TestMultiProviderManagement:
             description="Test provider priority ordering"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -319,7 +289,7 @@ class TestMultiProviderManagement:
     async def test_provider_type_specific_error_handling(self):
         """Test error handling specific to different provider types."""
         # Test Anthropic provider error handling
-        anthropic_scenario = TestScenario(
+        anthropic_scenario = Scenario(
             name="anthropic_error_handling_test",
             providers=[
                 ProviderConfig(
@@ -334,7 +304,7 @@ class TestMultiProviderManagement:
             description="Test Anthropic provider error handling"
         )
         
-        async with TestEnvironment(anthropic_scenario) as env:
+        async with Environment(anthropic_scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -353,7 +323,7 @@ class TestMultiProviderManagement:
                 assert "Anthropic provider error" in error_data["error"]["message"]
 
         # Test OpenAI provider error handling
-        openai_scenario = TestScenario(
+        openai_scenario = Scenario(
             name="openai_error_handling_test",
             providers=[
                 ProviderConfig(
@@ -368,7 +338,7 @@ class TestMultiProviderManagement:
             description="Test OpenAI provider error handling"
         )
         
-        async with TestEnvironment(openai_scenario) as env:
+        async with Environment(openai_scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -388,7 +358,7 @@ class TestMultiProviderManagement:
     @pytest.mark.asyncio
     async def test_concurrent_requests_with_failover(self):
         """Test concurrent requests during provider failover."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="concurrent_failover_test",
             providers=[
                 ProviderConfig(
@@ -415,7 +385,7 @@ class TestMultiProviderManagement:
             }
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             async def make_request(client, content_suffix=""):
                 return await client.post(
                     f"{env.balancer_url}/v1/messages",
@@ -452,7 +422,7 @@ class TestMultiProviderManagement:
         ]
         
         for model_name, expected_content in test_cases:
-            scenario = TestScenario(
+            scenario = Scenario(
                 name=f"model_routing_test_{model_name.replace('-', '_').replace('.', '_')}",
                 providers=[
                     ProviderConfig(
@@ -464,10 +434,11 @@ class TestMultiProviderManagement:
                     )
                 ],
                 expected_behavior=ExpectedBehavior.SUCCESS,
-                description=f"Test routing for model {model_name}"
+                description=f"Test routing for model {model_name}",
+                model_name=model_name  # Set the specific model name for this scenario
             )
             
-            async with TestEnvironment(scenario) as env:
+            async with Environment(scenario) as env:
                 request_data = {
                     "model": model_name,  # Use the specific model name for routing
                     "max_tokens": 100,
@@ -487,7 +458,7 @@ class TestMultiProviderManagement:
     @pytest.mark.asyncio
     async def test_sticky_routing_behavior(self):
         """Test sticky routing behavior after successful provider selection."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="sticky_routing_test",
             providers=[
                 ProviderConfig(
@@ -505,7 +476,7 @@ class TestMultiProviderManagement:
             }
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -536,7 +507,7 @@ class TestMultiProviderManagement:
     @pytest.mark.asyncio
     async def test_provider_health_status_tracking(self):
         """Test provider health status is properly tracked."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="health_tracking_test",
             providers=[
                 ProviderConfig(
@@ -557,7 +528,7 @@ class TestMultiProviderManagement:
             description="Test provider health status tracking"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -580,7 +551,7 @@ class TestMultiProviderManagement:
     async def test_provider_selection_strategies(self):
         """Test different provider selection strategies."""
         # Test priority-based selection
-        priority_scenario = TestScenario(
+        priority_scenario = Scenario(
             name="priority_strategy_test",
             providers=[
                 ProviderConfig(
@@ -607,7 +578,7 @@ class TestMultiProviderManagement:
             }
         )
         
-        async with TestEnvironment(priority_scenario) as env:
+        async with Environment(priority_scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -637,7 +608,7 @@ class TestMultiProviderManagement:
         ]
         
         for behavior, expected_code, expected_message in error_types:
-            scenario = TestScenario(
+            scenario = Scenario(
                 name=f"error_classification_{behavior.value}_test",
                 providers=[
                     ProviderConfig(
@@ -651,7 +622,7 @@ class TestMultiProviderManagement:
                 description=f"Test {behavior.value} error classification"
             )
             
-            async with TestEnvironment(scenario) as env:
+            async with Environment(scenario) as env:
                 request_data = {
                     "model": env.effective_model_name,
                     "max_tokens": 100,

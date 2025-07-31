@@ -7,8 +7,8 @@ This file demonstrates and validates the new testing framework components.
 import pytest
 import asyncio
 from framework import (
-    TestScenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
-    TestConfigFactory, TestContextManager, TestEnvironment
+    Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
+    TestConfigFactory, TestContextManager, Environment
 )
 
 
@@ -40,13 +40,13 @@ class TestFrameworkValidation:
         assert config3.response_data == {"content": "custom response"}
 
     def test_test_scenario_creation(self):
-        """Test TestScenario creation and methods."""
+        """Test Scenario creation and methods."""
         providers = [
             ProviderConfig("primary", ProviderBehavior.ERROR, priority=1),
             ProviderConfig("secondary", ProviderBehavior.SUCCESS, priority=2)
         ]
         
-        scenario = TestScenario(
+        scenario = Scenario(
             name="test_scenario",
             providers=providers,
             expected_behavior=ExpectedBehavior.FAILOVER,
@@ -100,7 +100,7 @@ class TestFrameworkValidation:
         """Test complex scenario configuration generation."""
         factory = TestConfigFactory()
         
-        scenario = TestScenario(
+        scenario = Scenario(
             name="complex_test",
             providers=[
                 ProviderConfig("primary_fail", ProviderBehavior.ERROR, priority=1),
@@ -143,7 +143,7 @@ class TestFrameworkValidation:
         assert not TestContextManager.is_context_set()
         
         # Set a scenario
-        scenario = TestScenario(
+        scenario = Scenario(
             name="context_test",
             providers=[ProviderConfig("test_provider", ProviderBehavior.SUCCESS)]
         )
@@ -163,14 +163,14 @@ class TestFrameworkValidation:
 
     @pytest.mark.asyncio
     async def test_test_environment_basic(self):
-        """Test basic TestEnvironment usage."""
-        scenario = TestScenario(
+        """Test basic Environment usage."""
+        scenario = Scenario(
             name="env_test",
             providers=[ProviderConfig("env_provider", ProviderBehavior.SUCCESS)]
         )
         
         # Test context manager
-        async with TestEnvironment(scenario, "env-test-model") as env:
+        async with Environment(scenario, "env-test-model") as env:
             # Should have set context
             assert TestContextManager.is_context_set()
             current = TestContextManager.get_current_context()
@@ -194,13 +194,13 @@ class TestFrameworkValidation:
 
     @pytest.mark.asyncio
     async def test_test_environment_auto_model_name(self):
-        """Test TestEnvironment with automatic model name generation."""
-        scenario = TestScenario(
+        """Test Environment with automatic model name generation."""
+        scenario = Scenario(
             name="auto_model_test",
             providers=[ProviderConfig("auto_provider", ProviderBehavior.SUCCESS)]
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             # Should have generated a model name
             model_name = env.effective_model_name
             assert model_name.startswith("test-")
@@ -252,8 +252,8 @@ class TestFrameworkValidation:
         config = ProviderConfig("test", "success")
         assert config.behavior == ProviderBehavior.SUCCESS
         
-        # Test string to enum conversion in TestScenario
-        scenario = TestScenario(
+        # Test string to enum conversion in Scenario
+        scenario = Scenario(
             name="test",
             providers=[config],
             expected_behavior="failover"

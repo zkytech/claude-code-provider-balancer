@@ -4,7 +4,7 @@ Dynamic configuration factory for test scenarios.
 
 import uuid
 from typing import Dict, List, Any, Optional
-from .test_scenario import TestScenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
+from .test_scenario import Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
 
 
 class TestConfigFactory:
@@ -13,7 +13,7 @@ class TestConfigFactory:
     def __init__(self, mock_server_base: str = "http://localhost:8998"):
         self.mock_server_base = mock_server_base
     
-    def create_config(self, scenario: TestScenario, model_name: Optional[str] = None) -> Dict[str, Any]:
+    def create_config(self, scenario: Scenario, model_name: Optional[str] = None) -> Dict[str, Any]:
         """Generate complete configuration from test scenario."""
         # Use scenario model_name if provided, otherwise use passed model_name or generate one
         final_model_name = scenario.model_name or model_name or f"test-{uuid.uuid4().hex[:8]}"
@@ -142,7 +142,7 @@ class TestConfigFactory:
     # Convenience methods for common scenarios
     def create_simple_success_config(self, model_name: Optional[str] = None) -> Dict[str, Any]:
         """Create simple success scenario configuration."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="simple_success",
             providers=[ProviderConfig("success_provider", ProviderBehavior.SUCCESS)],
             expected_behavior=ExpectedBehavior.SUCCESS
@@ -151,7 +151,7 @@ class TestConfigFactory:
     
     def create_failover_config(self, model_name: Optional[str] = None) -> Dict[str, Any]:
         """Create failover scenario configuration."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="failover_test", 
             providers=[
                 ProviderConfig("primary_fail", ProviderBehavior.ERROR, priority=1),
@@ -163,7 +163,7 @@ class TestConfigFactory:
     
     def create_duplicate_test_config(self, model_name: Optional[str] = None) -> Dict[str, Any]:
         """Create duplicate request test configuration."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="duplicate_test",
             providers=[
                 ProviderConfig(
@@ -178,7 +178,7 @@ class TestConfigFactory:
     
     def create_all_providers_fail_config(self, model_name: Optional[str] = None) -> Dict[str, Any]:
         """Create all providers fail scenario configuration."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="all_fail",
             providers=[
                 ProviderConfig("fail1", ProviderBehavior.ERROR, priority=1),
@@ -190,7 +190,7 @@ class TestConfigFactory:
     
     def create_timeout_test_config(self, model_name: Optional[str] = None) -> Dict[str, Any]:
         """Create timeout test scenario configuration."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="timeout_test",
             providers=[
                 ProviderConfig("timeout_provider", ProviderBehavior.TIMEOUT, delay_ms=5000)

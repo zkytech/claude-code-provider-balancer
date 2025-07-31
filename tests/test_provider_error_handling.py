@@ -14,8 +14,8 @@ import httpx
 
 # Import the new testing framework
 from framework import (
-    TestScenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
-    TestEnvironment
+    Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior,
+    Environment
 )
 
 # Test constants - all requests now go through balancer
@@ -35,7 +35,7 @@ class TestProviderErrorHandling:
         Test that when multiple providers fail consecutively, each provider returns
         its own distinct error message without contamination from other providers.
         """
-        scenario = TestScenario(
+        scenario = Scenario(
             name="consecutive_failures_error_isolation",
             providers=[
                 ProviderConfig(
@@ -64,7 +64,7 @@ class TestProviderErrorHandling:
             description="Test error isolation when all providers fail consecutively"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -112,7 +112,7 @@ class TestProviderErrorHandling:
         Test that different provider types return their own specific error messages
         without contamination from other provider types.
         """
-        scenario = TestScenario(
+        scenario = Scenario(
             name="provider_error_context_validation",
             providers=[
                 ProviderConfig(
@@ -136,7 +136,7 @@ class TestProviderErrorHandling:
             description="Test provider context validation in error responses"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -170,7 +170,7 @@ class TestProviderErrorHandling:
         Test error isolation for both streaming and non-streaming requests
         to ensure the error types are correctly identified.
         """
-        scenario = TestScenario(
+        scenario = Scenario(
             name="stream_vs_non_stream_error_isolation",
             providers=[
                 ProviderConfig(
@@ -192,7 +192,7 @@ class TestProviderErrorHandling:
             description="Test error isolation for different request types"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -226,7 +226,7 @@ class TestProviderErrorHandling:
         Test that error messages from different provider attempts are unique
         and don't contain residual information from previous attempts.
         """
-        scenario = TestScenario(
+        scenario = Scenario(
             name="error_message_uniqueness_test",
             providers=[
                 ProviderConfig(
@@ -255,7 +255,7 @@ class TestProviderErrorHandling:
             description="Test uniqueness of error messages across provider attempts"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -306,7 +306,7 @@ class TestProviderErrorHandling:
     @pytest.mark.asyncio
     async def test_single_error_does_not_trigger_unhealthy(self):
         """Test that a single error doesn't immediately mark provider as unhealthy."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="single_error_test",
             providers=[
                 ProviderConfig(
@@ -324,7 +324,7 @@ class TestProviderErrorHandling:
             }
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -346,7 +346,7 @@ class TestProviderErrorHandling:
     async def test_multiple_errors_trigger_unhealthy_behavior(self):
         """Test that multiple errors can trigger unhealthy behavior patterns."""
         # Create scenario with multiple providers to test failover behavior
-        scenario = TestScenario(
+        scenario = Scenario(
             name="multiple_errors_test",
             providers=[
                 ProviderConfig(
@@ -373,7 +373,7 @@ class TestProviderErrorHandling:
             }
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -381,26 +381,29 @@ class TestProviderErrorHandling:
             }
             
             async with httpx.AsyncClient() as client:
-                # Test that primary provider fails as expected
+                # Test that primary provider fails but balancer successfully fails over
                 response1 = await client.post(
                     f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
-                assert response1.status_code == 503
+                # Should return 200 because failover to backup provider succeeded
+                assert response1.status_code == 200
+                data1 = response1.json()
+                assert "Backup provider response" in data1["content"][0]["text"]
                 
-                # Test that backup provider succeeds
+                # Test that subsequent requests continue to use backup provider
                 response2 = await client.post(
                     f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 assert response2.status_code == 200
-                data = response2.json()
-                assert "Backup provider response" in data["content"][0]["text"]
+                data2 = response2.json()
+                assert "Backup provider response" in data2["content"][0]["text"]
 
     @pytest.mark.asyncio
     async def test_success_resets_error_patterns(self):
         """Test that successful requests don't accumulate error patterns."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="success_reset_test",
             providers=[
                 ProviderConfig(
@@ -415,7 +418,7 @@ class TestProviderErrorHandling:
             description="Test success resets error accumulation patterns"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -436,7 +439,7 @@ class TestProviderErrorHandling:
     @pytest.mark.asyncio
     async def test_independent_error_counting_across_providers(self):
         """Test that error counts are independent for different providers."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="independent_counting_test",
             providers=[
                 ProviderConfig(
@@ -457,7 +460,7 @@ class TestProviderErrorHandling:
             description="Test independent error counting across providers"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -491,7 +494,7 @@ class TestProviderErrorHandling:
         Test that different types of errors (HTTP codes, connection errors, etc.)
         are properly isolated and don't cross-contaminate.
         """
-        scenario = TestScenario(
+        scenario = Scenario(
             name="mixed_error_types_isolation",
             providers=[
                 ProviderConfig(
@@ -520,7 +523,7 @@ class TestProviderErrorHandling:
             description="Test isolation of mixed error types"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -568,7 +571,7 @@ class TestProviderErrorHandling:
     async def test_error_classification_behaviors(self):
         """Test different error classifications and their unhealthy triggers."""
         # Test HTTP status code classification
-        http_error_scenario = TestScenario(
+        http_error_scenario = Scenario(
             name="http_error_classification",
             providers=[
                 ProviderConfig(
@@ -582,7 +585,7 @@ class TestProviderErrorHandling:
             description="Test HTTP error code classification"
         )
         
-        async with TestEnvironment(http_error_scenario) as env:
+        async with Environment(http_error_scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -602,7 +605,7 @@ class TestProviderErrorHandling:
     @pytest.mark.asyncio
     async def test_connection_error_classification(self):
         """Test connection error classification and handling."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="connection_error_classification",
             providers=[
                 ProviderConfig(
@@ -616,7 +619,7 @@ class TestProviderErrorHandling:
             description="Test connection error classification"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -636,7 +639,7 @@ class TestProviderErrorHandling:
     @pytest.mark.asyncio
     async def test_insufficient_credits_error_handling(self):
         """Test insufficient credits error classification."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="insufficient_credits_test",
             providers=[
                 ProviderConfig(
@@ -650,7 +653,7 @@ class TestProviderErrorHandling:
             description="Test insufficient credits error handling"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -670,7 +673,7 @@ class TestProviderErrorHandling:
     @pytest.mark.asyncio
     async def test_rate_limit_error_handling(self):
         """Test rate limit error classification and behavior."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="rate_limit_test",
             providers=[
                 ProviderConfig(
@@ -684,7 +687,7 @@ class TestProviderErrorHandling:
             description="Test rate limit error handling"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -704,7 +707,7 @@ class TestProviderErrorHandling:
     @pytest.mark.asyncio
     async def test_timeout_error_handling(self):
         """Test timeout error classification and behavior."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="timeout_test",
             providers=[
                 ProviderConfig(
@@ -718,7 +721,7 @@ class TestProviderErrorHandling:
             description="Test timeout error handling"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -745,7 +748,7 @@ class TestProviderErrorHandling:
     async def test_unhealthy_threshold_behavior(self):
         """Test that unhealthy threshold settings affect provider behavior."""
         # Test with different threshold settings
-        low_threshold_scenario = TestScenario(
+        low_threshold_scenario = Scenario(
             name="low_threshold_test",
             providers=[
                 ProviderConfig(
@@ -763,7 +766,7 @@ class TestProviderErrorHandling:
             }
         )
         
-        async with TestEnvironment(low_threshold_scenario) as env:
+        async with Environment(low_threshold_scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -778,12 +781,12 @@ class TestProviderErrorHandling:
                 
                 assert response.status_code == 503
                 error_data = response.json()
-                assert "Service Unavailable" in error_data["error"]["message"]
+                assert "All configured providers" in error_data["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_provider_recovery_after_errors(self):
         """Test provider recovery patterns after error periods."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="recovery_test",
             providers=[
                 ProviderConfig(
@@ -798,7 +801,7 @@ class TestProviderErrorHandling:
             description="Test provider recovery after error periods"
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -872,7 +875,7 @@ class TestProviderErrorHandling:
             try:
                 # Send pre-serialized JSON to a simple endpoint to test Unicode handling
                 # We'll use a mock provider that can handle the request
-                scenario = TestScenario(
+                scenario = Scenario(
                     name="unicode_handling_validation",
                     providers=[
                         ProviderConfig(
@@ -885,7 +888,7 @@ class TestProviderErrorHandling:
                     description="Validate Unicode handling in balancer"
                 )
                 
-                async with TestEnvironment(scenario) as env:
+                async with Environment(scenario) as env:
                     response = await client.post(
                         f"{env.balancer_url}/v1/messages",
                         content=json_data,
@@ -931,7 +934,7 @@ class TestProviderErrorHandling:
     @pytest.mark.asyncio
     async def test_unhealthy_reset_timeout_functionality(self):
         """Test that error counts are reset after unhealthy_reset_timeout period."""
-        scenario = TestScenario(
+        scenario = Scenario(
             name="timeout_reset_test", 
             providers=[
                 ProviderConfig(
@@ -950,7 +953,7 @@ class TestProviderErrorHandling:
             }
         )
         
-        async with TestEnvironment(scenario) as env:
+        async with Environment(scenario) as env:
             request_data = {
                 "model": env.effective_model_name,
                 "max_tokens": 100,
@@ -972,7 +975,7 @@ class TestProviderErrorHandling:
                     f"{env.balancer_url}/v1/messages", 
                     json=request_data
                 )
-                assert response2.status_code == 500
+                assert response2.status_code == 404  # All providers unavailable after threshold reached
                 
                 # Wait for timeout reset (3 seconds > 2 seconds timeout)
                 await asyncio.sleep(3)

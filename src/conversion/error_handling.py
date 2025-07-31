@@ -78,7 +78,9 @@ def get_anthropic_error_details_from_exc(
             # Extract provider name from "HTTP 400 from provider YourAPI" format
             parts = error_str.split("provider")
             if len(parts) > 1:
-                provider_name = parts[1].strip().split()[0]
+                provider_part = parts[1].strip().split()
+                if provider_part:  # Check if the split result is not empty
+                    provider_name = provider_part[0]
         
         if response:
             try:

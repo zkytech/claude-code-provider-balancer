@@ -1124,7 +1124,7 @@ def init_oauth_manager(config_settings: Optional[Dict[str, Any]] = None):
     oauth_manager = OAuthManager(enable_persistence=enable_persistence, proxy=proxy)
     oauth_manager.service_name = service_name
     
-    info(LogRecord(
+    debug(LogRecord(
         event=LogEvent.OAUTH_MANAGER_INITIALIZED.value,
         message=f"OAuth manager initialized (persistence: {enable_persistence}, service: {service_name}, proxy: {proxy})"
     ))
