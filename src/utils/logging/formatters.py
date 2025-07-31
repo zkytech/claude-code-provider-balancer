@@ -39,6 +39,23 @@ def mask_sensitive_data(data: Any, mask_char: str = "*") -> Any:
         return data
 
 
+def _safe_json_dumps(data: Any) -> str:
+    """Safely serialize data to JSON with fallback handling for encoding issues."""
+    try:
+        return json.dumps(data, ensure_ascii=False)
+    except UnicodeEncodeError:
+        try:
+            # Fall back to ASCII encoding for invalid Unicode characters
+            return json.dumps(data, ensure_ascii=True)
+        except Exception:
+            # Final fallback: convert to string representation
+            try:
+                return json.dumps({"message": str(data)}, ensure_ascii=True)
+            except Exception:
+                # Last resort: return a basic error message
+                return '{"message": "Log formatting error: unable to serialize data"}'
+
+
 def mask_sensitive_string(text: str, mask_char: str = "*") -> str:
     """Mask sensitive information in strings like API keys, tokens, etc."""
     if not isinstance(text, str):
@@ -126,10 +143,10 @@ class ColoredConsoleFormatter(logging.Formatter):
             else:
                 color = self.COLORS.get(record.levelname, '')
             
-            formatted_json = json.dumps(log_dict, ensure_ascii=False)
+            formatted_json = _safe_json_dumps(log_dict)
             return f"{color}{formatted_json}{self.RESET}"
         else:
-            return json.dumps(log_dict, ensure_ascii=False)
+            return _safe_json_dumps(log_dict)
 
     def _get_simplified_log_dict(self, record: logging.LogRecord) -> dict:
         """Extract simplified log dictionary for console output."""
@@ -257,7 +274,7 @@ class JSONFormatter(logging.Formatter):
                     ),
                     "args": exc_value.args if hasattr(exc_value, "args") else [],
                 }
-        return json.dumps(header, ensure_ascii=False)
+        return _safe_json_dumps(header)
 
 
 class ConsoleJSONFormatter(JSONFormatter):
@@ -273,7 +290,7 @@ class ConsoleJSONFormatter(JSONFormatter):
         elif "error" in log_dict and log_dict["error"]:
             if "stack_trace" in log_dict["error"]:
                 del log_dict["error"]["stack_trace"]
-        return json.dumps(log_dict)
+        return _safe_json_dumps(log_dict)
 
 
 class UvicornAccessFormatter(logging.Formatter):
