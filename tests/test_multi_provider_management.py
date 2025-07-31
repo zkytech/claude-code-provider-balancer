@@ -53,7 +53,7 @@ class TestMultiProviderManagement:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test primary provider success"}]
             }
@@ -106,7 +106,7 @@ class TestMultiProviderManagement:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test failover to secondary"}]
             }
@@ -148,7 +148,7 @@ class TestMultiProviderManagement:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test all providers unavailable"}]
             }
@@ -185,7 +185,7 @@ class TestMultiProviderManagement:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test cooldown mechanism"}]
             }
@@ -225,7 +225,7 @@ class TestMultiProviderManagement:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test provider recovery"}]
             }
@@ -269,7 +269,7 @@ class TestMultiProviderManagement:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test priority ordering"}]
             }
@@ -306,7 +306,7 @@ class TestMultiProviderManagement:
         
         async with Environment(anthropic_scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test Anthropic error handling"}]
             }
@@ -340,7 +340,7 @@ class TestMultiProviderManagement:
         
         async with Environment(openai_scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test OpenAI error handling"}]
             }
@@ -390,7 +390,7 @@ class TestMultiProviderManagement:
                 return await client.post(
                     f"{env.balancer_url}/v1/messages",
                     json={
-                        "model": env.effective_model_name,
+                        "model": env.model_name,
                         "max_tokens": 100,
                         "messages": [{"role": "user", "content": f"Concurrent request {content_suffix}"}]
                     }
@@ -478,7 +478,7 @@ class TestMultiProviderManagement:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test sticky routing"}]
             }
@@ -530,7 +530,7 @@ class TestMultiProviderManagement:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test health tracking"}]
             }
@@ -580,7 +580,7 @@ class TestMultiProviderManagement:
         
         async with Environment(priority_scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test priority selection"}]
             }
@@ -624,7 +624,7 @@ class TestMultiProviderManagement:
             
             async with Environment(scenario) as env:
                 request_data = {
-                    "model": env.effective_model_name,
+                    "model": env.model_name,
                     "max_tokens": 100,
                     "messages": [{"role": "user", "content": f"Test {behavior.value}"}]
                 }

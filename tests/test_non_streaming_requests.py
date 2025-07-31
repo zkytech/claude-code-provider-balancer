@@ -43,7 +43,7 @@ class TestNonStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Hello, test message"}]
             }
@@ -90,7 +90,7 @@ class TestNonStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "system": "You are a helpful assistant.",
                 "messages": [
@@ -133,7 +133,7 @@ class TestNonStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "temperature": 0.7,
                 "messages": [{"role": "user", "content": "Test temperature"}]
@@ -169,7 +169,7 @@ class TestNonStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test 500 error"}]
             }
@@ -204,7 +204,7 @@ class TestNonStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test 401 error"}]
             }
@@ -239,7 +239,7 @@ class TestNonStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test 429 error"}]
             }
@@ -274,7 +274,7 @@ class TestNonStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test connection error"}]
             }
@@ -309,7 +309,7 @@ class TestNonStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test timeout error"}]
             }
@@ -354,7 +354,7 @@ class TestNonStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
@@ -420,7 +420,7 @@ class TestNonStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test custom format"}]
             }
@@ -458,7 +458,7 @@ class TestNonStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test delayed response"}]
             }
@@ -501,7 +501,7 @@ class TestNonStreamingRequests:
         
         async with Environment(ssl_scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test SSL error"}]
             }
@@ -535,7 +535,7 @@ class TestNonStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test insufficient credits"}]
             }

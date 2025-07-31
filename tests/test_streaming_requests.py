@@ -44,7 +44,7 @@ class TestStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "Test streaming response"}]
@@ -93,7 +93,7 @@ class TestStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "Test streaming error"}]
@@ -129,7 +129,7 @@ class TestStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "Test timeout"}]
@@ -177,7 +177,7 @@ class TestStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "Test streaming failover"}]
@@ -211,7 +211,7 @@ class TestStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "Test rate limit"}]
@@ -247,7 +247,7 @@ class TestStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "Test connection error"}]
@@ -283,7 +283,7 @@ class TestStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "Test service unavailable"}]
@@ -319,7 +319,7 @@ class TestStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "Test insufficient credits"}]
@@ -363,7 +363,7 @@ class TestStreamingRequests:
             
             async with Environment(scenario) as env:
                 request_data = {
-                    "model": env.effective_model_name,  # Use the test framework's unique model name
+                    "model": env.model_name,  # Use the test framework's unique model name
                     "max_tokens": 100,
                     "stream": True,
                     "messages": [{"role": "user", "content": f"Test streaming for {model_name}"}]
@@ -417,7 +417,7 @@ class TestStreamingRequests:
                 return await client.post(
                     f"{env.balancer_url}/v1/messages",
                     json={
-                        "model": env.effective_model_name,
+                        "model": env.model_name,
                         "max_tokens": 100,
                         "stream": True,
                         "messages": [{"role": "user", "content": f"Concurrent test {content_suffix}"}]
@@ -467,7 +467,7 @@ class TestStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 1000,
                 "stream": True,
                 "messages": [{"role": "user", "content": "Generate a large response"}]
@@ -514,7 +514,7 @@ class TestStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "Generate empty response"}]
@@ -558,7 +558,7 @@ class TestStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "system": "You are a helpful assistant.",
@@ -609,7 +609,7 @@ class TestStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "temperature": 0.7,
@@ -647,7 +647,7 @@ class TestStreamingRequests:
         
         async with Environment(anthropic_scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "Test Anthropic streaming"}]
@@ -681,7 +681,7 @@ class TestStreamingRequests:
         
         async with Environment(openai_scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "Test OpenAI streaming"}]
@@ -716,7 +716,7 @@ class TestStreamingRequests:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "Test error recovery"}]
@@ -769,20 +769,20 @@ class TestStreamingRequests:
             # Test with various valid parameters
             test_cases = [
                 {
-                    "model": env.effective_model_name,
+                    "model": env.model_name,
                     "max_tokens": 100,
                     "stream": True,
                     "messages": [{"role": "user", "content": "Basic validation test"}]
                 },
                 {
-                    "model": env.effective_model_name,
+                    "model": env.model_name,
                     "max_tokens": 200,
                     "stream": True,
                     "temperature": 0.5,
                     "messages": [{"role": "user", "content": "Temperature validation test"}]
                 },
                 {
-                    "model": env.effective_model_name,
+                    "model": env.model_name,
                     "max_tokens": 150,
                     "stream": True,
                     "top_p": 0.9,

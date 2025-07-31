@@ -76,8 +76,14 @@ class TestFrameworkValidation:
         """Test basic configuration generation."""
         factory = TestConfigFactory()
         
-        # Test simple success config
-        config = factory.create_simple_success_config("test-model")
+        # Create scenario instead of using removed convenience method
+        from framework import Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
+        scenario = Scenario(
+            name="simple_success",
+            providers=[ProviderConfig("success_provider", ProviderBehavior.SUCCESS)],
+            expected_behavior=ExpectedBehavior.SUCCESS
+        )
+        config = factory.create_config(scenario, "test-model")
         
         assert "providers" in config
         assert "model_routes" in config
@@ -166,18 +172,19 @@ class TestFrameworkValidation:
         """Test basic Environment usage."""
         scenario = Scenario(
             name="env_test",
-            providers=[ProviderConfig("env_provider", ProviderBehavior.SUCCESS)]
+            providers=[ProviderConfig("env_provider", ProviderBehavior.SUCCESS)],
+            model_name="env-test-model"  # Set model name in scenario
         )
         
         # Test context manager
-        async with Environment(scenario, "env-test-model") as env:
+        async with Environment(scenario) as env:
             # Should have set context
             assert TestContextManager.is_context_set()
             current = TestContextManager.get_current_context()
             assert current.name == "env_test"
             
             # Should have effective model name
-            assert env.effective_model_name == "env-test-model"
+            assert env.model_name == "env-test-model"
             
             # Should have generated config
             config = env.config
@@ -202,7 +209,7 @@ class TestFrameworkValidation:
         
         async with Environment(scenario) as env:
             # Should have generated a model name
-            model_name = env.effective_model_name
+            model_name = env.model_name
             assert model_name.startswith("test-")
             assert len(model_name) > 5  # Should have generated suffix
             
@@ -214,8 +221,17 @@ class TestFrameworkValidation:
         """Test convenience configuration methods."""
         factory = TestConfigFactory()
         
-        # Test failover config
-        failover_config = factory.create_failover_config("failover-model")
+        # Test failover scenario
+        from framework import Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
+        failover_scenario = Scenario(
+            name="failover_test", 
+            providers=[
+                ProviderConfig("primary_fail", ProviderBehavior.ERROR, priority=1),
+                ProviderConfig("secondary_success", ProviderBehavior.SUCCESS, priority=2)
+            ],
+            expected_behavior=ExpectedBehavior.FAILOVER
+        )
+        failover_config = factory.create_config(failover_scenario, "failover-model")
         providers = failover_config["providers"]
         assert len(providers) == 2
         
@@ -223,14 +239,33 @@ class TestFrameworkValidation:
         assert routes[0]["priority"] == 1
         assert routes[1]["priority"] == 2
         
-        # Test duplicate test config
-        duplicate_config = factory.create_duplicate_test_config("duplicate-model")
+        # Test duplicate scenario
+        duplicate_scenario = Scenario(
+            name="duplicate_test",
+            providers=[
+                ProviderConfig(
+                    "duplicate_provider", 
+                    ProviderBehavior.DUPLICATE_CACHE,
+                    response_data={"content": "cached_response"}
+                )
+            ],
+            expected_behavior=ExpectedBehavior.SUCCESS
+        )
+        duplicate_config = factory.create_config(duplicate_scenario, "duplicate-model")
         providers = duplicate_config["providers"]
         assert len(providers) == 1
         assert providers[0]["name"] == "duplicate_provider"
         
-        # Test all fail config
-        all_fail_config = factory.create_all_providers_fail_config("fail-model")
+        # Test all fail scenario
+        all_fail_scenario = Scenario(
+            name="all_fail",
+            providers=[
+                ProviderConfig("fail1", ProviderBehavior.ERROR, priority=1),
+                ProviderConfig("fail2", ProviderBehavior.ERROR, priority=2)
+            ],
+            expected_behavior=ExpectedBehavior.ERROR
+        )
+        all_fail_config = factory.create_config(all_fail_scenario, "fail-model")
         providers = all_fail_config["providers"]
         assert len(providers) == 2
         # Both should be configured for errors

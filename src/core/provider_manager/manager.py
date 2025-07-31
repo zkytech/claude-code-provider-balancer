@@ -485,32 +485,39 @@ class ProviderManager:
         for provider in self.providers:
             provider.mark_success()  # Reset failure count and last_failure_time
     
-    def check_and_reset_timeout_errors(self):
-        """检查并重置超时的provider错误状态"""
+    
+    def check_and_reset_timeout_errors(self, request_id: str = ""):
+        """检查并重置超时的错误计数（内部辅助函数）"""
         if self.unhealthy_reset_timeout <= 0:
-            return
-            
-        current_time = time.time()
+            return  # 如果timeout配置为0或负数，跳过timeout reset
         
+        current_time = time.time()
+        providers_to_reset = []
+        
+        # 查找需要重置的providers
         for provider in self.providers:
             if (provider.failure_count > 0 and 
-                provider.last_failure_time > 0 and
+                provider.last_failure_time and 
                 current_time - provider.last_failure_time > self.unhealthy_reset_timeout):
-                
-                old_count = provider.failure_count
-                provider.mark_success()  # 重置所有状态
-                
-                # 记录日志
-                debug(LogRecord(
-                    LogEvent.PROVIDER_HEALTH_ERROR_COUNT_TIMEOUT_RESET.value,
-                    f"Provider {provider.name} error count reset from {old_count} to 0 after timeout ({self.unhealthy_reset_timeout}s)",
-                    "",
-                    {
-                        "provider": provider.name,
-                        "old_count": old_count,
-                        "timeout": self.unhealthy_reset_timeout
-                    }
-                ))
+                providers_to_reset.append(provider)
+        
+        # 执行重置
+        for provider in providers_to_reset:
+            old_count = provider.failure_count
+            provider.mark_success()  # 重置所有状态
+            
+            # 记录日志
+            debug(LogRecord(
+                LogEvent.PROVIDER_HEALTH_ERROR_COUNT_TIMEOUT_RESET.value,
+                f"Provider {provider.name} error count reset from {old_count} to 0 after timeout ({self.unhealthy_reset_timeout}s)",
+                request_id,
+                {
+                    "provider": provider.name,
+                    "old_error_count": old_count,
+                    "reset_reason": "timeout",
+                    "timeout_seconds": self.unhealthy_reset_timeout
+                }
+            ))
     
     def record_health_check_result(self, provider_name: str, is_error_detected: bool, error_type: Optional[str] = None, request_id: str = "") -> bool:
         """记录健康检查结果，返回是否应该标记为unhealthy"""
@@ -521,21 +528,37 @@ class ProviderManager:
         if is_error_detected:
             provider.mark_failure()
             
+            # 记录错误详细信息
+            debug(LogRecord(
+                LogEvent.PROVIDER_HEALTH_ERROR_RECORDED.value,
+                f"Recorded error for provider {provider_name}: count={provider.failure_count}/{self.unhealthy_threshold}, reason={error_type or 'unknown'}",
+                request_id,
+                {
+                    "provider": provider_name,
+                    "error_count": provider.failure_count,
+                    "threshold": self.unhealthy_threshold,
+                    "error_reason": error_type or "unknown"
+                }
+            ))
+            
             # Check if provider should be marked unhealthy based on threshold
             should_mark_unhealthy = provider.failure_count >= self.unhealthy_threshold
             
             if should_mark_unhealthy:
-                debug(LogRecord(
+                warning(LogRecord(
                     LogEvent.PROVIDER_MARKED_UNHEALTHY.value,
-                    f"Provider {provider_name} marked unhealthy after {provider.failure_count} failures",
+                    f"Provider {provider_name} marked unhealthy after {provider.failure_count} errors (threshold: {self.unhealthy_threshold})",
                     request_id,
                     {
                         "provider": provider_name,
-                        "failure_count": provider.failure_count,
+                        "error_count": provider.failure_count,
                         "threshold": self.unhealthy_threshold,
-                        "error_type": error_type or "unknown"
+                        "error_reason": error_type or "unknown"
                     }
                 ))
+            else:
+                # 错误数不够，不标记unhealthy，但需要记录状态
+                pass
             
             return should_mark_unhealthy
         else:
@@ -545,12 +568,13 @@ class ProviderManager:
                 provider.mark_success()
                 
                 debug(LogRecord(
-                    LogEvent.PROVIDER_HEALTH_RESET_ON_SUCCESS.value,
-                    f"Provider {provider_name} error count reset from {old_count} to 0 on success",
+                    LogEvent.PROVIDER_HEALTH_ERROR_COUNT_RESET.value,
+                    f"Provider {provider_name} error count reset from {old_count} to 0 after success",
                     request_id,
                     {
                         "provider": provider_name,
-                        "old_count": old_count
+                        "old_error_count": old_count,
+                        "reset_reason": "success"
                     }
                 ))
             
@@ -566,12 +590,12 @@ class ProviderManager:
             }
             
         return {
-            "provider": provider_name,
-            "failure_count": provider.failure_count,
-            "last_failure_time": provider.last_failure_time,
+            "error_count": provider.failure_count,
+            "threshold": self.unhealthy_threshold,
+            "last_error_time": provider.last_failure_time,
             "last_success_time": provider.last_success_time,
-            "is_healthy": provider.is_healthy(self.get_failure_cooldown()),
-            "unhealthy_threshold": self.unhealthy_threshold
+            "reset_on_success": self.unhealthy_reset_on_success,
+            "reset_timeout": self.unhealthy_reset_timeout
         }
 
     def shutdown(self):

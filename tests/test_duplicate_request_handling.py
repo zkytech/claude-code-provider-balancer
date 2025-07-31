@@ -42,7 +42,7 @@ class TestDuplicateRequestHandling:
         
         async with Environment(scenario) as env:
             test_request = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
@@ -94,7 +94,7 @@ class TestDuplicateRequestHandling:
         
         async with Environment(scenario) as env:
             test_streaming_request = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [
@@ -158,7 +158,7 @@ class TestDuplicateRequestHandling:
         
         async with Environment(scenario) as env:
             base_request = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
@@ -219,7 +219,7 @@ class TestDuplicateRequestHandling:
         
         async with Environment(scenario) as env:
             test_request = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
@@ -290,7 +290,7 @@ class TestDuplicateRequestHandling:
             async with httpx.AsyncClient() as client:
                 # First request with temperature 0.5
                 request1 = {
-                    "model": env.effective_model_name,
+                    "model": env.model_name,
                     "max_tokens": 100,
                     "temperature": 0.5,
                     "messages": base_messages
@@ -306,7 +306,7 @@ class TestDuplicateRequestHandling:
                 
                 # Second request with temperature 0.8 (different parameter)
                 request2 = {
-                    "model": env.effective_model_name,
+                    "model": env.model_name,
                     "max_tokens": 100,
                     "temperature": 0.8,
                     "messages": base_messages
@@ -340,7 +340,7 @@ class TestDuplicateRequestHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "system": "You are a helpful assistant.",
                 "messages": [
@@ -389,7 +389,7 @@ class TestDuplicateRequestHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
@@ -450,7 +450,7 @@ class TestDuplicateRequestHandling:
         
         async with Environment(scenario) as env:
             test_request = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
@@ -501,7 +501,7 @@ class TestDuplicateRequestHandling:
         
         async with Environment(scenario) as env:
             test_request = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {

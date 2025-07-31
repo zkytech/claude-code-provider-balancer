@@ -64,7 +64,7 @@ async with TestEnvironment(scenario) as env:
     response = await client.post(
         f"http://localhost:8998/mock-provider/test_provider/v1/messages",
         json={
-            "model": env.effective_model_name,
+            "model": env.model_name,
             "messages": [{"role": "user", "content": "test"}]
         }
     )

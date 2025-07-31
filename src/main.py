@@ -1,10 +1,8 @@
 """
 Claude Code Provider Balancer - Main Application Entry Point
 
-Modular FastAPI application with clear separation of concerns:
-- Clean environment isolation (production vs test)
-- Single initialization flow
-- Robust error handling
+Simple, reliable FastAPI application based on the working main_old.py pattern
+with added environment isolation support.
 """
 
 import argparse
@@ -51,9 +49,9 @@ load_dotenv()
 # Rich console for startup display
 _console = Console()
 
-# ===== CONFIGURATION MANAGEMENT =====
+# ===== CONFIGURATION =====
 
-class AppSettings:
+class Settings:
     """Application settings with environment-specific defaults."""
     
     def __init__(self, config_path: str = "config.yaml"):
@@ -107,143 +105,115 @@ def load_config(config_path: str = "config.yaml") -> dict:
         print(f"Failed to load config file: {e}")
         return {}
 
-# ===== APPLICATION COMPONENTS =====
-
-class AppComponents:
-    """Container for application-wide components."""
-    
-    def __init__(self, config_path: str = "config.yaml"):
-        self.config_path = config_path
-        self.settings = AppSettings(config_path)
-        self.config = load_config(config_path)
-        self.provider_manager = None
-        self._initialized = False
-    
-    def initialize(self):
-        """Initialize all components."""
-        if self._initialized:
-            return
+def _initialize_oauth_manager(provider_manager_instance: ProviderManager, is_reload: bool = False) -> bool:
+    """Initialize OAuth manager with provider configuration."""
+    try:
+        # Check if OAuth manager already has tokens
+        from oauth import oauth_manager
+        had_tokens = oauth_manager and oauth_manager.token_credentials
         
-        # Initialize logging
-        init_logger(self.settings.app_name)
-        self._setup_logging()
+        init_oauth_manager(provider_manager_instance.settings)
         
-        # Create provider manager
-        try:
-            self.provider_manager = ProviderManager(self.config_path)
-            
-            # Initialize OAuth manager
-            self._initialize_oauth()
-            
-            # Set provider manager reference for deduplication
-            from caching.deduplication import set_provider_manager
-            set_provider_manager(self.provider_manager)
-            
-            self._initialized = True
-            
-        except Exception as e:
-            print(f"FATAL ERROR: Failed to initialize components: {e}")
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
-    
-    def _setup_logging(self):
-        """Setup logging configuration."""
-        log_config = {
-            "version": 1,
-            "disable_existing_loggers": False,
-            "formatters": {
-                "colored_console": {"()": ColoredConsoleFormatter},
-                "json": {"()": JSONFormatter},
-                "uvicorn_access": {"()": "utils.logging.formatters.UvicornAccessFormatter"},
-            },
-            "handlers": {
-                "console": {
-                    "class": "logging.StreamHandler",
-                    "level": self.settings.log_level,
-                    "formatter": "colored_console",
-                    "stream": "ext://sys.stdout",
-                },
-                "uvicorn_access": {
-                    "class": "logging.StreamHandler",
-                    "level": "INFO",
-                    "formatter": "uvicorn_access",
-                    "stream": "ext://sys.stdout",
-                },
-            },
-            "loggers": {
-                self.settings.app_name: {
-                    "level": self.settings.log_level,
-                    "handlers": ["console"],
-                    "propagate": False,
-                },
-                "uvicorn.access": {
-                    "level": "INFO",
-                    "handlers": ["uvicorn_access"],
-                    "propagate": False,
-                },
-            },
-        }
-        
-        # Add file handler if configured
-        if self.settings.log_file_path:
-            log_config["handlers"]["file"] = {
-                "class": "logging.FileHandler",
-                "level": self.settings.log_level,
-                "formatter": "json",
-                "filename": self.settings.log_file_path,
-                "mode": "a",
-                "encoding": "utf-8",
-            }
-            log_config["loggers"][self.settings.app_name]["handlers"].append("file")
-        
-        dictConfig(log_config)
-        self.log_config = log_config
-    
-    def _initialize_oauth(self):
-        """Initialize OAuth manager."""
-        try:
-            # Check if OAuth manager already has tokens
-            from oauth import oauth_manager
-            had_tokens = oauth_manager and oauth_manager.token_credentials
-            
-            init_oauth_manager(self.provider_manager.settings)
-            
-            # Only log if actually initialized
-            if not had_tokens:
-                info(LogRecord(
-                    event=LogEvent.OAUTH_MANAGER_READY.value,
-                    message="OAuth manager initialization completed successfully"
-                ))
-                
-        except Exception as e:
-            from utils import error
-            error(LogRecord(
-                event=LogEvent.OAUTH_MANAGER_INIT_FAILED.value,
-                message=f"Failed to initialize OAuth manager: {e}"
+        # Only log if actually initialized
+        if not had_tokens:
+            info(LogRecord(
+                event=LogEvent.OAUTH_MANAGER_READY.value,
+                message="OAuth manager initialization completed successfully"
             ))
+        
+        return True
+    except Exception as e:
+        from utils import error
+        error(LogRecord(
+            event=LogEvent.OAUTH_MANAGER_INIT_FAILED.value,
+            message=f"Failed to initialize OAuth manager: {e}"
+        ))
+        return False
 
-# Global components instance
-_app_components = None
-_app_components_lock = None
+# ===== INITIALIZATION =====
 
-def get_app_components(config_path: str = "config.yaml") -> AppComponents:
-    """Get or create application components with thread-safe singleton pattern."""
-    global _app_components, _app_components_lock
+def initialize_components(config_path: str = "config.yaml"):
+    """Initialize provider manager and settings with graceful fallback."""
+    try:
+        # Initialize provider manager
+        provider_manager = ProviderManager(config_path)
+        settings = Settings(config_path)
+        
+        # Initialize OAuth manager
+        _initialize_oauth_manager(provider_manager, is_reload=False)
+        
+        # Set provider manager reference for deduplication
+        from caching.deduplication import set_provider_manager
+        set_provider_manager(provider_manager)
+        
+        return provider_manager, settings
+        
+    except Exception as e:
+        # Fallback to basic settings if provider config fails
+        print(f"Warning: Failed to load provider configuration: {e}")
+        print("Using basic settings...")
+        
+        settings = Settings(config_path)
+        provider_manager = None
+        
+        # Still set the provider manager reference (even if None)
+        from caching.deduplication import set_provider_manager
+        set_provider_manager(provider_manager)
+        
+        return provider_manager, settings
+
+def setup_logging(settings: Settings) -> dict:
+    """Setup logging configuration."""
+    log_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "colored_console": {"()": ColoredConsoleFormatter},
+            "json": {"()": JSONFormatter},
+            "uvicorn_access": {"()": "utils.logging.formatters.UvicornAccessFormatter"},
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "level": settings.log_level,
+                "formatter": "colored_console",
+                "stream": "ext://sys.stdout",
+            },
+            "uvicorn_access": {
+                "class": "logging.StreamHandler",
+                "level": "INFO",
+                "formatter": "uvicorn_access",
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "loggers": {
+            settings.app_name: {
+                "level": settings.log_level,
+                "handlers": ["console"],
+                "propagate": False,
+            },
+            "uvicorn.access": {
+                "level": "INFO",
+                "handlers": ["uvicorn_access"],
+                "propagate": False,
+            },
+        },
+    }
     
-    # Initialize lock if needed
-    if _app_components_lock is None:
-        import threading
-        _app_components_lock = threading.Lock()
+    # Add file handler if configured
+    if settings.log_file_path:
+        log_config["handlers"]["file"] = {
+            "class": "logging.FileHandler",
+            "level": settings.log_level,
+            "formatter": "json",
+            "filename": settings.log_file_path,
+            "mode": "a",
+            "encoding": "utf-8",
+        }
+        log_config["loggers"][settings.app_name]["handlers"].append("file")
     
-    # Double-checked locking pattern
-    if _app_components is None:
-        with _app_components_lock:
-            if _app_components is None:
-                _app_components = AppComponents(config_path)
-                _app_components.initialize()
-    
-    return _app_components
+    dictConfig(log_config)
+    return log_config
 
 # ===== FASTAPI APPLICATION =====
 
@@ -256,10 +226,10 @@ async def lifespan(app: fastapi.FastAPI):
         message="FastAPI application startup complete"
     ))
     
-    # Start OAuth auto-refresh
+    # Start OAuth auto-refresh using app state
     try:
-        components = get_app_components()
-        auto_refresh = components.provider_manager.oauth_auto_refresh_enabled if components.provider_manager else True
+        provider_manager = getattr(app.state, 'provider_manager', None)
+        auto_refresh = provider_manager.oauth_auto_refresh_enabled if provider_manager else True
         await start_oauth_auto_refresh(auto_refresh)
     except Exception as e:
         warning(LogRecord(
@@ -275,31 +245,46 @@ async def lifespan(app: fastapi.FastAPI):
         message="FastAPI application shutting down"
     ))
 
-def create_app(config_path: str = "config.yaml") -> fastapi.FastAPI:
-    """Create FastAPI application."""
-    # Get components
-    components = get_app_components(config_path)
+def create_app(config_path: str = "config.yaml", environment: str = "production") -> fastapi.FastAPI:
+    """Create FastAPI application with isolated components."""
+    # Initialize components locally (not globally)
+    local_provider_manager, local_settings = initialize_components(config_path)
+    
+    # Initialize logging
+    init_logger(local_settings.app_name)
+    setup_logging(local_settings)
+    
+    # Modify title for test environment
+    title = local_settings.app_name
+    description = "Intelligent load balancer and failover proxy for Claude Code providers"
+    if environment == "test":
+        title += " (Test Environment)"
+        description += " - Test Instance"
     
     # Create FastAPI app
     app = fastapi.FastAPI(
-        title=components.settings.app_name,
-        version=components.settings.app_version,
-        description="Intelligent load balancer and failover proxy for Claude Code providers",
+        title=title,
+        version=local_settings.app_version,
+        description=description,
         lifespan=lifespan,
     )
     
+    # Store components in app state for access by handlers
+    app.state.provider_manager = local_provider_manager
+    app.state.settings = local_settings
+    
     # Register routers
-    app.include_router(create_messages_router(components.provider_manager, components.settings))
-    app.include_router(create_oauth_router(components.provider_manager))
-    app.include_router(create_health_router(components.provider_manager, components.settings.app_name, components.settings.app_version))
-    app.include_router(create_management_router(components.provider_manager))
+    app.include_router(create_messages_router(local_provider_manager, local_settings))
+    app.include_router(create_oauth_router(local_provider_manager))
+    app.include_router(create_health_router(local_provider_manager, local_settings.app_name, local_settings.app_version))
+    app.include_router(create_management_router(local_provider_manager))
     
     # Exception handlers
     @app.exception_handler(ValidationError)
     async def validation_error_handler(request: Request, exc: ValidationError):
         import uuid
         from routers.messages.handlers import MessageHandler
-        handler = MessageHandler(components.provider_manager, components.settings)
+        handler = MessageHandler(local_provider_manager, local_settings)
         request_id = str(uuid.uuid4())
         return await handler.log_and_return_error_response(request, exc, request_id, 400)
     
@@ -307,7 +292,7 @@ def create_app(config_path: str = "config.yaml") -> fastapi.FastAPI:
     async def json_error_handler(request: Request, exc: json.JSONDecodeError):
         import uuid
         from routers.messages.handlers import MessageHandler
-        handler = MessageHandler(components.provider_manager, components.settings)
+        handler = MessageHandler(local_provider_manager, local_settings)
         request_id = str(uuid.uuid4())
         return await handler.log_and_return_error_response(request, exc, request_id, 400)
     
@@ -315,7 +300,7 @@ def create_app(config_path: str = "config.yaml") -> fastapi.FastAPI:
     async def generic_error_handler(request: Request, exc: Exception):
         import uuid
         from routers.messages.handlers import MessageHandler
-        handler = MessageHandler(components.provider_manager, components.settings)
+        handler = MessageHandler(local_provider_manager, local_settings)
         request_id = str(uuid.uuid4())
         return await handler.log_and_return_error_response(request, exc, request_id, 500)
     
@@ -335,6 +320,7 @@ def create_app(config_path: str = "config.yaml") -> fastapi.FastAPI:
                 "path": request.url.path,
                 "status_code": response.status_code,
                 "process_time": round(process_time, 3),
+                "environment": environment,
             },
         ))
         
@@ -342,10 +328,9 @@ def create_app(config_path: str = "config.yaml") -> fastapi.FastAPI:
     
     return app
 
-
 # ===== STARTUP BANNER =====
 
-def display_startup_banner(components: AppComponents):
+def display_startup_banner(settings: Settings, config: dict):
     """Display startup banner with configuration info."""
     banner = """
 ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -361,7 +346,7 @@ def display_startup_banner(components: AppComponents):
     
     try:
         # Provider information
-        providers_config = components.config.get('providers', [])
+        providers_config = config.get('providers', [])
         providers_text = ""
         enabled_count = 0
         total_count = 0
@@ -381,45 +366,45 @@ def display_startup_banner(components: AppComponents):
         
         # Log file display
         log_file_display = "Disabled"
-        if components.settings.log_file_path:
+        if settings.log_file_path:
             try:
                 project_root = Path(__file__).parent.parent
-                log_path = Path(components.settings.log_file_path)
+                log_path = Path(settings.log_file_path)
                 log_file_display = str(log_path.relative_to(project_root))
             except ValueError:
-                log_file_display = Path(components.settings.log_file_path).name
+                log_file_display = Path(settings.log_file_path).name
         
         # Reload configuration
-        reload_enabled = components.config.get('settings', {}).get('reload', False)
+        reload_enabled = config.get('settings', {}).get('reload', False)
         reload_status = "enabled" if reload_enabled else "disabled"
         reload_color = "green" if reload_enabled else "dim"
         
         config_text = Text.assemble(
             ("   Version       : ", "default"),
-            (f"v{components.settings.app_version}", "bold cyan"),
+            (f"v{settings.app_version}", "bold cyan"),
             ("\n   Environment   : ", "default"),
             ("Production", "bold green"),
             ("\n   Providers     : ", "default"),
             (f"{enabled_count}/{total_count} enabled", "bold green" if enabled_count > 0 else "bold red"),
             (providers_text, "default"),
             ("\n   Log Level     : ", "default"),
-            (components.settings.log_level.upper(), "yellow"),
+            (settings.log_level.upper(), "yellow"),
             ("\n   Log File      : ", "default"),
             (log_file_display, "dim"),
             ("\n   Auto Reload   : ", "default"),
             (reload_status, reload_color),
             ("\n   Listening on  : ", "default"),
-            (f"http://{components.settings.host}:{components.settings.port}", "default")
+            (f"http://{settings.host}:{settings.port}", "default")
         )
         
     except Exception as e:
         config_text = Text.assemble(
             ("   Version       : ", "default"),
-            (f"v{components.settings.app_version}", "bold cyan"),
+            (f"v{settings.app_version}", "bold cyan"),
             ("\n   Status        : ", "default"),
             (f"Configuration error: {e}", "bold red"),
             ("\n   Listening on  : ", "default"),
-            (f"http://{components.settings.host}:{components.settings.port}", "default"),
+            (f"http://{settings.host}:{settings.port}", "default"),
         )
     
     _console.print(Panel(
@@ -460,7 +445,7 @@ def parse_args():
     )
     return parser.parse_args()
 
-# ===== APPLICATION ENTRY POINT =====
+# ===== GLOBAL VARIABLES =====
 
 # Create app instance for uvicorn (simple and direct)
 app = create_app()
@@ -469,30 +454,40 @@ def main():
     """Main entry point."""
     args = parse_args()
     
-    # Get components with config overrides
-    components = get_app_components(args.config)
+    # Create app with specified config and environment
+    global app
+    app = create_app(args.config, args.env)
+    
+    # Get settings from app state for configuration
+    app_settings = app.state.settings
     
     # Apply command line overrides
     if args.port:
-        components.settings.port = args.port
+        app_settings.port = args.port
     if args.host:
-        components.settings.host = args.host
+        app_settings.host = args.host
+    
+    # Load config for display
+    config = load_config(args.config)
     
     # Display startup banner
-    display_startup_banner(components)
+    display_startup_banner(app_settings, config)
     
     # Get reload settings
-    reload_enabled = components.config.get('settings', {}).get('reload', False)
-    reload_includes = components.config.get('settings', {}).get('reload_includes', ["config.yaml", "*.py"]) if reload_enabled else None
+    reload_enabled = config.get('settings', {}).get('reload', False)
+    reload_includes = config.get('settings', {}).get('reload_includes', ["config.yaml", "*.py"]) if reload_enabled else None
+    
+    # Setup log config for uvicorn
+    log_config = setup_logging(app_settings)
     
     # Start server
     uvicorn.run(
         "main:app",
-        host=components.settings.host,
-        port=components.settings.port,
+        host=app_settings.host,
+        port=app_settings.port,
         reload=reload_enabled,
         reload_includes=reload_includes,
-        log_config=components.log_config,
+        log_config=log_config,
     )
 
 if __name__ == "__main__":

@@ -553,7 +553,6 @@ class MessageHandler:
         # Prepare default headers for OpenAI client
         # Extract only application-level headers, excluding HTTP transport headers and content-type
         default_headers = {
-            "HTTP-Referer": self.settings.referrer_url,
             "X-Title": self.settings.app_name,
         }
         # Add filtered headers from provider_headers, excluding HTTP transport headers

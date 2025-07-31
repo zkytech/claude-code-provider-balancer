@@ -66,7 +66,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test consecutive provider failures"}]
             }
@@ -138,7 +138,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test provider context validation"}]
             }
@@ -194,7 +194,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test error isolation"}]
             }
@@ -257,7 +257,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test error message uniqueness"}]
             }
@@ -326,7 +326,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test single error"}]
             }
@@ -375,7 +375,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test multiple errors"}]
             }
@@ -420,7 +420,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test success reset"}]
             }
@@ -462,7 +462,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test independent counting"}]
             }
@@ -525,7 +525,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test mixed error types"}]
             }
@@ -587,7 +587,7 @@ class TestProviderErrorHandling:
         
         async with Environment(http_error_scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test HTTP error classification"}]
             }
@@ -621,7 +621,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test connection error"}]
             }
@@ -655,7 +655,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test insufficient credits"}]
             }
@@ -689,7 +689,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test rate limit"}]
             }
@@ -723,7 +723,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test timeout"}]
             }
@@ -768,7 +768,7 @@ class TestProviderErrorHandling:
         
         async with Environment(low_threshold_scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test threshold behavior"}]
             }
@@ -803,7 +803,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test recovery"}]
             }
@@ -955,7 +955,7 @@ class TestProviderErrorHandling:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [{"role": "user", "content": "Test timeout reset"}]
             }

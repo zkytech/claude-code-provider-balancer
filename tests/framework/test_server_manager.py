@@ -18,7 +18,7 @@ from typing import Dict, Any, Optional
 from contextlib import asynccontextmanager
 import sys
 
-from .test_scenario import Scenario
+# Removed unused import
 
 
 class BalancerTestServer:
@@ -100,11 +100,14 @@ class BalancerTestServer:
         if 'settings' not in config:
             config['settings'] = {}
         
-        config['settings'].update({
-            'host': self.test_host,
-            'port': self.test_port,
-            'log_level': 'DEBUG',  # More verbose for testing
-        })
+        # Only set host and port if they're not already specified in the config
+        if 'host' not in config['settings']:
+            config['settings']['host'] = self.test_host
+        if 'port' not in config['settings']:
+            config['settings']['port'] = self.test_port
+            
+        # Always ensure debug logging for tests
+        config['settings']['log_level'] = 'DEBUG'
         
         # Create temporary config file
         with tempfile.NamedTemporaryFile(
@@ -150,16 +153,35 @@ class BalancerTestServer:
             traceback.print_exc()
             raise
         
-        # Create uvicorn server configuration (simplify to avoid levelprefix issues)
+        # Load config to get host and port settings
+        try:
+            with open(self._config_file, 'r') as f:
+                file_config = yaml.safe_load(f)
+            
+            # Use host and port from config file if available
+            settings = file_config.get('settings', {})
+            actual_host = settings.get('host', self.test_host)
+            actual_port = settings.get('port', self.test_port)
+            
+        except Exception:
+            # Fallback to instance defaults if config reading fails
+            actual_host = self.test_host
+            actual_port = self.test_port
+        
+        # Create uvicorn server configuration
         config = uvicorn.Config(
             app=app,
-            host=self.test_host,
-            port=self.test_port,
+            host=actual_host,
+            port=actual_port,
             log_level="warning",  # Make uvicorn quieter
             access_log=False      # Disable uvicorn access logs (we have our own)
         )
         
         self._server = uvicorn.Server(config)
+        
+        # Update instance variables to reflect actual config
+        self.test_host = actual_host
+        self.test_port = actual_port
         
         # Start server in a separate thread
         def run_server():
@@ -260,30 +282,4 @@ async def balancer_test_server(config: Dict[str, Any], **kwargs):
         await server.stop()
 
 
-class BalancerTestServerFactory:
-    """Factory for creating balancer test servers with common configurations."""
-    
-    @staticmethod
-    def create_server_for_scenario(
-        scenario: Scenario,
-        mock_server_port: int = 8998,
-        **server_kwargs
-    ) -> BalancerTestServer:
-        """Create a test server configured for a specific test scenario."""
-        return BalancerTestServer(
-            mock_server_port=mock_server_port,
-            **server_kwargs
-        )
-    
-    @staticmethod
-    async def start_server_with_scenario(
-        scenario: Scenario,
-        config: Dict[str, Any],
-        **server_kwargs
-    ) -> BalancerTestServer:
-        """Start a test server with configuration for a specific scenario."""
-        server = BalancerTestServerFactory.create_server_for_scenario(
-            scenario, **server_kwargs
-        )
-        await server.start_with_config(config)
-        return server
+# BalancerTestServerFactory removed - use BalancerTestServer directly for simplicity

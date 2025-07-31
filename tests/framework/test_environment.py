@@ -13,7 +13,7 @@ from pathlib import Path
 from .test_scenario import Scenario
 from .config_factory import TestConfigFactory
 from .test_context import TestContextManager
-from .balancer_test_server import BalancerTestServer
+from .test_server_manager import BalancerTestServer
 
 
 class Environment:
@@ -24,19 +24,9 @@ class Environment:
     then cleans up when done.
     """
     
-    def __init__(
-        self, 
-        scenario: Scenario, 
-        model_name: Optional[str] = None,
-        config_factory: Optional[TestConfigFactory] = None,
-        mock_server_url: str = "http://localhost:8998",
-        balancer_test_port: int = 9091
-    ):
+    def __init__(self, scenario: Scenario):
         self.scenario = scenario
-        self.model_name = model_name or scenario.model_name
-        self.config_factory = config_factory or TestConfigFactory()
-        self.mock_server_url = mock_server_url
-        self.balancer_test_port = balancer_test_port
+        self.config_factory = TestConfigFactory()
         
         # Internal state
         self._generated_config: Optional[Dict[str, Any]] = None
@@ -48,10 +38,7 @@ class Environment:
         """Enter test environment - generate and apply configuration."""
         try:
             # 1. Generate configuration from scenario
-            self._generated_config = self.config_factory.create_config(
-                self.scenario, 
-                self.model_name
-            )
+            self._generated_config = self.config_factory.create_config(self.scenario)
             
             # 2. Set test context locally
             TestContextManager.set_scenario(self.scenario)
@@ -59,8 +46,9 @@ class Environment:
             # 3. Set test context on mock server (cross-process communication)
             await self._set_mock_server_context()
             
-            # 4. Start balancer test server with generated configuration
-            await self._start_balancer_server()
+            # 4. Start balancer test server using port from config
+            port = self._generated_config.get('settings', {}).get('port', 9091)
+            await self._start_balancer_server(port)
             
             return self
             
@@ -73,14 +61,12 @@ class Environment:
         """Exit test environment - restore original configuration."""
         await self._cleanup()
     
-    async def _start_balancer_server(self):
+    async def _start_balancer_server(self, port: int):
         """Start the balancer test server with generated configuration."""
         try:
-            # Create and start balancer test server
-            mock_server_port = int(self.mock_server_url.split(':')[-1])
             self._balancer_server = BalancerTestServer(
-                test_port=self.balancer_test_port,
-                mock_server_port=mock_server_port
+                test_port=port,
+                mock_server_port=8998  # Fixed mock server port
             )
             
             await self._balancer_server.start_with_config(self._generated_config)
@@ -125,7 +111,7 @@ class Environment:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self.mock_server_url}/mock-set-context",
+                    "http://localhost:8998/mock-set-context",  # Fixed mock server URL
                     content=json_bytes,
                     headers={"Content-Type": "application/json"},
                     timeout=5.0
@@ -185,7 +171,7 @@ class Environment:
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.delete(
-                    f"{self.mock_server_url}/mock-clear-context",
+                    "http://localhost:8998/mock-clear-context",  # Fixed mock server URL
                     timeout=5.0
                 )
                 # Don't fail if clearing context fails
@@ -201,18 +187,14 @@ class Environment:
             logging.warning(f"Error clearing mock server context: {str(e)}")
     
     @property
-    def effective_model_name(self) -> str:
-        """Get the effective model name for this test environment."""
-        if self.model_name:
-            return self.model_name
-        elif self.scenario.model_name:
+    def model_name(self) -> str:
+        """Get the model name for this test environment."""
+        if self.scenario.model_name:
             return self.scenario.model_name
-        else:
-            # Extract from generated config
-            if self._generated_config and 'model_routes' in self._generated_config:
-                routes = self._generated_config['model_routes']
-                if routes:
-                    return list(routes.keys())[0]
+        elif self._generated_config and 'model_routes' in self._generated_config:
+            routes = self._generated_config['model_routes']
+            if routes:
+                return list(routes.keys())[0]
         
         raise RuntimeError("No model name available in test environment")
     
@@ -237,80 +219,3 @@ class Environment:
     def get_expected_behavior(self):
         """Get expected test behavior."""
         return self.scenario.expected_behavior
-
-
-class ConfigurableEnvironment(Environment):
-    """
-    Test environment with more configuration options.
-    
-    Allows for more complex test setups with custom settings.
-    """
-    
-    def __init__(
-        self,
-        scenario: Scenario,
-        model_name: Optional[str] = None,
-        config_factory: Optional[TestConfigFactory] = None,
-        auto_reload_config: bool = True,
-        preserve_logs: bool = False
-    ):
-        super().__init__(scenario, model_name, config_factory)
-        self.auto_reload_config = auto_reload_config
-        self.preserve_logs = preserve_logs
-    
-    async def reload_configuration(self):
-        """Manually reload configuration (useful for testing config changes)."""
-        if not self._generated_config:
-            raise RuntimeError("No configuration to reload")
-        
-        # Re-apply current configuration
-        await self._apply_configuration()
-    
-    async def update_scenario(self, new_scenario: Scenario):
-        """Update the test scenario and reload configuration."""
-        self.scenario = new_scenario
-        
-        # Regenerate configuration
-        self._generated_config = self.config_factory.create_config(
-            new_scenario, 
-            self.model_name
-        )
-        
-        # Update context
-        TestContextManager.set_scenario(new_scenario)
-        
-        # Reload if enabled
-        if self.auto_reload_config:
-            await self.reload_configuration()
-
-
-# Convenience functions for common test patterns
-async def with_simple_success_test(test_func, model_name: Optional[str] = None):
-    """Run test with simple success scenario."""
-    from .test_scenario import Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
-    
-    scenario = Scenario(
-        name="simple_success",
-        providers=[ProviderConfig("success_provider", ProviderBehavior.SUCCESS)],
-        expected_behavior=ExpectedBehavior.SUCCESS
-    )
-    
-    async with Environment(scenario, model_name) as env:
-        return await test_func(env)
-
-
-async def with_failover_test(test_func, model_name: Optional[str] = None):
-    """Run test with failover scenario."""
-    from .test_scenario import Scenario, ProviderConfig, ProviderBehavior, ExpectedBehavior
-    
-    scenario = Scenario(
-        name="failover_test",
-        providers=[
-            ProviderConfig("primary_fail", ProviderBehavior.ERROR, priority=1),
-            ProviderConfig("secondary_success", ProviderBehavior.SUCCESS, priority=2)
-        ],
-        expected_behavior=ExpectedBehavior.FAILOVER
-    )
-    
-    async with Environment(scenario, model_name) as env:
-        return await test_func(env)

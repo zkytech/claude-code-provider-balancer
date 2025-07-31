@@ -43,7 +43,7 @@ class TestMixedProviderResponses:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
@@ -93,7 +93,7 @@ class TestMixedProviderResponses:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
@@ -133,7 +133,7 @@ class TestMixedProviderResponses:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
@@ -173,7 +173,7 @@ class TestMixedProviderResponses:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
@@ -213,7 +213,7 @@ class TestMixedProviderResponses:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
@@ -271,7 +271,7 @@ class TestMixedProviderResponses:
         async with Environment(scenario) as env:
             # Test that both providers are configured correctly
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
@@ -356,7 +356,7 @@ class TestMixedProviderResponses:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [
@@ -401,7 +401,7 @@ class TestMixedProviderResponses:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
@@ -449,7 +449,7 @@ class TestMixedProviderResponses:
         
         async with Environment(scenario) as env:
             request_data = {
-                "model": env.effective_model_name,
+                "model": env.model_name,
                 "max_tokens": 100,
                 "messages": [
                     {
