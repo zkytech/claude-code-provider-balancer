@@ -4,6 +4,7 @@ Handles client disconnections gracefully through exception-based detection.
 """
 
 import asyncio
+import json
 from typing import List, AsyncGenerator, Tuple, Optional, Dict, Any
 from fastapi import Request
 from utils.logging import debug, info, error, LogRecord, LogEvent
@@ -424,7 +425,6 @@ class ParallelBroadcaster:
                     }
                 }
                 
-                import json
                 yield f"event: content_block_delta\ndata: {json.dumps(error_chunk)}\n\n"
                 
                 # Send content block stop

@@ -16,11 +16,11 @@ from framework import (
     TestEnvironment
 )
 
-# Test constants
-MOCK_PROVIDER_BASE_URL = "http://localhost:8998/mock-provider"
+# Test constants - all requests now go through balancer
+# No direct mock provider URLs needed
 
 
-class TestNonStreamingRequestsSimplified:
+class TestNonStreamingRequests:
     """Simplified non-streaming request tests using dynamic configuration."""
 
     @pytest.mark.asyncio
@@ -50,7 +50,7 @@ class TestNonStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/success_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -103,7 +103,7 @@ class TestNonStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/system_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -141,7 +141,7 @@ class TestNonStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/temperature_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -176,7 +176,7 @@ class TestNonStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/error_500_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -211,7 +211,7 @@ class TestNonStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/error_401_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -246,7 +246,7 @@ class TestNonStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/error_429_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -281,7 +281,7 @@ class TestNonStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/connection_error_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -317,7 +317,7 @@ class TestNonStreamingRequestsSimplified:
             async with httpx.AsyncClient() as client:
                 # Set a reasonable timeout for the test
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/timeout_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data,
                     timeout=12.0  # Allow for the 10s delay in timeout behavior
                 )
@@ -382,7 +382,7 @@ class TestNonStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/tools_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -435,20 +435,12 @@ class TestNonStreamingRequestsSimplified:
             }
             
             async with httpx.AsyncClient() as client:
-                # Test that both providers are configured correctly
-                # First provider should fail
-                response1 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/failing_provider/v1/messages",
+                # Test failover through balancer
+                response = await client.post(
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
-                assert response1.status_code == 500
-                
-                # Second provider should succeed
-                response2 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/success_provider/v1/messages",
-                    json=request_data
-                )
-                assert response2.status_code == 200
+                assert response.status_code == 200
                 response_data = response2.json()
                 assert "id" in response_data
                 assert response_data["type"] == "message"
@@ -482,7 +474,7 @@ class TestNonStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/custom_format_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -523,7 +515,7 @@ class TestNonStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/delayed_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
             
@@ -563,7 +555,7 @@ class TestNonStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/ssl_error_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -597,7 +589,7 @@ class TestNonStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/credits_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 

@@ -13,6 +13,7 @@ from pathlib import Path
 from .test_scenario import TestScenario
 from .config_factory import TestConfigFactory
 from .test_context import TestContextManager
+from .balancer_test_server import BalancerTestServer
 
 
 class TestEnvironment:
@@ -28,18 +29,20 @@ class TestEnvironment:
         scenario: TestScenario, 
         model_name: Optional[str] = None,
         config_factory: Optional[TestConfigFactory] = None,
-        mock_server_url: str = "http://localhost:8998"
+        mock_server_url: str = "http://localhost:8998",
+        balancer_test_port: int = 9091
     ):
         self.scenario = scenario
         self.model_name = model_name or scenario.model_name
         self.config_factory = config_factory or TestConfigFactory()
         self.mock_server_url = mock_server_url
+        self.balancer_test_port = balancer_test_port
         
         # Internal state
         self._generated_config: Optional[Dict[str, Any]] = None
         self._temp_config_file: Optional[str] = None
         self._original_config_backup: Optional[str] = None
-        self._app_instance = None
+        self._balancer_server: Optional[BalancerTestServer] = None
         
     async def __aenter__(self) -> 'TestEnvironment':
         """Enter test environment - generate and apply configuration."""
@@ -56,8 +59,8 @@ class TestEnvironment:
             # 3. Set test context on mock server (cross-process communication)
             await self._set_mock_server_context()
             
-            # 4. Apply configuration to the running application
-            await self._apply_configuration()
+            # 4. Start balancer test server with generated configuration
+            await self._start_balancer_server()
             
             return self
             
@@ -70,19 +73,20 @@ class TestEnvironment:
         """Exit test environment - restore original configuration."""
         await self._cleanup()
     
-    async def _apply_configuration(self):
-        """Apply the generated configuration to the running application."""
+    async def _start_balancer_server(self):
+        """Start the balancer test server with generated configuration."""
         try:
-            # For now, we'll save to a temporary config file
-            # In a real implementation, this would reload the app configuration
-            self._temp_config_file = await self._save_temp_config()
+            # Create and start balancer test server
+            mock_server_port = int(self.mock_server_url.split(':')[-1])
+            self._balancer_server = BalancerTestServer(
+                test_port=self.balancer_test_port,
+                mock_server_port=mock_server_port
+            )
             
-            # TODO: Implement actual configuration reload
-            # This would involve calling the application's config reload endpoint
-            # or directly updating the configuration in memory
+            await self._balancer_server.start_with_config(self._generated_config)
             
         except Exception as e:
-            raise RuntimeError(f"Failed to apply configuration: {str(e)}") from e
+            raise RuntimeError(f"Failed to start balancer test server: {str(e)}") from e
     
     async def _set_mock_server_context(self):
         """Set test context on mock server via HTTP API."""
@@ -109,10 +113,21 @@ class TestEnvironment:
                 ]
             }
             
+            # Handle JSON serialization manually to support invalid Unicode in test data
+            import json
+            try:
+                json_data = json.dumps(context_data, ensure_ascii=False)
+                json_bytes = json_data.encode('utf-8')
+            except UnicodeEncodeError:
+                # Use ASCII encoding fallback for invalid Unicode characters in test data
+                json_data = json.dumps(context_data, ensure_ascii=True)
+                json_bytes = json_data.encode('utf-8')
+            
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     f"{self.mock_server_url}/mock-set-context",
-                    json=context_data,
+                    content=json_bytes,
+                    headers={"Content-Type": "application/json"},
                     timeout=5.0
                 )
                 
@@ -144,6 +159,11 @@ class TestEnvironment:
     async def _cleanup(self):
         """Clean up test environment."""
         try:
+            # Stop balancer test server
+            if self._balancer_server:
+                await self._balancer_server.stop()
+                self._balancer_server = None
+            
             # Clear local test context
             TestContextManager.clear()
             
@@ -154,8 +174,6 @@ class TestEnvironment:
             if self._temp_config_file and os.path.exists(self._temp_config_file):
                 os.unlink(self._temp_config_file)
                 self._temp_config_file = None
-            
-            # TODO: Restore original configuration if needed
             
         except Exception as e:
             # Log cleanup errors but don't raise them
@@ -204,6 +222,13 @@ class TestEnvironment:
         if not self._generated_config:
             raise RuntimeError("Configuration not generated yet")
         return self._generated_config
+    
+    @property
+    def balancer_url(self) -> str:
+        """Get the balancer test server URL."""
+        if not self._balancer_server:
+            raise RuntimeError("Balancer server not started yet")
+        return self._balancer_server.base_url
     
     def get_provider_config(self, provider_name: str):
         """Get provider configuration by name."""

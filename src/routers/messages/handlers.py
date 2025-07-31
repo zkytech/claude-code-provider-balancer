@@ -49,7 +49,6 @@ def extract_detailed_error_message(error: Exception) -> tuple[str, str]:
             if response_text:
                 # 尝试解析JSON响应
                 try:
-                    import json
                     error_data = json.loads(response_text)
                     if isinstance(error_data, dict):
                         # 尝试从不同字段获取错误信息
@@ -86,7 +85,6 @@ def extract_detailed_error_message(error: Exception) -> tuple[str, str]:
 
 def _create_error_preview(response_content, max_preview_length: int = 200):
     """创建响应体的预览和完整内容"""
-    import json
     
     if isinstance(response_content, list):
         # Stream response (List[str])
@@ -94,7 +92,11 @@ def _create_error_preview(response_content, max_preview_length: int = 200):
     elif isinstance(response_content, str):
         full_content = response_content
     elif isinstance(response_content, dict):
-        full_content = json.dumps(response_content, ensure_ascii=False)
+        try:
+            full_content = json.dumps(response_content, ensure_ascii=False)
+        except UnicodeEncodeError:
+            # Handle Unicode issues in error response formatting
+            full_content = json.dumps(response_content, ensure_ascii=True)
     else:
         full_content = str(response_content)
     
@@ -278,9 +280,27 @@ class MessageHandler:
         # Simulate testing delay if configured
         await simulate_testing_delay(data, request_id)
 
+        # Handle JSON serialization manually to prevent Unicode encoding errors
+        try:
+            json_data = json.dumps(data, ensure_ascii=False)
+        except UnicodeEncodeError:
+            # Log warning for Unicode issues but continue with ASCII fallback
+            from utils import warning
+            warning(LogRecord(
+                event=LogEvent.REQUEST_RECEIVED.value,
+                message="Client request contains invalid Unicode characters, using ASCII encoding fallback",
+                request_id=request_id,
+                data={"provider": provider.name}
+            ))
+            json_data = json.dumps(data, ensure_ascii=True)
+        
+        # Set content-type header for manual JSON
+        headers = dict(headers) if headers else {}
+        headers['Content-Type'] = 'application/json'
+
         async with httpx.AsyncClient(timeout=timeout_config, proxy=proxy_config) as client:
             try:
-                response = await client.post(url, json=data, headers=headers)
+                response = await client.post(url, content=json_data, headers=headers)
                 
                 # Check for HTTP error status codes first (for both streaming and non-streaming)
                 if response.status_code >= 400:
@@ -344,6 +364,17 @@ class MessageHandler:
                     error_text = response.text if hasattr(response, 'text') else str(response.content)
                     error_msg = f"Provider returned invalid JSON response. Status: {response.status_code}, Content: '{error_text[:200]}...'"
                     raise Exception(error_msg) from e
+                except UnicodeDecodeError as e:
+                    # Handle Unicode issues in provider response - transparently pass through
+                    from utils import warning
+                    warning(LogRecord(
+                        event=LogEvent.PROVIDER_RESPONSE.value,
+                        message="Provider response contains invalid Unicode characters, returning raw text",
+                        request_id=request_id,
+                        data={"provider": provider.name}
+                    ))
+                    # Return raw text instead of parsed JSON to maintain transparency
+                    return response.text
                 
                 # Check if response contains error even with 200 status code
                 if isinstance(response_data, dict) and "error" in response_data:
@@ -424,10 +455,28 @@ class MessageHandler:
         # Simulate testing delay if configured
         await simulate_testing_delay(data, request_id)
 
+        # Handle JSON serialization manually to prevent Unicode encoding errors
+        try:
+            json_data = json.dumps(data, ensure_ascii=False)
+        except UnicodeEncodeError:
+            # Log warning for Unicode issues but continue with ASCII fallback
+            from utils import warning
+            warning(LogRecord(
+                event=LogEvent.REQUEST_RECEIVED.value,
+                message="Client streaming request contains invalid Unicode characters, using ASCII encoding fallback",
+                request_id=request_id,
+                data={"provider": provider.name}
+            ))
+            json_data = json.dumps(data, ensure_ascii=True)
+        
+        # Set content-type header for manual JSON
+        headers = dict(headers) if headers else {}
+        headers['Content-Type'] = 'application/json'
+
         # Use stream context manager for true real-time streaming
         async with httpx.AsyncClient(timeout=timeout_config, proxy=proxy_config) as client:
             try:
-                async with client.stream("POST", url, json=data, headers=headers) as response:
+                async with client.stream("POST", url, content=json_data, headers=headers) as response:
                     # Check for HTTP error status codes first
                     if response.status_code >= 400:
                         error_text = await response.aread()
@@ -435,7 +484,6 @@ class MessageHandler:
                         # Try to parse error response body to extract specific error message
                         error_msg_suffix = ""
                         try:
-                            import json
                             error_response_body = json.loads(error_text.decode('utf-8'))
                             if isinstance(error_response_body, dict) and "error" in error_response_body:
                                 if isinstance(error_response_body["error"], str):

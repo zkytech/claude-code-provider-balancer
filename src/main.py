@@ -7,6 +7,7 @@ Modular FastAPI application with separated concerns:
 - Core: Provider management, streaming, etc.
 """
 
+import argparse
 import json
 import os
 import sys
@@ -48,6 +49,28 @@ load_dotenv()
 
 # Initialize rich console for startup display
 _console = Console()
+
+
+def _parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description='Claude Code Provider Balancer')
+    parser.add_argument(
+        '--config', 
+        type=str, 
+        default='config.yaml',
+        help='Path to configuration file (default: config.yaml)'
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        help='Port to run the server on (overrides config file)'
+    )
+    parser.add_argument(
+        '--host',
+        type=str,
+        help='Host to bind the server to (overrides config file)'
+    )
+    return parser.parse_args()
 
 
 def load_global_config(config_path: str = "config.yaml") -> dict:
@@ -153,97 +176,123 @@ class Settings:
             print("Using default settings.")
 
 
-# Initialize provider manager and settings
-try:
-    provider_manager = ProviderManager()
-    settings = Settings()
-    
-    # Load settings from provider config file
-    settings.load_from_provider_config()
-    
-    # Initialize OAuth manager with config settings
-    _initialize_oauth_manager(provider_manager, is_reload=False)
-    
-    # Set provider manager reference for deduplication module
-    from caching.deduplication import set_provider_manager
-    set_provider_manager(provider_manager)
-    
-except Exception as e:
-    # Fallback to basic settings if provider config fails
-    print(f"Warning: Failed to load provider configuration: {e}")
-    print("Using basic settings...")
-    provider_manager = None
-    settings = Settings()
-    
-    # Still set the provider manager reference (even if None)
-    from caching.deduplication import set_provider_manager
-    set_provider_manager(provider_manager)
+# Global variables - will be initialized in main
+args = None
+provider_manager = None
+settings = None
+global_config = {}
+log_config = {}
 
-# Global config instance
-global_config = load_global_config()
+def _initialize_main_components():
+    """Initialize main application components when running as main script."""
+    global args, provider_manager, settings, global_config, log_config
+    
+    # Parse command line arguments
+    args = _parse_args()
 
-# Initialize logging
-init_logger(settings.app_name)
+    # Initialize provider manager and settings
+    try:
+        provider_manager = ProviderManager()
+        settings = Settings()
+        
+        # Load settings from provider config file
+        settings.load_from_provider_config(args.config)
+        
+        # Override with command line arguments if provided
+        if args.port:
+            settings.port = args.port
+        if args.host:
+            settings.host = args.host
+        
+        # Initialize OAuth manager with config settings
+        _initialize_oauth_manager(provider_manager, is_reload=False)
+        
+        # Set provider manager reference for deduplication module
+        from caching.deduplication import set_provider_manager
+        set_provider_manager(provider_manager)
+        
+    except Exception as e:
+        # Fallback to basic settings if provider config fails
+        print(f"Warning: Failed to load provider configuration: {e}")
+        print("Using basic settings...")
+        provider_manager = None
+        settings = Settings()
+        
+        # Override with command line arguments if provided
+        if args.port:
+            settings.port = args.port
+        if args.host:
+            settings.host = args.host
+        
+        # Still set the provider manager reference (even if None)
+        from caching.deduplication import set_provider_manager
+        set_provider_manager(provider_manager)
 
-# Setup logging configuration
-import logging
-from logging.config import dictConfig
+    # Global config instance
+    global_config = load_global_config(args.config)
 
-log_config = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "colored_console": {
-            "()": ColoredConsoleFormatter,
-        },
-        "json": {
-            "()": JSONFormatter,
-        },
-        "uvicorn_access": {
-            "()": "utils.logging.formatters.UvicornAccessFormatter",
-        },
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "level": settings.log_level,
-            "formatter": "colored_console",
-            "stream": "ext://sys.stdout",
-        },
-        "uvicorn_access": {
-            "class": "logging.StreamHandler",
-            "level": "INFO",
-            "formatter": "uvicorn_access",
-            "stream": "ext://sys.stdout",
-        },
-    },
-    "loggers": {
-        settings.app_name: {
-            "level": settings.log_level,
-            "handlers": ["console"],
-            "propagate": False,
-        },
-        "uvicorn.access": {
-            "level": "INFO",
-            "handlers": ["uvicorn_access"],
-            "propagate": False,
-        },
-    },
-}
+    # Initialize logging
+    init_logger(settings.app_name)
 
-# Add file handler if log_file_path is configured
-if settings.log_file_path:
-    log_config["handlers"]["file"] = {
-        "class": "logging.FileHandler",
-        "level": settings.log_level,
-        "formatter": "json",
-        "filename": settings.log_file_path,
-        "mode": "a",
-        "encoding": "utf-8",
+    # Setup logging configuration
+    import logging
+    from logging.config import dictConfig
+
+    log_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "colored_console": {
+                "()": ColoredConsoleFormatter,
+            },
+            "json": {
+                "()": JSONFormatter,
+            },
+            "uvicorn_access": {
+                "()": "utils.logging.formatters.UvicornAccessFormatter",
+            },
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "level": settings.log_level,
+                "formatter": "colored_console",
+                "stream": "ext://sys.stdout",
+            },
+            "uvicorn_access": {
+                "class": "logging.StreamHandler",
+                "level": "INFO",
+                "formatter": "uvicorn_access",
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "loggers": {
+            settings.app_name: {
+                "level": settings.log_level,
+                "handlers": ["console"],
+                "propagate": False,
+            },
+            "uvicorn.access": {
+                "level": "INFO",
+                "handlers": ["uvicorn_access"],
+                "propagate": False,
+            },
+        },
     }
-    log_config["loggers"][settings.app_name]["handlers"].append("file")
 
-dictConfig(log_config)
+    # Add file handler if log_file_path is configured
+    if settings.log_file_path:
+        log_config["handlers"]["file"] = {
+            "class": "logging.FileHandler",
+            "level": settings.log_level,
+            "formatter": "json",
+            "filename": settings.log_file_path,
+            "mode": "a",
+            "encoding": "utf-8",
+        }
+        log_config["loggers"][settings.app_name]["handlers"].append("file")
+
+    dictConfig(log_config)
 
 
 @asynccontextmanager
@@ -279,74 +328,78 @@ async def lifespan(app: fastapi.FastAPI):
     ))
 
 
-# Create FastAPI app
-app = fastapi.FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
-    description="Intelligent load balancer and failover proxy for Claude Code providers",
-    lifespan=lifespan,
-)
+# App will be created in main function
+app = None
 
-# Register routers
-app.include_router(create_messages_router(provider_manager, settings))
-app.include_router(create_oauth_router(provider_manager))
-app.include_router(create_health_router(provider_manager, settings.app_name, settings.app_version))
-app.include_router(create_management_router(provider_manager))
-
-# Exception handlers
-@app.exception_handler(ValidationError)
-async def pydantic_validation_error_handler(request: Request, exc: ValidationError):
-    """Handle Pydantic validation errors."""
-    import uuid
-    from routers.messages.handlers import MessageHandler
-    handler = MessageHandler(provider_manager, settings)
-    request_id = str(uuid.uuid4())
-    return await handler.log_and_return_error_response(request, exc, request_id, 400)
-
-
-@app.exception_handler(json.JSONDecodeError)
-async def json_decode_error_handler(request: Request, exc: json.JSONDecodeError):
-    """Handle JSON decode errors."""
-    import uuid
-    from routers.messages.handlers import MessageHandler
-    handler = MessageHandler(provider_manager, settings)
-    request_id = str(uuid.uuid4())
-    return await handler.log_and_return_error_response(request, exc, request_id, 400)
-
-
-@app.exception_handler(Exception)
-async def generic_exception_handler(request: Request, exc: Exception):
-    """Handle generic exceptions."""
-    import uuid
-    from routers.messages.handlers import MessageHandler
-    handler = MessageHandler(provider_manager, settings)
-    request_id = str(uuid.uuid4())
-    return await handler.log_and_return_error_response(request, exc, request_id, 500)
-
-
-# Logging middleware
-@app.middleware("http")
-async def logging_middleware(request: Request, call_next):
-    """Log all requests and responses."""
-    start_time = time.time()
-    response = await call_next(request)
-    process_time = time.time() - start_time
+def _create_main_app():
+    """Create the main FastAPI application."""
+    global app
     
-    from utils import debug
-    debug(
-        LogRecord(
-            event=LogEvent.HTTP_REQUEST.value,
-            message=f"{request.method} {request.url.path}",
-            data={
-                "method": request.method,
-                "path": request.url.path,
-                "status_code": response.status_code,
-                "process_time": round(process_time, 3),
-            },
-        )
+    # Create FastAPI app
+    app = fastapi.FastAPI(
+        title=settings.app_name,
+        version=settings.app_version,
+        description="Intelligent load balancer and failover proxy for Claude Code providers",
+        lifespan=lifespan,
     )
-    
-    return response
+
+    # Register routers
+    app.include_router(create_messages_router(provider_manager, settings))
+    app.include_router(create_oauth_router(provider_manager))
+    app.include_router(create_health_router(provider_manager, settings.app_name, settings.app_version))
+    app.include_router(create_management_router(provider_manager))
+
+    # Exception handlers
+    @app.exception_handler(ValidationError)
+    async def pydantic_validation_error_handler(request: Request, exc: ValidationError):
+        """Handle Pydantic validation errors."""
+        import uuid
+        from routers.messages.handlers import MessageHandler
+        handler = MessageHandler(provider_manager, settings)
+        request_id = str(uuid.uuid4())
+        return await handler.log_and_return_error_response(request, exc, request_id, 400)
+
+    @app.exception_handler(json.JSONDecodeError)
+    async def json_decode_error_handler(request: Request, exc: json.JSONDecodeError):
+        """Handle JSON decode errors."""
+        import uuid
+        from routers.messages.handlers import MessageHandler
+        handler = MessageHandler(provider_manager, settings)
+        request_id = str(uuid.uuid4())
+        return await handler.log_and_return_error_response(request, exc, request_id, 400)
+
+    @app.exception_handler(Exception)
+    async def generic_exception_handler(request: Request, exc: Exception):
+        """Handle generic exceptions."""
+        import uuid
+        from routers.messages.handlers import MessageHandler
+        handler = MessageHandler(provider_manager, settings)
+        request_id = str(uuid.uuid4())
+        return await handler.log_and_return_error_response(request, exc, request_id, 500)
+
+    # Logging middleware
+    @app.middleware("http")
+    async def logging_middleware(request: Request, call_next):
+        """Log all requests and responses."""
+        start_time = time.time()
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        
+        from utils import debug
+        debug(
+            LogRecord(
+                event=LogEvent.HTTP_REQUEST.value,
+                message=f"{request.method} {request.url.path}",
+                data={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": response.status_code,
+                    "process_time": round(process_time, 3),
+                },
+            )
+        )
+        
+        return response
 
 
 def _display_startup_banner():
@@ -435,7 +488,177 @@ def _display_startup_banner():
     _console.print(Rule("Starting uvicorn server ...", style="dim blue"))
 
 
+def create_test_app(config_path: str):
+    """Create a test application instance with specific configuration."""
+    # Import required modules
+    from core.provider_manager import ProviderManager
+    from oauth import init_oauth_manager
+    from caching.deduplication import set_provider_manager
+    
+    # Create test settings and load configuration first
+    test_settings = Settings()
+    test_settings.load_from_provider_config(config_path)
+    
+    # Initialize logging for test app
+    init_logger(test_settings.app_name)
+    
+    # Setup test logging configuration
+    import logging
+    from logging.config import dictConfig
+    
+    # Create a custom formatter class for test server logs with prefix
+    class TestServerFormatter(ColoredConsoleFormatter):
+        def format(self, record):
+            formatted = super().format(record)
+            return f"{formatted}"
+    
+    test_log_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "colored_console": {
+                "()": ColoredConsoleFormatter,
+            },
+            "prefixed_console": {
+                "()": TestServerFormatter,
+            },
+            "json": {
+                "()": JSONFormatter,
+            },
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "level": test_settings.log_level,
+                "formatter": "colored_console",
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "loggers": {
+            test_settings.app_name: {
+                "level": test_settings.log_level,
+                "handlers": ["console"],
+                "propagate": False,
+            },
+        },
+    }
+    
+    # Always add file handler for test logs to separate them from test output
+    import os
+    test_log_dir = "logs"
+    os.makedirs(test_log_dir, exist_ok=True)
+    test_log_file = os.path.join(test_log_dir, "test-logs.jsonl")
+    
+    test_log_config["handlers"]["file"] = {
+        "class": "logging.FileHandler",
+        "level": test_settings.log_level,
+        "formatter": "json",
+        "filename": test_log_file,
+        "mode": "a",
+        "encoding": "utf-8",
+    }
+    test_log_config["loggers"][test_settings.app_name]["handlers"] = ["file"]  # Only file handler, no console
+    
+    # Add a separate console handler with prefix for balancer logs
+    test_log_config["handlers"]["prefixed_console"] = {
+        "class": "logging.StreamHandler",
+        "level": "INFO",  # Only show INFO and above on console
+        "formatter": "prefixed_console",
+        "stream": "ext://sys.stderr",  # Use stderr to separate from pytest output
+    }
+    
+    # Add the prefixed console handler for important logs
+    test_log_config["loggers"][test_settings.app_name]["handlers"].append("prefixed_console")
+    
+    dictConfig(test_log_config)
+    
+    # Create test provider manager with the test config file path
+    test_provider_manager = ProviderManager(config_path)
+    
+    # Initialize OAuth manager with test config settings
+    try:
+        init_oauth_manager(test_provider_manager.settings)
+    except Exception as e:
+        # OAuth initialization is optional for tests
+        pass
+    
+    # Set provider manager reference for deduplication module
+    set_provider_manager(test_provider_manager)
+    
+    # Create test FastAPI app
+    test_app = fastapi.FastAPI(
+        title=f"{test_settings.app_name} (Test)",
+        version=test_settings.app_version,
+        description="Test instance of Claude Code Provider Balancer",
+        # Don't use lifespan for test app to avoid conflicts
+    )
+    
+    # Register routers with test instances
+    test_app.include_router(create_messages_router(test_provider_manager, test_settings))
+    test_app.include_router(create_oauth_router(test_provider_manager))
+    test_app.include_router(create_health_router(test_provider_manager, test_settings.app_name, test_settings.app_version))
+    test_app.include_router(create_management_router(test_provider_manager))
+    
+    # Add basic exception handlers
+    @test_app.exception_handler(ValidationError)
+    async def test_pydantic_validation_error_handler(request: Request, exc: ValidationError):
+        import uuid
+        from routers.messages.handlers import MessageHandler
+        handler = MessageHandler(test_provider_manager, test_settings)
+        request_id = str(uuid.uuid4())
+        return await handler.log_and_return_error_response(request, exc, request_id, 400)
+    
+    @test_app.exception_handler(json.JSONDecodeError)
+    async def test_json_decode_error_handler(request: Request, exc: json.JSONDecodeError):
+        import uuid
+        from routers.messages.handlers import MessageHandler
+        handler = MessageHandler(test_provider_manager, test_settings)
+        request_id = str(uuid.uuid4())
+        return await handler.log_and_return_error_response(request, exc, request_id, 400)
+    
+    @test_app.exception_handler(Exception)
+    async def test_generic_exception_handler(request: Request, exc: Exception):
+        import uuid
+        from routers.messages.handlers import MessageHandler
+        handler = MessageHandler(test_provider_manager, test_settings)
+        request_id = str(uuid.uuid4())
+        return await handler.log_and_return_error_response(request, exc, request_id, 500)
+    
+    # Add logging middleware for test app
+    @test_app.middleware("http")
+    async def test_logging_middleware(request: Request, call_next):
+        """Log all requests and responses in test environment."""
+        start_time = time.time()
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        
+        from utils import debug
+        debug(
+            LogRecord(
+                event=LogEvent.HTTP_REQUEST.value,
+                message=f"TEST: {request.method} {request.url.path}",
+                data={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": response.status_code,
+                    "process_time": round(process_time, 3),
+                    "test_environment": True,
+                },
+            )
+        )
+        
+        return response
+    
+    return test_app
+
+
 if __name__ == "__main__":
+    # Initialize all main components
+    _initialize_main_components()
+    
+    # Create the main app
+    _create_main_app()
+    
     # Display startup banner
     _display_startup_banner()
     

@@ -22,6 +22,10 @@ dependencies = [
 pythonpath = [".", "src"]
 testpaths = ["tests"]
 asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "ignore:websockets.legacy is deprecated:DeprecationWarning:websockets.legacy",
+    "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning:uvicorn.protocols.websockets.websockets_impl",
+]
 
 [dependency-groups]
 dev = [

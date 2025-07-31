@@ -17,11 +17,11 @@ from framework import (
     TestEnvironment
 )
 
-# Test constants
-MOCK_PROVIDER_BASE_URL = "http://localhost:8998/mock-provider"
+# Test constants - all requests now go through balancer
+# No direct mock provider URLs needed
 
 
-class TestStreamingRequestsSimplified:
+class TestStreamingRequests:
     """Simplified streaming request tests using dynamic configuration."""
 
     @pytest.mark.asyncio
@@ -52,7 +52,7 @@ class TestStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/streaming_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -101,7 +101,7 @@ class TestStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/streaming_error_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -137,7 +137,7 @@ class TestStreamingRequestsSimplified:
             
             async with httpx.AsyncClient(timeout=15.0) as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/timeout_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -181,19 +181,12 @@ class TestStreamingRequestsSimplified:
             }
             
             async with httpx.AsyncClient() as client:
-                # Test primary provider fails
-                response1 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/primary_stream_error/v1/messages",
+                # Test streaming failover through balancer
+                response = await client.post(
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
-                assert response1.status_code == 500
-                
-                # Test secondary provider succeeds
-                response2 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/secondary_stream_success/v1/messages",
-                    json=request_data
-                )
-                assert response2.status_code == 200
+                assert response.status_code == 200
                 assert "text/event-stream" in response2.headers.get("content-type", "")
 
     @pytest.mark.asyncio
@@ -223,7 +216,7 @@ class TestStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/rate_limit_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -259,7 +252,7 @@ class TestStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/connection_error_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -295,7 +288,7 @@ class TestStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/unavailable_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -331,7 +324,7 @@ class TestStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/credits_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -375,7 +368,7 @@ class TestStreamingRequestsSimplified:
                 
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
-                        f"{MOCK_PROVIDER_BASE_URL}/model_provider_{model_name.replace('-', '_').replace('.', '_')}/v1/messages",
+                        f"{env.balancer_url}/v1/messages",
                         json=request_data
                     )
                     
@@ -419,7 +412,7 @@ class TestStreamingRequestsSimplified:
         async with TestEnvironment(scenario) as env:
             async def make_streaming_request(client, content_suffix=""):
                 return await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/concurrent_streaming_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json={
                         "model": env.effective_model_name,
                         "max_tokens": 100,
@@ -479,7 +472,7 @@ class TestStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/large_response_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -526,7 +519,7 @@ class TestStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/empty_content_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -571,7 +564,7 @@ class TestStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/system_message_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -622,7 +615,7 @@ class TestStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/temperature_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -659,7 +652,7 @@ class TestStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/anthropic_streaming_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -693,7 +686,7 @@ class TestStreamingRequestsSimplified:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/openai_streaming_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -729,7 +722,7 @@ class TestStreamingRequestsSimplified:
             async with httpx.AsyncClient() as client:
                 # Simulate recovery with successful request
                 response = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/recovery_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -797,7 +790,7 @@ class TestStreamingRequestsSimplified:
             async with httpx.AsyncClient() as client:
                 for request_data in test_cases:
                     response = await client.post(
-                        f"{MOCK_PROVIDER_BASE_URL}/validation_provider/v1/messages",
+                        f"{env.balancer_url}/v1/messages",
                         json=request_data
                     )
                     

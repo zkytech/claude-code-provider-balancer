@@ -33,11 +33,12 @@ class TestConfigFactory:
         for provider_config in provider_configs:
             provider = {
                 "name": provider_config.name,
-                "type": "anthropic",  # Default to anthropic for now
+                "type": provider_config.provider_type or "anthropic",  # Use provider type from config
                 "base_url": f"{self.mock_server_base}/mock-provider/{provider_config.name}",
                 "auth_type": "api_key",
                 "auth_value": "test-key",
-                "enabled": True
+                "enabled": True,
+                "priority": provider_config.priority
             }
             providers.append(provider)
         
@@ -100,6 +101,7 @@ class TestConfigFactory:
             "log_level": "DEBUG",
             "log_color": True,
             "log_file_path": "logs/test-logs.jsonl",
+            "enable_detailed_request_logging": True,  # Enable detailed request/response logging for tests
             "host": "127.0.0.1",
             "port": 8999,
             "app_name": "ClaudeCode Providers Balancer - Test Mode",

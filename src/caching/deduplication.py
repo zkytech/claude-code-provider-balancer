@@ -270,8 +270,21 @@ def generate_request_signature(data: Dict[str, Any]) -> str:
     if include_max_tokens:
         signature_data["max_tokens"] = data.get("max_tokens", 0)
 
+    # Import logging utilities upfront to avoid scope issues  
+    from utils.logging.handlers import warning, LogRecord, LogEvent
+    
     # 将数据转换为可哈希的字符串
-    signature_str = json.dumps(signature_data, sort_keys=True, separators=(',', ':'))
+    try:
+        signature_str = json.dumps(signature_data, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+    except UnicodeEncodeError:
+        # Handle Unicode issues in request data for signature generation
+        warning(LogRecord(
+            event=LogEvent.REQUEST_RECEIVED.value,
+            message="Request data contains invalid Unicode characters, using ASCII encoding for signature generation",
+            request_id=None,
+            data={"signature_truncated": signature_str[:50] if 'signature_str' in locals() else "unavailable"}
+        ))
+        signature_str = json.dumps(signature_data, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
 
     # 生成 SHA256 哈希
     signature_hash = hashlib.sha256(signature_str.encode('utf-8')).hexdigest()
@@ -942,7 +955,8 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                     }
                     
                     async def stream_error_response():
-                        formatted_error_chunk = f"event: error\ndata: {json.dumps(error_response)}\n\n"
+                        from utils.logging.formatters import _safe_json_dumps
+                        formatted_error_chunk = f"event: error\ndata: {_safe_json_dumps(error_response)}\n\n"
                         yield formatted_error_chunk
                     
                     from fastapi.responses import StreamingResponse
@@ -1068,7 +1082,8 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                                 "usage": result.get("usage", {"input_tokens": 0, "output_tokens": 0})
                             }
                         }
-                        yield f"event: message_start\ndata: {json.dumps(message_start)}\n\n"
+                        from utils.logging.formatters import _safe_json_dumps
+                        yield f"event: message_start\ndata: {_safe_json_dumps(message_start)}\n\n"
                         
                         # 处理内容块
                         content_blocks = result.get("content", [])
@@ -1080,7 +1095,7 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                                     "index": i,
                                     "content_block": {"type": "text", "text": ""}
                                 }
-                                yield f"event: content_block_start\ndata: {json.dumps(content_block_start)}\n\n"
+                                yield f"event: content_block_start\ndata: {_safe_json_dumps(content_block_start)}\n\n"
                                 
                                 # 发送文本内容作为delta
                                 text_content = block.get("text", "")
@@ -1093,14 +1108,14 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                                             "text": text_content
                                         }
                                     }
-                                    yield f"event: content_block_delta\ndata: {json.dumps(content_delta)}\n\n"
+                                    yield f"event: content_block_delta\ndata: {_safe_json_dumps(content_delta)}\n\n"
                                 
                                 # 发送content_block_stop事件
                                 content_block_stop = {
                                     "type": "content_block_stop",
                                     "index": i
                                 }
-                                yield f"event: content_block_stop\ndata: {json.dumps(content_block_stop)}\n\n"
+                                yield f"event: content_block_stop\ndata: {_safe_json_dumps(content_block_stop)}\n\n"
                         
                         # 发送message_delta和message_stop事件
                         message_delta = {
@@ -1112,10 +1127,10 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                         }
                         if "usage" in result:
                             message_delta["usage"] = result["usage"]
-                        yield f"event: message_delta\ndata: {json.dumps(message_delta)}\n\n"
+                        yield f"event: message_delta\ndata: {_safe_json_dumps(message_delta)}\n\n"
                         
                         message_stop = {"type": "message_stop"}
-                        yield f"event: message_stop\ndata: {json.dumps(message_stop)}\n\n"
+                        yield f"event: message_stop\ndata: {_safe_json_dumps(message_stop)}\n\n"
                     
                     from fastapi.responses import StreamingResponse
                     return StreamingResponse(
@@ -1151,7 +1166,8 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                     }
                     
                     async def stream_error_response():
-                        formatted_error_chunk = f"event: error\ndata: {json.dumps(error_response)}\n\n"
+                        from utils.logging.formatters import _safe_json_dumps
+                        formatted_error_chunk = f"event: error\ndata: {_safe_json_dumps(error_response)}\n\n"
                         yield formatted_error_chunk
                     
                     from fastapi.responses import StreamingResponse
@@ -1213,7 +1229,8 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                 }
                 
                 async def stream_timeout_response():
-                    formatted_error_chunk = f"event: error\ndata: {json.dumps(error_response)}\n\n"
+                    from src.utils.logging.formatters import _safe_json_dumps
+                    formatted_error_chunk = f"event: error\ndata: {_safe_json_dumps(error_response)}\n\n"
                     yield formatted_error_chunk
                 
                 from fastapi.responses import StreamingResponse
@@ -1312,23 +1329,31 @@ def extract_content_from_sse_chunks(sse_chunks: List[str]) -> Dict[str, Any]:
                                     usage.update(data['usage'])
                         
                         except json.JSONDecodeError as e:
-                            import logging
-                            logging.warning(json.dumps({
-                                "event": "sse_json_decode_error",
-                                "chunk_index": chunk_index,
-                                "line_index": line_index,
-                                "error": str(e),
-                                "problematic_line": line[:200] + "..." if len(line) > 200 else line
-                            }, ensure_ascii=False))
+                            from utils.logging.handlers import warning, LogRecord, LogEvent
+                            warning(LogRecord(
+                                event=LogEvent.PROVIDER_RESPONSE.value,
+                                message="SSE JSON decode error during chunk processing",
+                                request_id=None,
+                                data={
+                                    "chunk_index": chunk_index,
+                                    "line_index": line_index,
+                                    "error": str(e),
+                                    "problematic_line": line[:200] + "..." if len(line) > 200 else line
+                                }
+                            ))
                             continue
         except Exception as e:
-            import logging
-            logging.warning(json.dumps({
-                "event": "sse_chunk_processing_error",
-                "chunk_index": chunk_index,
-                "error": str(e),
-                "chunk_preview": chunk[:100] + "..." if len(chunk) > 100 else chunk
-            }, ensure_ascii=False))
+            from utils.logging.handlers import warning, LogRecord, LogEvent
+            warning(LogRecord(
+                event=LogEvent.PROVIDER_RESPONSE.value,
+                message="SSE chunk processing error",
+                request_id=None,
+                data={
+                    "chunk_index": chunk_index,
+                    "error": str(e),
+                    "chunk_preview": chunk[:100] + "..." if len(chunk) > 100 else chunk
+                }
+            ))
             continue
     
     # 记录最终提取结果

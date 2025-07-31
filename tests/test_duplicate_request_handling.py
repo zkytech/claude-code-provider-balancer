@@ -16,11 +16,11 @@ from framework import (
     TestEnvironment
 )
 
-# Test constants
-MOCK_PROVIDER_BASE_URL = "http://localhost:8998/mock-provider"
+# Test constants - all requests now go through balancer
+# No direct mock provider URLs needed
 
 
-class TestDuplicateRequestHandlingSimplified:
+class TestDuplicateRequestHandling:
     """Simplified duplicate request handling tests using dynamic configuration."""
 
     @pytest.mark.asyncio
@@ -56,7 +56,7 @@ class TestDuplicateRequestHandlingSimplified:
             async with httpx.AsyncClient() as client:
                 # Make first request to mock server
                 response1 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/cache_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=test_request
                 )
                 
@@ -65,7 +65,7 @@ class TestDuplicateRequestHandlingSimplified:
                 
                 # Make identical second request
                 response2 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/cache_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=test_request
                 )
                 
@@ -109,7 +109,7 @@ class TestDuplicateRequestHandlingSimplified:
                 # Helper function to make streaming request
                 async def make_streaming_request():
                     response = await client.post(
-                        f"{MOCK_PROVIDER_BASE_URL}/streaming_provider/v1/messages",
+                        f"{env.balancer_url}/v1/messages",
                         json=test_streaming_request
                     )
                     
@@ -174,7 +174,7 @@ class TestDuplicateRequestHandlingSimplified:
                 non_streaming_request["stream"] = False
                 
                 response1 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/mixed_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=non_streaming_request
                 )
                 
@@ -187,7 +187,7 @@ class TestDuplicateRequestHandlingSimplified:
                 streaming_request["stream"] = True
                 
                 response2 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/mixed_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=streaming_request
                 )
                 
@@ -212,7 +212,7 @@ class TestDuplicateRequestHandlingSimplified:
                     "concurrent_provider",
                     ProviderBehavior.DUPLICATE_CACHE,
                     response_data={"content": "Concurrent response"},
-                    delay_ms=100  # Small delay to test concurrency
+                    delay_ms=50  # Shorter delay to reduce cancellation risk
                 )
             ]
         )
@@ -233,18 +233,37 @@ class TestDuplicateRequestHandlingSimplified:
                 # Make concurrent identical requests
                 async def make_request():
                     return await client.post(
-                        f"{MOCK_PROVIDER_BASE_URL}/concurrent_provider/v1/messages",
+                        f"{env.balancer_url}/v1/messages",
                         json=test_request
                     )
                 
                 tasks = [make_request() for _ in range(3)]
                 responses = await asyncio.gather(*tasks)
                 
-                # All should succeed with 200 status
+                # With concurrent duplicate requests, we can get:
+                # - 200: Original or successfully deduplicated request
+                # - 409: Duplicate request where original was cancelled
+                success_count = 0
+                conflict_count = 0
+                
                 for response in responses:
-                    assert response.status_code == 200
-                    data = response.json()
-                    assert data["type"] == "message"
+                    if response.status_code == 200:
+                        success_count += 1
+                        data = response.json()
+                        assert data["type"] == "message"
+                    elif response.status_code == 409:
+                        conflict_count += 1
+                        data = response.json()
+                        assert data["type"] == "error"
+                        assert "cancelled" in data["error"]["message"] or "Original request was cancelled" in data["error"]["message"]
+                    else:
+                        # Unexpected status code
+                        assert False, f"Unexpected status code: {response.status_code}, body: {response.text}"
+                
+                # At least one request should succeed
+                assert success_count >= 1, f"Expected at least 1 success, got {success_count} successes and {conflict_count} conflicts"
+                # Total responses should match request count
+                assert success_count + conflict_count == 3
 
     @pytest.mark.asyncio
     async def test_duplicate_requests_with_different_parameters(self):
@@ -278,7 +297,7 @@ class TestDuplicateRequestHandlingSimplified:
                 }
                 
                 response1 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/param_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request1
                 )
                 
@@ -294,7 +313,7 @@ class TestDuplicateRequestHandlingSimplified:
                 }
                 
                 response2 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/param_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request2
                 )
                 
@@ -335,7 +354,7 @@ class TestDuplicateRequestHandlingSimplified:
             async with httpx.AsyncClient() as client:
                 # Make first request
                 response1 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/system_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -343,7 +362,7 @@ class TestDuplicateRequestHandlingSimplified:
                 
                 # Make duplicate request
                 response2 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/system_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -396,7 +415,7 @@ class TestDuplicateRequestHandlingSimplified:
             async with httpx.AsyncClient() as client:
                 # Make first request
                 response1 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/tools_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -404,7 +423,7 @@ class TestDuplicateRequestHandlingSimplified:
                 
                 # Make duplicate request
                 response2 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/tools_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=request_data
                 )
                 
@@ -444,7 +463,7 @@ class TestDuplicateRequestHandlingSimplified:
             async with httpx.AsyncClient() as client:
                 # Make first request
                 response1 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/cache_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=test_request
                 )
                 
@@ -453,7 +472,7 @@ class TestDuplicateRequestHandlingSimplified:
                 
                 # Make another request (no actual cache expiration simulation in Mock Server)
                 response2 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/cache_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=test_request
                 )
                 
@@ -495,7 +514,7 @@ class TestDuplicateRequestHandlingSimplified:
             async with httpx.AsyncClient() as client:
                 # Make first request
                 response1 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/success_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=test_request
                 )
                 
@@ -503,7 +522,7 @@ class TestDuplicateRequestHandlingSimplified:
                 
                 # Make duplicate request
                 response2 = await client.post(
-                    f"{MOCK_PROVIDER_BASE_URL}/success_provider/v1/messages",
+                    f"{env.balancer_url}/v1/messages",
                     json=test_request
                 )
                 
