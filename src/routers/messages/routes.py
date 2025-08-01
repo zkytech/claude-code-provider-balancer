@@ -54,6 +54,11 @@ class RequestContext:
 class ResponseHandler(ABC):
     """Base class for handling different provider response types."""
     
+    @staticmethod
+    def is_raw_response_from_handler(response) -> bool:
+        """Check if response is a raw response object returned by handler due to HTTP 200 + non-JSON content."""
+        return hasattr(response, 'text') and not isinstance(response, dict) and not hasattr(response, 'choices')
+    
     @abstractmethod
     async def process_response(self, context: RequestContext, provider, target_model: str, 
                               response, request_id: str, attempt: int, message_handler, provider_manager):
@@ -139,8 +144,36 @@ class AnthropicStreamingHandler(ResponseHandler):
                 # Check if collected chunks contain SSE error for delayed cleanup using health module
                 has_sse_error = False
                 if collected_chunks:
+                    # Extract both raw SSE content and plain text content for error detection
+                    chunks_content = "".join(collected_chunks) if isinstance(collected_chunks, list) else str(collected_chunks)
+                    
+                    # Extract plain text from SSE chunks for better error pattern matching
+                    extracted_text_parts = []
+                    
+                    # Split SSE content by lines and extract text from content_block_delta events
+                    for line in chunks_content.split('\n'):
+                        line = line.strip()
+                        if line.startswith('data: '):
+                            try:
+                                json_data = json.loads(line[6:])  # Remove 'data: ' prefix
+                                if (json_data.get('type') == 'content_block_delta' and 
+                                    'delta' in json_data and 
+                                    json_data['delta'].get('type') == 'text_delta'):
+                                    text_content = json_data['delta'].get('text', '')
+                                    if text_content:
+                                        extracted_text_parts.append(text_content)
+                            except (json.JSONDecodeError, KeyError):
+                                # If JSON parsing fails, continue to next line
+                                continue
+                    
+                    # Combine extracted text parts
+                    extracted_text = "".join(extracted_text_parts).strip()
+                    
+                    # Use extracted text for error pattern matching if available, otherwise use raw content
+                    content_to_check = extracted_text if extracted_text else chunks_content
+                    
                     is_unhealthy, error_reason = should_mark_unhealthy(
-                        error_message="".join(collected_chunks) if isinstance(collected_chunks, list) else str(collected_chunks),
+                        error_message=content_to_check,
                         source_type="response_body",
                         unhealthy_response_body_patterns=provider_manager.settings.get('unhealthy_response_body_patterns', [])
                     )
@@ -219,7 +252,44 @@ class AnthropicNonStreamingHandler(ResponseHandler):
     async def process_response(self, context: RequestContext, provider, target_model: str, 
                               response, request_id: str, attempt: int, message_handler, provider_manager):
         """Handle Anthropic non-streaming response."""
-        # For Anthropic providers, handle httpx.Response objects
+        # Check if handler returned a raw response object due to HTTP 200 + non-JSON content
+        if self.is_raw_response_from_handler(response):
+            # Handler returned raw response object - treat as successful and return raw content
+            raw_content = response.text
+            
+            # Cache the response
+            complete_and_cleanup_request(context.signature, raw_content, raw_content, False, provider.name)
+            
+            # Mark provider success for sticky routing and failure count reset
+            provider.mark_success()
+            provider_manager.mark_provider_success(provider.name)
+            # Record successful health check result
+            provider_manager.record_health_check_result(
+                provider.name, False, None, request_id
+            )
+            
+            # Log request completion
+            info(
+                LogRecord(
+                    event=LogEvent.REQUEST_COMPLETED.value,
+                    message=f"Non-streaming request completed with non-JSON content: {provider.name}",
+                    request_id=request_id,
+                    data={
+                        "provider": provider.name,
+                        "model": target_model,
+                        "stream": False,
+                        "provider_type": provider.type.value,
+                        "attempt": attempt + 1,
+                        "content_type": "non-json"
+                    }
+                )
+            )
+            
+            # Return as plain text response
+            from fastapi.responses import PlainTextResponse
+            return PlainTextResponse(content=raw_content, status_code=200)
+        
+        # Normal case: handler returned parsed JSON content
         if hasattr(response, 'json'):
             response_content = response.json()
         elif isinstance(response, dict):
@@ -451,7 +521,44 @@ class OpenAINonStreamingHandler(ResponseHandler):
     async def process_response(self, context: RequestContext, provider, target_model: str, 
                               response, request_id: str, attempt: int, message_handler, provider_manager):
         """Handle OpenAI non-streaming response."""
-        # Convert OpenAI response back to Anthropic format
+        # Check if handler returned a raw response object due to HTTP 200 + non-JSON content
+        if self.is_raw_response_from_handler(response):
+            # Handler returned raw response object - treat as successful and return raw content
+            raw_content = response.text
+            
+            # Cache the response
+            complete_and_cleanup_request(context.signature, raw_content, raw_content, False, provider.name)
+            
+            # Mark provider success for sticky routing and failure count reset
+            provider.mark_success()
+            provider_manager.mark_provider_success(provider.name)
+            # Record successful health check result
+            provider_manager.record_health_check_result(
+                provider.name, False, None, request_id
+            )
+            
+            # Log request completion
+            info(
+                LogRecord(
+                    event=LogEvent.REQUEST_COMPLETED.value,
+                    message=f"OpenAI non-streaming request completed with conversion error, returning raw content: {provider.name}",
+                    request_id=request_id,
+                    data={
+                        "provider": provider.name,
+                        "model": target_model,
+                        "stream": False,
+                        "provider_type": provider.type.value,
+                        "attempt": attempt + 1,
+                        "content_type": "conversion-failed"
+                    }
+                )
+            )
+            
+            # Return as plain text response
+            from fastapi.responses import PlainTextResponse
+            return PlainTextResponse(content=raw_content, status_code=200)
+        
+        # Normal OpenAI response conversion
         anthropic_response = convert_openai_to_anthropic_response(response, request_id)
         # Convert Pydantic model to dict for JSON serialization
         response_content = anthropic_response.model_dump()

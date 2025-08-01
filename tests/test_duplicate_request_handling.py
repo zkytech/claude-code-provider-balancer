@@ -486,6 +486,7 @@ class TestDuplicateRequestHandling:
                     delay_ms=1000,  # 1秒延迟，确保有时间发送重复请求
                 )
             ],
+            settings_override=sse_config,
             expected_behavior=ExpectedBehavior.SUCCESS,  # HTTP 200但内容包含错误模式
             description="Test SSE error delayed cleanup for duplicate requests"
         )

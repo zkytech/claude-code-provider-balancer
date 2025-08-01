@@ -24,7 +24,7 @@ from conversion import (
     get_anthropic_error_details_from_exc, build_anthropic_error_response
 )
 from utils import (
-    LogRecord, LogEvent, info, error, create_debug_request_info
+    LogRecord, LogEvent, info, error, warning, create_debug_request_info
 )
 
 
@@ -248,7 +248,6 @@ class MessageHandler:
             json_data.encode('utf-8')
         except (UnicodeEncodeError, UnicodeDecodeError):
             # Log warning for Unicode issues but continue with ASCII fallback
-            from utils import warning
             warning(LogRecord(
                 event=LogEvent.REQUEST_RECEIVED.value,
                 message="Client request contains invalid Unicode characters, using ASCII encoding fallback",
@@ -325,11 +324,29 @@ class MessageHandler:
                 except json.JSONDecodeError as e:
                     # Handle empty or invalid JSON response
                     error_text = response.text if hasattr(response, 'text') else str(response.content)
-                    error_msg = f"Provider returned invalid JSON response. Status: {response.status_code}, Content: '{error_text[:200]}...'"
-                    raise Exception(error_msg) from e
+                    
+                    # If HTTP 200 with non-JSON content, return response object for further processing
+                    # The ResponseHandler will handle this gracefully by returning raw content
+                    if response.status_code == 200:
+                        warning(LogRecord(
+                            event=LogEvent.PARAMETER_UNSUPPORTED.value,
+                            message=f"Provider {provider.name} returned HTTP 200 with non-JSON content in handler",
+                            request_id=request_id,
+                            data={
+                                "provider": provider.name,
+                                "status_code": response.status_code,
+                                "content_preview": error_text[:200] if error_text else "empty",
+                                "json_error": str(e)
+                            }
+                        ))
+                        # Return the response object so ResponseHandler can process it
+                        return response
+                    else:
+                        # Non-200 status with JSON error - treat as error
+                        error_msg = f"Provider returned invalid JSON response. Status: {response.status_code}, Content: '{error_text[:200]}...'"
+                        raise Exception(error_msg) from e
                 except UnicodeDecodeError as e:
                     # Handle Unicode issues in provider response - transparently pass through
-                    from utils import warning
                     warning(LogRecord(
                         event=LogEvent.PROVIDER_RESPONSE.value,
                         message="Provider response contains invalid Unicode characters, returning raw text",
@@ -425,7 +442,6 @@ class MessageHandler:
             json_data.encode('utf-8')
         except (UnicodeEncodeError, UnicodeDecodeError):
             # Log warning for Unicode issues but continue with ASCII fallback
-            from utils import warning
             warning(LogRecord(
                 event=LogEvent.REQUEST_RECEIVED.value,
                 message="Client streaming request contains invalid Unicode characters, using ASCII encoding fallback",
