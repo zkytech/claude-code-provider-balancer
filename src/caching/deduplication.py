@@ -293,28 +293,6 @@ def generate_request_signature(data: Dict[str, Any]) -> str:
         # Final fallback: use errors='ignore' to handle any remaining Unicode issues
         signature_hash = hashlib.sha256(signature_str.encode('utf-8', errors='ignore')).hexdigest()
 
-    # 添加调试日志
-    try:
-        from utils.logging.handlers import debug, LogRecord
-    except ImportError:
-        try:
-            from utils.logging import debug, LogRecord
-        except ImportError:
-            debug = lambda x: None
-            LogRecord = dict
-    
-    debug(
-        LogRecord(
-            LogEvent.SIGNATURE_GENERATED.value,
-            f"Generated signature: {signature_hash[:16]}... for data: {signature_str[:100]}...",
-            None,
-            {
-                "signature": signature_hash,
-                "signature_data": signature_str[:100],
-                "include_max_tokens": include_max_tokens
-            }
-        )
-    )
 
     return signature_hash
 
@@ -978,11 +956,6 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                 
                 if is_stream:
                     # 流式请求：直接返回缓存的内容（无论是成功还是错误，甚至是空内容）
-                    # 添加调试信息
-                    try:
-                        from utils.logging.handlers import info, LogRecord
-                    except:
-                        pass
                         
                     async def stream_cached_content():
                         for chunk in result:
@@ -1053,7 +1026,22 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                             )
                         )
                         return JSONResponse(content=response_content)
-                    except Exception:
+                    except Exception as e:
+                        # 添加详细的错误日志
+                        from utils.logging.handlers import error
+                        error(
+                            LogRecord(
+                                LogEvent.REQUEST_FAILURE.value,
+                                f"Failed to extract content from SSE chunks: {str(e)}",
+                                request_id,
+                                {
+                                    "error_type": type(e).__name__,
+                                    "error_message": str(e),
+                                    "result_type": type(result).__name__ if 'result' in locals() else "unknown",
+                                    "result_length": len(result) if isinstance(result, (list, str)) and 'result' in locals() else "unknown"
+                                }
+                            )
+                        )
                         # 内容提取失败，返回通用错误
                         return JSONResponse(
                             content={
@@ -1280,6 +1268,7 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
 
 def extract_content_from_sse_chunks(sse_chunks: List[str]) -> Dict[str, Any]:
     """从SSE数据块中提取完整的响应内容"""
+    
     content_blocks = []
     usage = {"input_tokens": 0, "output_tokens": 0}
     model = "unknown"
@@ -1287,6 +1276,7 @@ def extract_content_from_sse_chunks(sse_chunks: List[str]) -> Dict[str, Any]:
     
     for chunk_index, chunk in enumerate(sse_chunks):
         try:
+            
             # 处理每个chunk，可能包含多行
             lines = chunk.strip().split('\n')
             for line_index, line in enumerate(lines):
@@ -1335,7 +1325,7 @@ def extract_content_from_sse_chunks(sse_chunks: List[str]) -> Dict[str, Any]:
                         except json.JSONDecodeError as e:
                             from utils.logging.handlers import warning, LogRecord, LogEvent
                             warning(LogRecord(
-                                event=LogEvent.PROVIDER_RESPONSE.value,
+                                event=LogEvent.REQUEST_FAILURE.value,
                                 message="SSE JSON decode error during chunk processing",
                                 request_id=None,
                                 data={
@@ -1349,7 +1339,7 @@ def extract_content_from_sse_chunks(sse_chunks: List[str]) -> Dict[str, Any]:
         except Exception as e:
             from utils.logging.handlers import warning, LogRecord, LogEvent
             warning(LogRecord(
-                event=LogEvent.PROVIDER_RESPONSE.value,
+                event=LogEvent.REQUEST_FAILURE.value,
                 message="SSE chunk processing error",
                 request_id=None,
                 data={

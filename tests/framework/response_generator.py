@@ -141,7 +141,7 @@ class MockResponseGenerator:
                     "usage": {"input_tokens": 0, "output_tokens": 0}
                 }
             }
-            yield f"data: {json.dumps(start_event)}\\n\\n"
+            yield f"data: {json.dumps(start_event)}\n\n"
             
             # Content block start
             content_start = {
@@ -149,7 +149,7 @@ class MockResponseGenerator:
                 "index": 0,
                 "content_block": {"type": "text", "text": ""}
             }
-            yield f"data: {json.dumps(content_start)}\\n\\n"
+            yield f"data: {json.dumps(content_start)}\n\n"
             
             # Stream content in chunks
             words = content.split()
@@ -159,19 +159,19 @@ class MockResponseGenerator:
                     "index": 0,
                     "delta": {"type": "text_delta", "text": word + (" " if i < len(words) - 1 else "")}
                 }
-                yield f"data: {json.dumps(chunk)}\\n\\n"
+                yield f"data: {json.dumps(chunk)}\n\n"
                 await asyncio.sleep(0.01)  # Small delay between chunks
             
             # Content block stop
             content_stop = {"type": "content_block_stop", "index": 0}
-            yield f"data: {json.dumps(content_stop)}\\n\\n"
+            yield f"data: {json.dumps(content_stop)}\n\n"
             
             # Message stop
             message_stop = {
                 "type": "message_stop",
                 "usage": {"input_tokens": 10, "output_tokens": len(words)}
             }
-            yield f"data: {json.dumps(message_stop)}\\n\\n"
+            yield f"data: {json.dumps(message_stop)}\n\n"
         
         return StreamingResponse(
             generate_stream(),

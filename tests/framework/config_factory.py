@@ -60,19 +60,75 @@ class TestConfigFactory:
         return {model_name: routes}
     
     def _create_settings(self, settings_override: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Generate minimal settings configuration for tests."""
-        # Minimal essential settings for testing
+        """Generate comprehensive settings configuration for tests."""
+        # Comprehensive settings based on production config.yaml
         base_settings = {
             "host": "127.0.0.1",
             "port": self.default_port,  # Use factory's default port
             "log_level": "DEBUG",
             "app_name": "Claude Code Provider Balancer (Test)",
             "app_version": "0.1.6-test",
+            "reload": False,
+            
+            # Selection strategy
+            "selection_strategy": "priority",
+            
+            # Timeout configurations
+            "timeouts": {
+                "non_streaming": {
+                    "connect_timeout": 30,
+                    "read_timeout": 120,
+                    "pool_timeout": 30
+                },
+                "streaming": {
+                    "connect_timeout": 30,
+                    "read_timeout": 120,
+                    "pool_timeout": 30
+                },
+                "caching": {
+                    "deduplication_timeout": 180
+                }
+            },
+            
+            # Provider health settings
+            "idle_recovery_interval": 300,
+            "failure_cooldown": 300,
+            "unhealthy_threshold": 2,
+            "unhealthy_reset_on_success": True,
+            "unhealthy_reset_timeout": 300,
+            
+            # Error detection patterns (simplified for testing)
+            "unhealthy_exception_patterns": [
+                "connection", "timeout", "ssl", "network"
+            ],
+            "unhealthy_response_body_patterns": [
+                '"error"\\s*:\\s*".*insufficient.*credits"',
+                '"message"\\s*:\\s*".*rate.?limit.*"',
+                "rate.?limit"
+            ],
+            "unhealthy_http_codes": [
+                402, 403, 404, 408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524
+            ],
+            
+            # Request deduplication settings
+            "deduplication": {
+                "enabled": True,  # Enable by default for tests
+                "include_max_tokens_in_signature": False,
+                "sse_error_cleanup_delay": 3
+            },
+            
+            # OAuth settings
             "oauth": {
                 "enable_persistence": False,
                 "enable_auto_refresh": False
             },
-            "reload": False
+            
+            # Testing settings
+            "testing": {
+                "simulate_delay": False,
+                "delay_seconds": 10,
+                "delay_trigger_keywords": []
+            }
         }
         
         # Apply any scenario-specific overrides

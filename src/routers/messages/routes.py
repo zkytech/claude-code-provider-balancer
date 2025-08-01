@@ -155,7 +155,7 @@ class AnthropicStreamingHandler(ResponseHandler):
                     
                     # Use delayed cleanup for SSE errors to allow duplicate requests to get cached error response
                     complete_and_cleanup_request_delayed(
-                        context.signature, collected_chunks, collected_chunks, True, provider.name, delay_seconds=30
+                        context.signature, collected_chunks, collected_chunks, True, provider.name, delay_seconds=3
                     )
                     
                     # Log SSE error completion with delayed cleanup
