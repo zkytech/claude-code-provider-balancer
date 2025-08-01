@@ -81,6 +81,7 @@ class LogEvent(enum.Enum):
     
     # Request deduplication and cleanup events
     SIGNATURE_GENERATED = "signature_generated"
+    DUPLICATE_REQUEST_RECEIVED = "duplicate_request_received"
     REQUEST_COMPLETED_DELAY_CLEANUP = "request_completed_delay_cleanup"
     DUPLICATE_REQUESTS_COMPLETED_DELAY_CLEANUP = "duplicate_requests_completed_delay_cleanup"
     NO_DUPLICATE_REQUESTS_FOUND = "no_duplicate_requests_found"

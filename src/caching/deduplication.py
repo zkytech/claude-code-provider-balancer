@@ -798,7 +798,7 @@ async def handle_duplicate_request(signature: str, request_id: str, is_stream: b
                 
                 info(
                     LogRecord(
-                        LogEvent.REQUEST_RECEIVED.value,
+                        LogEvent.DUPLICATE_REQUEST_RECEIVED.value,
                         f"Duplicate request for original request {original_request_id[:8]}, added to duplicate requests queue",
                         request_id,
                         {
