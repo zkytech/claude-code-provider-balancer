@@ -162,7 +162,7 @@ class ProviderAuth:
                 return ""
             
             # Get authorization URL from OAuth manager
-            auth_url = oauth_manager.get_authorization_url()
+            auth_url = oauth_manager.generate_login_url()
             if not auth_url:
                 self._print_oauth_setup_failed()
                 return ""
