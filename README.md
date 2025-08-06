@@ -93,14 +93,54 @@ claude
 
 ## 🐳 Docker 部署
 
-### 使用 docker-compose (推荐)
+### 方式一：使用预构建镜像 (推荐)
+
+从 Docker Hub 直接拉取预构建镜像：
 
 ```bash
 # 1. 准备配置文件
 cp config.example.yaml config.yaml
 # 编辑 config.yaml 添加你的 API 密钥
 
-# 2. 启动服务
+# 2. 使用 Docker Hub 镜像运行
+docker run -d \
+  --name claude-balancer \
+  -p 9090:9090 \
+  -v $(pwd)/config.yaml:/app/config.yaml:ro \
+  -v $(pwd)/logs:/app/logs \
+  --restart unless-stopped \
+  zhangkunyuan/claude-code-provider-balancer:latest
+
+# 3. 检查运行状态
+docker ps
+docker logs -f claude-balancer
+```
+
+也可以使用 docker-compose 配置预构建镜像：
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  claude-balancer:
+    image: zhangkunyuan/claude-code-provider-balancer:latest
+    container_name: claude-code-balancer
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./logs:/app/logs
+```
+
+### 方式二：本地构建部署
+
+```bash
+# 1. 准备配置文件
+cp config.example.yaml config.yaml
+# 编辑 config.yaml 添加你的 API 密钥
+
+# 2. 使用 docker-compose 构建并启动
 docker-compose up -d
 
 # 3. 查看状态和日志
@@ -111,28 +151,6 @@ docker-compose logs -f
 docker-compose down
 ```
 
-### 使用 Docker 直接运行
-
-```bash
-# 构建并运行
-docker build -t claude-balancer .
-docker run -d \
-  --name claude-balancer \
-  -p 9090:9090 \
-  -v $(pwd)/config.yaml:/app/config.yaml:ro \
-  -v $(pwd)/logs:/app/logs \
-  claude-balancer
-```
-
-### 健康检查
-
-```bash
-# 检查服务状态
-curl http://localhost:9090/health
-
-# 查看容器状态
-docker inspect claude-balancer --format='{{.State.Health.Status}}'
-```
 
 ## 🔧 核心功能架构
 

@@ -188,3 +188,4 @@ log.jsonl
 .aider*
 
 **/.claude/settings.local.json
+.idea/
