@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  claude-balancer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: claude-code-balancer
+    restart: unless-stopped
+    ports:
+      - "${PORT:-9090}:9090"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=9090
+      - PYTHONPATH=/app/src
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

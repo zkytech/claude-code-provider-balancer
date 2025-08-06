@@ -91,7 +91,48 @@ claude
 
 现在你的 Claude Code 请求将通过负载均衡器处理，享受高可用性和智能路由！
 
+## 🐳 Docker 部署
 
+### 使用 docker-compose (推荐)
+
+```bash
+# 1. 准备配置文件
+cp config.example.yaml config.yaml
+# 编辑 config.yaml 添加你的 API 密钥
+
+# 2. 启动服务
+docker-compose up -d
+
+# 3. 查看状态和日志
+docker-compose ps
+docker-compose logs -f
+
+# 4. 停止服务
+docker-compose down
+```
+
+### 使用 Docker 直接运行
+
+```bash
+# 构建并运行
+docker build -t claude-balancer .
+docker run -d \
+  --name claude-balancer \
+  -p 9090:9090 \
+  -v $(pwd)/config.yaml:/app/config.yaml:ro \
+  -v $(pwd)/logs:/app/logs \
+  claude-balancer
+```
+
+### 健康检查
+
+```bash
+# 检查服务状态
+curl http://localhost:9090/health
+
+# 查看容器状态
+docker inspect claude-balancer --format='{{.State.Health.Status}}'
+```
 
 ## 🔧 核心功能架构
 

@@ -1,0 +1,17 @@
+version: '3.8'
+
+# Development override for docker-compose.yml
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  claude-balancer:
+    volumes:
+      - ./src:/app/src
+      - ./config.yaml:/app/config.yaml
+      - ./logs:/app/logs
+    environment:
+      - HOST=0.0.0.0
+      - PORT=9090
+      - PYTHONPATH=/app/src
+      - LOG_LEVEL=DEBUG
+    command: ["python", "src/main.py", "--host", "0.0.0.0", "--port", "9090", "--env", "test"]
