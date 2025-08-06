@@ -164,6 +164,27 @@ settings:
   port: 9090
 ```
 
+### API Authentication (Optional)
+The balancer supports API key authentication consistent with upstream provider patterns:
+
+```yaml
+auth:
+  enabled: true          # Enable/disable API authentication
+  api_key: "your-key"    # Single API key (matches upstream provider tokens)
+  exempt_paths:          # Paths that don't require authentication
+    - "/health"
+    - "/docs" 
+    - "/redoc"
+    - "/openapi.json"
+```
+
+**Authentication Usage (supports both upstream patterns):**
+- **Anthropic style**: `x-api-key: your-api-key` header
+- **OpenAI style**: `Authorization: Bearer your-api-key` header
+- Exempt paths (health checks, docs) don't require authentication
+- Invalid/missing API keys return 401 Unauthorized
+- Follows the same authentication logic as upstream providers
+
 ## Key API Endpoints
 
 ### Core Messaging
@@ -284,12 +305,33 @@ cat logs/logs.jsonl | jq 'select(.message | contains("request"))' | wc -l
 
 To use Claude Code with the balancer:
 
+### Basic Usage
 ```bash
 # Set proxy URL
 export ANTHROPIC_BASE_URL=http://localhost:9090
 
 # Start Claude Code
 claude
+```
+
+### With Authentication
+If authentication is enabled, use either authentication style:
+
+```bash
+# Set proxy URL
+export ANTHROPIC_BASE_URL=http://localhost:9090
+
+# Option 1: Anthropic style (x-api-key header)
+curl -H "x-api-key: your-api-key" \
+     -H "Content-Type: application/json" \
+     -d '{"model": "claude-3-5-sonnet-20241022", "messages": [...]}' \
+     http://localhost:9090/v1/messages
+
+# Option 2: OpenAI style (Authorization Bearer header)  
+curl -H "Authorization: Bearer your-api-key" \
+     -H "Content-Type: application/json" \
+     -d '{"model": "claude-3-5-sonnet-20241022", "messages": [...]}' \
+     http://localhost:9090/v1/messages
 ```
 
 All Claude Code requests will be intelligently routed through the balancer with automatic failover and load distribution.

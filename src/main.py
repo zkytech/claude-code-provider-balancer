@@ -33,6 +33,7 @@ if current_dir not in sys.path:
 # Import core components
 from core.provider_manager import ProviderManager
 from oauth import init_oauth_manager, start_oauth_auto_refresh
+from auth import AuthManager, AuthConfig, AuthenticationMiddleware
 from utils import (
     LogRecord, LogEvent, ColoredConsoleFormatter, JSONFormatter,
     init_logger, info, warning
@@ -64,6 +65,11 @@ class Settings:
         self.app_name: str = "Claude Code Provider Balancer"
         self.app_version: str = "0.1.6"
         
+        # Authentication settings
+        self.auth_enabled: bool = False
+        self.auth_api_key: str = ""
+        self.auth_exempt_paths: list = ["/health", "/docs", "/redoc", "/openapi.json"]
+        
         # Load from config file
         self.load_from_config(config_path)
     
@@ -87,6 +93,14 @@ class Settings:
                         project_root = Path(__file__).parent.parent
                         value = str(project_root / value)
                     setattr(self, key, value)
+            
+            # Load authentication config from settings
+            settings_config = config.get('settings', {})
+            auth_config = settings_config.get('auth', {})
+            if auth_config:
+                self.auth_enabled = auth_config.get('enabled', False)
+                self.auth_api_key = auth_config.get('api_key', "")
+                self.auth_exempt_paths = auth_config.get('exempt_paths', self.auth_exempt_paths)
                     
         except Exception as e:
             print(f"Warning: Failed to load settings from {config_path}: {e}")
@@ -142,11 +156,19 @@ def initialize_components(config_path: str = "config.yaml"):
         # Initialize OAuth manager
         _initialize_oauth_manager(provider_manager, is_reload=False)
         
+        # Initialize authentication manager
+        auth_config = AuthConfig(
+            enabled=settings.auth_enabled,
+            api_key=settings.auth_api_key,
+            exempt_paths=settings.auth_exempt_paths
+        )
+        auth_manager = AuthManager(auth_config)
+        
         # Set provider manager reference for deduplication
         from caching.deduplication import set_provider_manager
         set_provider_manager(provider_manager)
         
-        return provider_manager, settings
+        return provider_manager, settings, auth_manager
         
     except Exception as e:
         # Fallback to basic settings if provider config fails
@@ -156,11 +178,19 @@ def initialize_components(config_path: str = "config.yaml"):
         settings = Settings(config_path)
         provider_manager = None
         
+        # Initialize authentication manager with basic settings
+        auth_config = AuthConfig(
+            enabled=settings.auth_enabled,
+            api_key=settings.auth_api_key,
+            exempt_paths=settings.auth_exempt_paths
+        )
+        auth_manager = AuthManager(auth_config)
+        
         # Still set the provider manager reference (even if None)
         from caching.deduplication import set_provider_manager
         set_provider_manager(provider_manager)
         
-        return provider_manager, settings
+        return provider_manager, settings, auth_manager
 
 def setup_logging(settings: Settings) -> dict:
     """Setup logging configuration."""
@@ -248,7 +278,7 @@ async def lifespan(app: fastapi.FastAPI):
 def create_app(config_path: str = "config.yaml", environment: str = "production") -> fastapi.FastAPI:
     """Create FastAPI application with isolated components."""
     # Initialize components locally (not globally)
-    local_provider_manager, local_settings = initialize_components(config_path)
+    local_provider_manager, local_settings, local_auth_manager = initialize_components(config_path)
     
     # Initialize logging
     init_logger(local_settings.app_name)
@@ -272,6 +302,15 @@ def create_app(config_path: str = "config.yaml", environment: str = "production"
     # Store components in app state for access by handlers
     app.state.provider_manager = local_provider_manager
     app.state.settings = local_settings
+    app.state.auth_manager = local_auth_manager
+    
+    # Add authentication middleware
+    if local_auth_manager.is_enabled():
+        app.add_middleware(AuthenticationMiddleware, auth_manager=local_auth_manager)
+        info(LogRecord(
+            event="auth_middleware_added",
+            message=f"Authentication middleware enabled with API key configured: {local_auth_manager.has_api_key()}"
+        ))
     
     # Register routers
     app.include_router(create_messages_router(local_provider_manager, local_settings))

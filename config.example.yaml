@@ -245,6 +245,20 @@ settings:
   app_name: "ClaudeCode Providers Balancer"
   app_version: "0.1.6"  # 更新版本号
 
+  # API鉴权配置 (可选)
+  # 客户端环境变量配置 ANTHROPIC_AUTH_TOKEN=your-secure-api-key-here
+  auth:
+    # 是否启用API鉴权
+    enabled: false
+    # API密钥 
+    api_key: "your-secure-api-key-here"
+    # 免鉴权的路径列表
+    exempt_paths:
+      - "/health"
+      - "/docs" 
+      - "/redoc"
+      - "/openapi.json"
+
   # OAuth Token持久化存储设置
   oauth:
     # 是否启用token持久化存储到系统密钥环

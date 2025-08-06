@@ -168,6 +168,12 @@ class LogEvent(enum.Enum):
     OAUTH_MANUAL_REFRESH_ERROR = "oauth_manual_refresh_error"
     OAUTH_MANAGER_CHECK = "oauth_manager_check"
     OAUTH_MANAGER_INIT_FAILED = "oauth_manager_init_failed"
+    
+    # API Authentication events
+    AUTH_SUCCESS = "auth_success"
+    AUTH_FAILED = "auth_failed"
+    AUTH_MISSING_TOKEN = "auth_missing_token"
+    AUTH_INVALID_TOKEN = "auth_invalid_token"
 
 
 # Initialize logger - will be set up when module is initialized

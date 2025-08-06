@@ -9,6 +9,7 @@
 - **🚀 多提供商支持** - 完美支持 Anthropic API、OpenAI 兼容服务及其他主流供应商
 - **⚡ 智能负载均衡** - 错误阈值管理、自动故障转移、实时健康监控、智能提供商选择
 - **🔐 OAuth 认证支持** - 集成 Claude Code 官方 OAuth 2.0 认证流程
+- **🔒 API 鉴权保护** - 支持 ANTHROPIC_AUTH_TOKEN 认证模式
 - **🎯 智能路由系统** - 基于模型名称和优先级的动态路由策略
 - **📊 请求去重优化** - 智能缓存机制，自动识别并合并重复请求
 - **🔧 热配置重载** - 零停机时间配置更新，即时生效
@@ -42,6 +43,25 @@ vim config.yaml
 - 配置其他兼容服务的 API 密钥
 - 设置提供商优先级和权重
 - 配置 OAuth 设置（可选）
+- 配置 API 鉴权保护（可选）
+
+**API 鉴权配置示例：**
+
+```yaml
+settings:
+  # API鉴权配置 (可选)
+  auth:
+    # 是否启用API鉴权
+    enabled: true
+    # API密钥
+    api_key: "your-secure-api-key-here"
+    # 免鉴权的路径列表
+    exempt_paths:
+      - "/health"
+      - "/docs" 
+      - "/redoc"
+      - "/openapi.json"
+```
 
 ### 3. 启动服务
 
@@ -62,11 +82,15 @@ nohup uvicorn src.main:app --host 0.0.0.0 --port 9090 > logs/server.log 2>&1 &
 # 设置代理 URL
 export ANTHROPIC_BASE_URL=http://localhost:9090
 
+# 如果启用了 API 鉴权，需要设置认证信息：
+export ANTHROPIC_AUTH_TOKEN=your-secure-api-key-here
+
 # 启动 Claude Code
 claude
 ```
 
 现在你的 Claude Code 请求将通过负载均衡器处理，享受高可用性和智能路由！
+
 
 
 ## 🔧 核心功能架构
@@ -80,8 +104,16 @@ claude
 - **基于优先级路由** - 根据配置的权重和优先级智能分配请求
 - **冷却恢复机制** - 不健康提供商的智能恢复和重试策略 (默认冷却180秒)
 
-### 🔐 OAuth 2.0 认证集成
+### 🔐 双重认证系统
 
+**API 鉴权保护：**
+- **Anthropic 风格认证** - 使用 `x-api-key` 头部，与上游 provider 保持一致
+- **OpenAI 风格认证** - 支持 `Authorization: Bearer` 头部格式
+- **智能优先级** - x-api-key 优先，自动降级到 Authorization Bearer
+- **路径豁免机制** - 健康检查、文档等路径可配置免鉴权
+- **统一错误处理** - 标准化 401 错误响应和日志记录
+
+**OAuth 2.0 认证集成：**
 - **官方认证支持** - 完整兼容 Claude Code 官方 OAuth 2.0 流程
 - **自动令牌管理** - 智能 token 刷新和安全持久化存储
 - **无缝用户体验** - 透明的认证过程，用户无感知切换
@@ -192,6 +224,7 @@ python -m pytest tests/test_framework_validation.py -v
 | 问题类型 | 症状 | 解决方案 |
 |---------|------|----------|
 | **提供商连接失败** | 请求总是失败或超时 | • 检查 API 密钥是否正确<br>• 验证网络连接<br>• 查看 `/providers` 状态 |
+| **API 鉴权问题** | 收到 401 认证错误 | • 检查 `settings.auth.enabled` 配置<br>• 验证 API 密钥是否正确<br>• 确认使用正确的认证头部<br>• 检查路径是否在免鉴权列表中 |
 | **配置不生效** | 修改配置后没有变化 | • 使用 `/providers/reload` 热重载<br>• 检查配置文件语法<br>• 查看启动日志 |
 | **OAuth 认证问题** | 认证失败或令牌过期 | • 检查 `/oauth/status` 状态<br>• 验证 OAuth 配置<br>• 重新进行认证流程 |
 | **响应慢或超时** | 请求处理时间过长 | • 检查提供商健康状态<br>• 调整超时配置<br>• 查看负载均衡策略 |
@@ -222,8 +255,11 @@ netstat -tlnp | grep :9090
 # 筛选错误日志
 cat logs/logs.jsonl | jq 'select(.level == "ERROR")'
 
-# 查看最近的认证相关日志
-cat logs/logs.jsonl | jq 'select(.message | contains("oauth"))'
+# 查看认证相关日志
+cat logs/logs.jsonl | jq 'select(.message | contains("auth") or .message | contains("oauth"))'
+
+# 查看 API 鉴权成功/失败日志
+cat logs/logs.jsonl | jq 'select(.event | contains("AUTH_"))'
 
 # 统计请求数量
 cat logs/logs.jsonl | jq 'select(.message | contains("request"))' | wc -l
@@ -296,6 +332,10 @@ src/
 │   ├── health.py                # 健康检查路由
 │   └── management.py            # 配置管理路由
 ├── models/                      # Pydantic 数据模型
+├── auth/                        # API 鉴权模块
+│   ├── __init__.py              # 模块导出
+│   ├── auth_manager.py          # API 鉴权管理器
+│   └── middleware.py            # FastAPI 认证中间件
 ├── oauth/                       # OAuth 认证管理
 │   └── oauth_manager.py         # OAuth 2.0 流程处理
 ├── caching/                     # 缓存和去重逻辑
