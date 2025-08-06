@@ -40,24 +40,18 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app user
-RUN groupadd -r app && useradd -r -g app app
-
 # Set work directory
 WORKDIR /app
 
 # Copy Python packages from builder stage
 COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
 
+# Create necessary directories first
+RUN mkdir -p logs
+
 # Copy application code
 COPY src/ src/
 COPY config.example.yaml ./
-
-# Create necessary directories and set permissions
-RUN mkdir -p logs && chown -R app:app /app
-
-# Switch to app user
-USER app
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

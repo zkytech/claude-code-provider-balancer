@@ -15,7 +15,7 @@ services:
       - PYTHONPATH=/app/src
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      - ./logs:/app/logs
+    user: "${UID:-1000}:${GID:-1000}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
       interval: 30s

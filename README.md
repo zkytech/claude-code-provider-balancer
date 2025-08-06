@@ -107,7 +107,6 @@ docker run -d \
   --name claude-balancer \
   -p 9090:9090 \
   -v $(pwd)/config.yaml:/app/config.yaml:ro \
-  -v $(pwd)/logs:/app/logs \
   --restart unless-stopped \
   zhangkunyuan/claude-code-provider-balancer:latest
 
@@ -130,7 +129,6 @@ services:
       - "9090:9090"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      - ./logs:/app/logs
 ```
 
 ### 方式二：本地构建部署
