@@ -24,6 +24,24 @@ def create_health_router(provider_manager: ProviderManager, app_name: str, app_v
             }
         )
 
+    @router.get("/health")
+    async def docker_health_check() -> JSONResponse:
+        """Docker Compose 容器健康检查端点"""
+        if not provider_manager:
+            return JSONResponse(
+                content={"status": "unhealthy", "message": "Provider manager not initialized"},
+                status_code=503
+            )
+        
+        healthy_providers = provider_manager.get_healthy_providers()
+        if not healthy_providers:
+            return JSONResponse(
+                content={"status": "unhealthy", "message": "No healthy providers available"},
+                status_code=503
+            )
+        
+        return JSONResponse(content={"status": "healthy"})
+
     @router.get("/providers")
     async def get_providers_status() -> JSONResponse:
         """Get status of all configured providers."""
